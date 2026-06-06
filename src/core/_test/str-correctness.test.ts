@@ -2,7 +2,7 @@
 // PutPut, round-trip, stability, isolation, composition, external refresh, …).
 
 import { describe, expect, it } from "vitest";
-import { effect } from "../signal";
+import { effect } from "../cell";
 import { str } from "../values/str";
 
 describe("GetPut: writing back the read value is a no-op on source", () => {

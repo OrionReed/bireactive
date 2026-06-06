@@ -5,7 +5,7 @@
 //                          identity); cleanup on removal.
 //   `when(source, body)` — body runs while truthy; cleanup on falsy.
 
-import { effect, type Read } from "./signal";
+import { effect, type Read } from "./cell";
 
 /** Disposable handle. */
 export interface Lifecycle {

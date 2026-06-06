@@ -1,7 +1,7 @@
 // Bool runtime + lens laws.
 
 import { describe, expect, it } from "vitest";
-import { cell, effect, isLens } from "../signal";
+import { cell, effect, isLens } from "../cell";
 import { Bool, bool } from "../values/bool";
 import { box } from "../values/box";
 import { Num, num } from "../values/num";

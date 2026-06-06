@@ -1,7 +1,7 @@
 // Str runtime + symmetric lens laws.
 
 import { describe, expect, it } from "vitest";
-import { effect, isLens } from "../signal";
+import { effect, isLens } from "../cell";
 import { Num } from "../values/num";
 import {
   applyCaseMask,

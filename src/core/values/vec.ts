@@ -14,7 +14,7 @@ import {
   readNow,
   type Val,
   type Writable,
-} from "../signal";
+} from "../cell";
 import type { Linear, Pack, Pivotal, TraitDict } from "../traits";
 import { Num, num } from "./num";
 

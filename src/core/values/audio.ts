@@ -14,7 +14,7 @@
 //     str.lowercase()/canvas.grayscale().
 //   - cross-type lens (`rms` → Num).
 
-import { Cell, type Init, reader, type Val, type Writable } from "../signal";
+import { Cell, type Init, reader, type Val, type Writable } from "../cell";
 import type { TraitDict } from "../traits";
 import { Num } from "./num";
 

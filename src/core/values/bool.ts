@@ -8,7 +8,7 @@
 // — lossy fan-ins whose write-back is ambiguous. Lift to writable via
 // `Bool.lens([a, b], fwd, bwd)` with an explicit policy.
 
-import { Cell, type Init, reader, type Val, type Writable } from "../signal";
+import { Cell, type Init, reader, type Val, type Writable } from "../cell";
 import type { Linear, TraitDict } from "../traits";
 
 type V = boolean;

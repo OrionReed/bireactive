@@ -15,7 +15,7 @@ import {
   reader,
   type Val,
   type Writable,
-} from "../signal";
+} from "../cell";
 import type { TraitDict } from "../traits";
 import { Num, num } from "./num";
 import type { Vec } from "./vec";

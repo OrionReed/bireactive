@@ -17,7 +17,7 @@
 //   words        — separator pattern between words
 //   sortedUnique — source positions + original case per unique word
 
-import { Cell, type Init, type Writable } from "../signal";
+import { Cell, type Init, type Writable } from "../cell";
 import type { TraitDict } from "../traits";
 
 type V = string;

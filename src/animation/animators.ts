@@ -6,7 +6,7 @@
 // with linear+metric"), so misuse is a compile error: `spring(box, …)`
 // (no metric), `spring(roVec, …)` (not writable).
 
-import { Cell, derive, effect, type Read, reader, type Val, type Writable } from "../core/signal";
+import { Cell, derive, effect, type Read, reader, type Val, type Writable } from "../core/cell";
 import {
   requireLerp,
   requireLinear,

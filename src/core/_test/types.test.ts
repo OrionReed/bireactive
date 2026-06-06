@@ -55,7 +55,7 @@ function _probes(): void {
   // `Read<Inner<Vec>>` accepts anything with `{ readonly value; peek() }` (bare
   // Vec, Writable<Vec>, custom readers). Stricter `(p: Vec)` accepts only bare
   // Vec — Writable<Vec>'s lifted invertibles mismatch TS's variance check.
-  function readVec(p: import("../signal").Read<{ x: number; y: number }>) {
+  function readVec(p: import("../cell").Read<{ x: number; y: number }>) {
     return p.value;
   }
   void readVec(v); // ✓ Writable<Vec> has readable value

@@ -1,4 +1,4 @@
-// signal.ts — symmetric bidirectional reactive engine.
+// cell.ts — symmetric bidirectional reactive engine.
 //
 // Forward propagation is alien-signals verbatim (link/propagate/
 // checkDirty/shallowPropagate, Dirty/Pending/Recursed flags, lazy pull).

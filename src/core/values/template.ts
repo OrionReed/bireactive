@@ -21,7 +21,7 @@
 // rejects the whole edit. Adjacent slots with no literal between them are
 // ambiguous to split — avoid empty inter-slot literals.
 
-import type { Read, Writable } from "../signal";
+import type { Read, Writable } from "../cell";
 import { type Num, num } from "./num";
 import { Str, str } from "./str";
 

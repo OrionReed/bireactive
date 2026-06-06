@@ -3,7 +3,7 @@
 //
 // Plain constants — no reactive wrapping. Use as defaults / arguments.
 
-import type { Inner } from "../signal";
+import type { Inner } from "../cell";
 import type { Vec } from "./vec";
 
 type V = Inner<Vec>;

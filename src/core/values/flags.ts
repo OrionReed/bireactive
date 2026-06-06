@@ -14,7 +14,7 @@
 // writable Bool, `Tri.allOf([f.flag(a), f.flag(b)])` gives all/none/mixed
 // group toggles for free.
 
-import { Cell, type Writable } from "../signal";
+import { Cell, type Writable } from "../cell";
 import type { TraitDict } from "../traits";
 import { Bool } from "./bool";
 

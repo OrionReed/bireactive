@@ -8,7 +8,7 @@
 //   Hofmann, Pierce, Wagner (POPL 2011, "Symmetric Lenses") — complement + PutRL/PutLR.
 
 import { describe, expect, it } from "vitest";
-import type { Writable } from "../signal";
+import type { Writable } from "../cell";
 import {
   applyCasePattern,
   caseMaskOf,

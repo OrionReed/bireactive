@@ -10,7 +10,7 @@
 // writing `"mixed"` is a no-op. Morally `Maybe<Bool>` — the basis for
 // mixed-state checkbox trees and "loading" predicate states.
 
-import { Cell, type Init, type Writable } from "../signal";
+import { Cell, type Init, type Writable } from "../cell";
 import type { TraitDict } from "../traits";
 import type { Bool } from "./bool";
 

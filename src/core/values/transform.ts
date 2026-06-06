@@ -7,7 +7,7 @@
 // (`Transform.translate.x.value = 5` works on writable receivers).
 
 import { type Easing, type Tween, tween } from "../../animation";
-import { Cell, field, type Inner, reader, readNow, type Val, type Writable } from "../signal";
+import { Cell, field, type Inner, reader, readNow, type Val, type Writable } from "../cell";
 import type { Linear, TraitDict } from "../traits";
 import { Num } from "./num";
 import {

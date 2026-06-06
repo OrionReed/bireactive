@@ -29,7 +29,7 @@ export {
   type Val,
   type Writable,
   type WritableBrand,
-} from "./signal";
+} from "./cell";
 export {
   type Equals,
   type Lerp,

@@ -1,7 +1,7 @@
 // Adversarial probe for the explicit-deps shape of network().
 
 import { describe, expect, it } from "vitest";
-import { batch, cell, effect, network } from "../signal";
+import { batch, cell, effect, network } from "../cell";
 import { num } from "../values/num";
 
 describe("explicit-deps: construction", () => {
@@ -828,7 +828,7 @@ describe("multi-manual: shared deps, varied flush order", () => {
     const x = num(0);
     const seenA: { value: number; dirtyHas: boolean }[] = [];
     const seenB: { value: number; dirtyHas: boolean }[] = [];
-    const xAny = x as unknown as import("../signal").Cell<unknown>;
+    const xAny = x as unknown as import("../cell").Cell<unknown>;
     const a = network(
       [x],
       d => {

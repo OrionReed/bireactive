@@ -18,7 +18,7 @@ import {
   type Val,
   type Writable,
   type WritableBrand,
-} from "../signal";
+} from "../cell";
 import type { Linear, Pack, TraitDict } from "../traits";
 import { Bool } from "./bool";
 import { Num, num } from "./num";
