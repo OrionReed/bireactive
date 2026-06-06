@@ -11,7 +11,14 @@
 // min/max). For rigid edge-to-edge layouts use `attach`,
 // `centerInside`, etc.
 
-import { type Box, isCell, type Num as NumClass, type Read, readNow, type Writable } from "@bireactive/core";
+import {
+  type Box,
+  isCell,
+  type Num as NumClass,
+  type Read,
+  readNow,
+  type Writable,
+} from "@bireactive/core";
 import { type Propagator, propagator } from "./propagator";
 
 type Num = NumClass;

@@ -3,10 +3,10 @@
 // over-firing effects, source mutated on read, or cross-lens complement corruption.
 
 import { describe, expect, it } from "vitest";
+import { effect, network, untracked } from "../cell";
 import { bestFitCircleLens, bestFitLineLens, scaleAbout } from "../lenses/closed-form-policies";
 import { spreadOf } from "../lenses/domain-aggregates";
 import { bboxLens } from "../lenses/factor-lens";
-import { effect, network, untracked } from "../cell";
 import { num } from "../values/num";
 import { vec } from "../values/vec";
 

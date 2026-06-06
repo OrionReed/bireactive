@@ -1,5 +1,3 @@
-export * from "./lenses";
-export { each, type Lifecycle } from "./lifecycle";
 export {
   batch,
   Cell,
@@ -30,6 +28,8 @@ export {
   type Writable,
   type WritableBrand,
 } from "./cell";
+export * from "./lenses";
+export { each, type Lifecycle } from "./lifecycle";
 export {
   type Equals,
   type Lerp,

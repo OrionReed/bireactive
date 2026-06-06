@@ -5,16 +5,7 @@
 // `field()` (propagates writability); `derived()` wraps RO views.
 
 import { type Easing, type Tween, tween } from "../../animation";
-import {
-  Cell,
-  derived,
-  field,
-  type Init,
-  reader,
-  readNow,
-  type Val,
-  type Writable,
-} from "../cell";
+import { Cell, derived, field, type Init, reader, readNow, type Val, type Writable } from "../cell";
 import type { Linear, Pack, Pivotal, TraitDict } from "../traits";
 import { Num, num } from "./num";
 
