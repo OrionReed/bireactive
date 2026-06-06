@@ -21,7 +21,7 @@
 // writes a result that becomes its value, so it uses `scratch2` (a feedback-
 // safe pair) to avoid reading and writing the same texture.
 
-import { Cell, derived, reader, type Val, type Writable } from "../cell";
+import { cachedDerive, Cell, reader, type Val, type Writable } from "../cell";
 import type { TraitDict } from "../traits";
 import { Bool } from "./bool";
 import { Color } from "./color";
@@ -546,7 +546,7 @@ export class Canvas extends Cell<V> {
 
   /** Dimensions `(w, h)` as a read-only `Vec`. */
   get dimensions(): Vec {
-    return derived(this, "dimensions", Vec, v => ({ x: v.w, y: v.h }));
+    return cachedDerive(this, "dimensions", Vec, v => ({ x: v.w, y: v.h }));
   }
 
   /** A GPU per-pixel spring driver seeded from this value's texture. The

@@ -6,7 +6,7 @@
 import { type Easing, type Tween, tween } from "../../animation";
 import {
   Cell,
-  derived,
+  cachedDerive,
   field,
   type Init,
   type Inner,
@@ -204,7 +204,7 @@ export class Box extends Cell<V> {
     return field(this, "h", Num);
   }
   get area() {
-    return derived(this, "area", Num, b => b.w * b.h);
+    return cachedDerive(this, "area", Num, b => b.w * b.h);
   }
 
   /** Vec at parametric (u, v) within `[0,1]²`. Not memoised (arbitrary

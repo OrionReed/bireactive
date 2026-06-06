@@ -1215,13 +1215,6 @@ export function cell<T>(initial: T | Writable<Cell<T>>, opts?: CellOptions<T>): 
   return new Cell(initial as T, opts) as Writable<Cell<T>>;
 }
 
-export function computed<T>(fn: () => T): Cell<T> {
-  const cell = new Cell<T>(undefined as never);
-  cell.flags = F.Mutable | F.Dirty;
-  cell.getter = fn;
-  return cell;
-}
-
 // Bare (untyped) factories. Construct a plain `Cell`, inferring `R`
 // from the closures (the polymorphic-`this` statics are for typed
 // subclasses like `Vec.lens`).
@@ -1644,8 +1637,8 @@ export function network(
 
 // ── value-class authoring helpers ──────────────────────────────────
 //
-// `field`/`derived` are the two getter forms a value class declares. The
-// choice between them IS the local declaration of writability at each
+// `field`/`cachedDerive` are the two getter forms a value class declares.
+// The choice between them IS the local declaration of writability at each
 // getter (mirroring `: this` invertible method returns). For arbitrary
 // cached views, use `lazy()` directly.
 
@@ -1671,14 +1664,15 @@ export function field<
   ) as never;
 }
 
-/** Read-only derived view via `Cls.derive(parent, fn)`. Cached per
- *  (instance, key); always bare `Cls` (RO).
+/** Read-only derived view via `Cls.derive(parent, fn)`, memoized per
+ *  (instance, key); always bare `Cls` (RO). The cache is the point — the
+ *  getter form, not a new kind of cell.
  *
  *      get magnitude() {
- *        return derived(this, "magnitude", Num, v => Math.hypot(v.x, v.y));
+ *        return cachedDerive(this, "magnitude", Num, v => Math.hypot(v.x, v.y));
  *      } */
 // biome-ignore lint/suspicious/noExplicitAny: variance escape, mirrors Cls.derive
-export function derived<S extends Cell<any>, C extends new (...args: never[]) => Cell<any>>(
+export function cachedDerive<S extends Cell<any>, C extends new (...args: never[]) => Cell<any>>(
   parent: S,
   key: string | symbol,
   Cls: C,

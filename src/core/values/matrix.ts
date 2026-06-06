@@ -8,7 +8,7 @@
 
 import {
   Cell,
-  derived,
+  cachedDerive,
   field,
   type Init,
   type Inner,
@@ -147,7 +147,7 @@ export class Matrix extends Cell<V> {
   }
 
   get determinant() {
-    return derived(this, "determinant", Num, determinant);
+    return cachedDerive(this, "determinant", Num, determinant);
   }
 }
 

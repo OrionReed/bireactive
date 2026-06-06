@@ -2,10 +2,19 @@
 //
 // Invertibles return `: this` and ride on `Cell#lens(fwd, bwd)`;
 // chained calls compose into a lens chain. Field-lens getters use
-// `field()` (propagates writability); `derived()` wraps RO views.
+// `field()` (propagates writability); `cachedDerive()` wraps RO views.
 
 import { type Easing, type Tween, tween } from "../../animation";
-import { Cell, derived, field, type Init, reader, readNow, type Val, type Writable } from "../cell";
+import {
+  cachedDerive,
+  Cell,
+  field,
+  type Init,
+  reader,
+  readNow,
+  type Val,
+  type Writable,
+} from "../cell";
 import type { Linear, Pack, Pivotal, TraitDict } from "../traits";
 import { Num, num } from "./num";
 
@@ -184,7 +193,7 @@ export class Vec extends Cell<V> {
     return field(this, "y", Num);
   }
   get magnitude() {
-    return derived(this, "magnitude", Num, v => Math.hypot(v.x, v.y));
+    return cachedDerive(this, "magnitude", Num, v => Math.hypot(v.x, v.y));
   }
 
   /** Tween-builder; `this: Writable<Vec>` gates the call to writable

@@ -7,7 +7,7 @@ import { type Easing, type Tween, tween } from "../../animation";
 import {
   Cell,
   derive,
-  derived,
+  cachedDerive,
   field,
   type Init,
   lazy,
@@ -99,7 +99,7 @@ export class Color extends Cell<V> {
     return field(this, "a", Num);
   }
   get luminance() {
-    return derived(this, "luminance", Num, c => 0.299 * c.r + 0.587 * c.g + 0.114 * c.b);
+    return cachedDerive(this, "luminance", Num, c => 0.299 * c.r + 0.587 * c.g + 0.114 * c.b);
   }
   get css(): Cell<string> {
     return lazy(this, "css", () =>

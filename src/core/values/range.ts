@@ -9,7 +9,7 @@
 import { type Easing, type Tween, tween } from "../../animation";
 import {
   Cell,
-  derived,
+  cachedDerive,
   field,
   type Init,
   isComputed,
@@ -94,10 +94,10 @@ export class Range extends Cell<V> {
   }
 
   get width() {
-    return derived(this, "width", Num, width);
+    return cachedDerive(this, "width", Num, width);
   }
   get center() {
-    return derived(this, "center", Num, center);
+    return cachedDerive(this, "center", Num, center);
   }
 
   /** Translate by `by`. Reads shift the interval; writes shift back. */
