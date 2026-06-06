@@ -1,23 +1,23 @@
-// anim.ts — animator primitives over `Animatable<T, K>` (writable +
-// nominal trait constraint), plus the signals↔generators bridge.
+// animators.ts — animator primitives over `Animatable<T, K>` (writable +
+// nominal trait constraint): the signals↔generators bridge. Lives with the
+// generator runtime; depends on core for the reactive substrate.
 //
 // Signatures read as a sentence ("spring takes a writable carrying T
 // with linear+metric"), so misuse is a compile error: `spring(box, …)`
 // (no metric), `spring(roVec, …)` (not writable).
 
+import { Cell, derive, effect, type Read, reader, type Val, type Writable } from "../core/signal";
 import {
-  type Animator,
-  drive,
-  type Easing,
-  easeOut,
-  isGenerator,
-  race,
-  suspend,
-  type Tick,
-  type Yieldable,
-} from "../animation";
-import { Cell, derive, effect, type Read, reader, type Val, type Writable } from "./signal";
-import { requireLerp, requireLinear, requireMetric, type TraitKey, type Traits } from "./traits";
+  requireLerp,
+  requireLinear,
+  requireMetric,
+  type TraitKey,
+  type Traits,
+} from "../core/traits";
+import type { Yieldable } from "./anim";
+import { type Animator, isGenerator, type Tick } from "./anim";
+import { drive, race, suspend } from "./combinators";
+import { type Easing, easeOut } from "./easings";
 
 const defaultEase = easeOut;
 

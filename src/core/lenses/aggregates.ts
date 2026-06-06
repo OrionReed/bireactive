@@ -5,10 +5,10 @@
 // (`(target) => updates`) skips the peek loop on the hot path;
 // stateful-bwd (`(target, vals) => updates`) reads the scratch.
 
-import type { Cell, Writable } from "./signal";
-import type { Linear } from "./traits";
-import { Num } from "./values/num";
-import { Vec } from "./values/vec";
+import type { Cell, Writable } from "../signal";
+import type { Linear } from "../traits";
+import { Num } from "../values/num";
+import { Vec } from "../values/vec";
 
 type V = { x: number; y: number };
 

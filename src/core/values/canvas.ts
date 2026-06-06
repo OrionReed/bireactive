@@ -21,9 +21,8 @@
 // writes a result that becomes its value, so it uses `scratch2` (a feedback-
 // safe pair) to avoid reading and writing the same texture.
 
-import { Cell, reader, type Val, type Writable } from "../signal";
+import { Cell, derived, reader, type Val, type Writable } from "../signal";
 import type { TraitDict } from "../traits";
-import { derived } from "../writable";
 import { Bool } from "./bool";
 import { Color } from "./color";
 import {

@@ -3,10 +3,11 @@
 // Invertibles (`add`, `sub`, `scale`, `expand`) return `: this` and ride
 // on `Cell#lens(fwd, bwd)`. Chained calls compose into a lens chain.
 
-import type { Easing } from "../../animation";
-import { type Tween, tween } from "../anim";
+import { type Easing, type Tween, tween } from "../../animation";
 import {
   Cell,
+  derived,
+  field,
   type Init,
   type Inner,
   isComputed,
@@ -19,7 +20,6 @@ import {
   type WritableBrand,
 } from "../signal";
 import type { Linear, Pack, TraitDict } from "../traits";
-import { derived, field } from "../writable";
 import { Bool } from "./bool";
 import { Num, num } from "./num";
 import { Vec } from "./vec";

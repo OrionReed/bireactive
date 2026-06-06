@@ -1,4 +1,4 @@
-// network-utils.ts — reactive-collection lifecycle helpers over the
+// lifecycle.ts — reactive-collection lifecycle helpers over the
 // `network` model. Implemented purely via `effect`:
 //
 //   `each(source, body)` — body runs per element (keyed by reference

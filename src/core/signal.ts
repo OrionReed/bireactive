@@ -1639,3 +1639,89 @@ export function network(
   node._initWithHandle(handle, deps as readonly Cell<unknown>[]);
   return handle;
 }
+
+// MISC stuff used by a few places, to revisit...
+
+// ── value-class authoring helpers ──────────────────────────────────
+//
+// `field`/`derived` are the two getter forms a value class declares. The
+// choice between them IS the local declaration of writability at each
+// getter (mirroring `: this` invertible method returns). For arbitrary
+// cached views, use `lazy()` directly.
+
+/** Bidirectional field lens onto `parent.value[key]`; write spread-
+ *  replaces the composite. Cached per (instance, key). Return type is
+ *  conditional: `Writable<Cls>` on a writable parent, bare `Cls` on RO.
+ *
+ *      get x() { return field(this, "x", Num); } */
+export function field<
+  // biome-ignore lint/suspicious/noExplicitAny: variance escape on Cls.lens
+  S extends Cell<any>,
+  K extends keyof Inner<S>,
+  C extends new (
+    ...args: never[]
+  ) => Cell<Inner<S>[K]>,
+>(
+  parent: S,
+  key: K,
+  Cls: C,
+): S extends WritableBrand ? Writable<InstanceType<C>> : InstanceType<C> {
+  return lazy(parent, key as string | symbol, () =>
+    Cell.fieldOf(parent as unknown as Cell<unknown>, key as string | symbol, Cls),
+  ) as never;
+}
+
+/** Read-only derived view via `Cls.derive(parent, fn)`. Cached per
+ *  (instance, key); always bare `Cls` (RO).
+ *
+ *      get magnitude() {
+ *        return derived(this, "magnitude", Num, v => Math.hypot(v.x, v.y));
+ *      } */
+// biome-ignore lint/suspicious/noExplicitAny: variance escape, mirrors Cls.derive
+export function derived<S extends Cell<any>, C extends new (...args: never[]) => Cell<any>>(
+  parent: S,
+  key: string | symbol,
+  Cls: C,
+  fn: (v: Inner<S>) => Inner<InstanceType<C>>,
+): InstanceType<C> {
+  // biome-ignore lint/suspicious/noExplicitAny: variance escape on Cls.derive
+  return lazy(parent, key, () => (Cls as any).derive(parent, fn)) as InstanceType<C>;
+}
+
+// ── dependency-graph introspection ─────────────────────────────────
+
+// One node in the engine's dep linked list; we only read `dep`/`nextDep`.
+interface DepLink {
+  dep: Cell<unknown>;
+  nextDep: DepLink | undefined;
+}
+
+/** Every cell `s` transitively depends on, including itself. Raw cells
+ *  return `{s}`; lens chains return the chain plus all parents. BFS,
+ *  peeking each Computed to populate deps; the `seen` set breaks cycles.
+ *  Used by `Propagators` to expand declared reads into their transitive
+ *  parent set. Inspection is safe: it only reads engine state and peeks
+ *  `.value` (idempotent for lazy Computeds). */
+export function transitiveDeps(s: Cell<unknown>): Set<Cell<unknown>> {
+  const seen = new Set<Cell<unknown>>();
+  const queue: Cell<unknown>[] = [s];
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    // Cast to reach engine fields the typed Cell<T> shape doesn't surface.
+    const c = cur as unknown as {
+      getter?: () => unknown;
+      deps?: DepLink | undefined;
+    };
+    if (c.getter !== undefined) {
+      void cur.value;
+      let l: DepLink | undefined = c.deps;
+      while (l !== undefined) {
+        queue.push(l.dep);
+        l = l.nextDep;
+      }
+    }
+  }
+  return seen;
+}

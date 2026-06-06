@@ -1,9 +1,9 @@
-// new-primitives.ts — building blocks over the N-input `Cls.lens` /
-// `Cls.derive` forms. All are a few lines on top of the engine.
+// geometry.ts — geometric lens building blocks over the N-input
+// `Cls.lens` / `Cls.derive` forms. All are a few lines on top of the engine.
 
-import type { Cell, Writable } from "./signal";
-import { Num } from "./values/num";
-import { Vec } from "./values/vec";
+import type { Cell, Writable } from "../signal";
+import { Num } from "../values/num";
+import { Vec } from "../values/vec";
 
 type V = { x: number; y: number };
 

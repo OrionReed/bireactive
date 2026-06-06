@@ -25,7 +25,7 @@ import {
   requirePack,
   type Writable,
 } from "../core";
-import { when } from "../core/network-utils";
+import { when } from "../core/lifecycle";
 import { type Phase, reactivePipeline } from "./phases";
 import { Solver, type SolverOpts } from "./solver";
 

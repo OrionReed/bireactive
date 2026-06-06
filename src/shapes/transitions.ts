@@ -2,8 +2,15 @@
 // is the time-varying part only — a `Tween` (single-axis) or `Yieldable[]`
 // (multi-axis). Either way callers `yield transitionName(s)`.
 
-import { type Easing, easeIn, easeInOut, easeOut, type Yieldable } from "@bireactive/animation";
-import { Dir, type Inner, tween, type Val, type Vec } from "@bireactive/core";
+import {
+  type Easing,
+  easeIn,
+  easeInOut,
+  easeOut,
+  tween,
+  type Yieldable,
+} from "@bireactive/animation";
+import { Dir, type Inner, type Val, type Vec } from "@bireactive/core";
 
 import type { Has } from "./shape";
 

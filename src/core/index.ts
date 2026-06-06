@@ -1,40 +1,14 @@
-export {
-  argminNum,
-  argminVec,
-  centroidLens,
-  clampToDisc,
-  meanLens,
-  midpointLens,
-} from "./aggregates";
-export {
-  type Animatable,
-  attract,
-  driven,
-  every,
-  loop,
-  not,
-  type Play,
-  play,
-  type SpringOpts,
-  spring,
-  Tween,
-  toward,
-  tween,
-  untilChange,
-  wave,
-  when,
-} from "./anim";
-export { transitiveDeps } from "./introspect";
 export * from "./lenses";
-export { each, type Lifecycle } from "./network-utils";
-export { reflectionLens } from "./new-primitives";
+export { each, type Lifecycle } from "./lifecycle";
 export {
   batch,
   Cell,
   type CellOptions,
   cell,
   derive,
+  derived,
   effect,
+  field,
   type Init,
   type Inner,
   isCell,
@@ -50,6 +24,7 @@ export {
   type StatefulBwd,
   type StatefulLensSpec,
   setCellWriteHook,
+  transitiveDeps,
   untracked,
   type Val,
   type Writable,
@@ -71,16 +46,6 @@ export {
   type TraitDict,
   type Traits,
 } from "./traits";
-export {
-  allNodes,
-  atPath,
-  isLeaf,
-  leavesOf,
-  node as treeNode,
-  nodeCount,
-  type TreeNode,
-  walkTree,
-} from "./tree";
 export { Anchor, Dir } from "./values/anchor";
 export { Audio, type AudioClip, audio, stamp as audioStamp } from "./values/audio";
 export * as BoolMath from "./values/bool";
@@ -142,4 +107,3 @@ export * as TriMath from "./values/tri";
 export { Tri, tri } from "./values/tri";
 export * as VecMath from "./values/vec";
 export { type PolarPolicy, polar, tangentPoint, Vec, vec } from "./values/vec";
-export { derived, field } from "./writable";

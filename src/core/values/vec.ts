@@ -4,11 +4,18 @@
 // chained calls compose into a lens chain. Field-lens getters use
 // `field()` (propagates writability); `derived()` wraps RO views.
 
-import type { Easing } from "../../animation";
-import { type Tween, tween } from "../anim";
-import { Cell, type Init, reader, readNow, type Val, type Writable } from "../signal";
+import { type Easing, type Tween, tween } from "../../animation";
+import {
+  Cell,
+  derived,
+  field,
+  type Init,
+  reader,
+  readNow,
+  type Val,
+  type Writable,
+} from "../signal";
 import type { Linear, Pack, Pivotal, TraitDict } from "../traits";
-import { derived, field } from "../writable";
 import { Num, num } from "./num";
 
 type V = { x: number; y: number };

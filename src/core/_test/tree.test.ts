@@ -2,7 +2,15 @@
 // behaviour lives in user code wrapping it with `Cls.lens` / `Cls.derive`.
 
 import { describe, expect, it } from "vitest";
-import { allNodes, atPath, isLeaf, leavesOf, nodeCount, treeNode, walkTree } from "../index";
+import {
+  allNodes,
+  atPath,
+  isLeaf,
+  leavesOf,
+  nodeCount,
+  node as treeNode,
+  walkTree,
+} from "../../tree";
 import { Bool, bool } from "../values/bool";
 import { num } from "../values/num";
 

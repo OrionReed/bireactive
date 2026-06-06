@@ -15,7 +15,6 @@
 //
 // `bundle()` is the 1→M case: `factor()` over a single typed source.
 
-import { solveSPD } from "../linalg";
 import {
   type Cell,
   type Inner,
@@ -26,6 +25,7 @@ import {
   Vec,
   type Writable,
 } from "../index";
+import { solveSPD } from "../linalg";
 
 /** Input cell: writable cell whose value class declares the `pack`
  *  trait. Vec, Num, Pose, Box, Color, Range all satisfy this. */

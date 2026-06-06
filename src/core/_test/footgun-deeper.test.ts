@@ -3,8 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { cell, derive, effect, lens, Num, num, transform, Vec, vec } from "../index";
-import { Cell } from "../signal";
-import { field } from "../writable";
+import { Cell, field } from "../signal";
 
 void vec;
 

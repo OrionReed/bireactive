@@ -6,11 +6,9 @@
 // nested chains
 // (`Transform.translate.x.value = 5` works on writable receivers).
 
-import type { Easing } from "../../animation";
-import { type Tween, tween } from "../anim";
-import { Cell, type Inner, reader, readNow, type Val, type Writable } from "../signal";
+import { type Easing, type Tween, tween } from "../../animation";
+import { Cell, field, type Inner, reader, readNow, type Val, type Writable } from "../signal";
 import type { Linear, TraitDict } from "../traits";
-import { field } from "../writable";
 import { Num } from "./num";
 import {
   Vec,

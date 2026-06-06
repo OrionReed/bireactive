@@ -6,10 +6,11 @@
 // bidirectional `t ↔ lo + t·(hi - lo)` iso. Traits: `linear`, `lerp`,
 // `equals`, `pack` (scalar-only).
 
-import type { Easing } from "../../animation";
-import { type Tween, tween } from "../anim";
+import { type Easing, type Tween, tween } from "../../animation";
 import {
   Cell,
+  derived,
+  field,
   type Init,
   isComputed,
   reader,
@@ -19,7 +20,6 @@ import {
   type WritableBrand,
 } from "../signal";
 import type { Linear, Pack, TraitDict } from "../traits";
-import { derived, field } from "../writable";
 import { Bool } from "./bool";
 import { Num, num } from "./num";
 

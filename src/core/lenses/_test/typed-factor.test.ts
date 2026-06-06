@@ -5,8 +5,8 @@ import { describe, expect, it } from "vitest";
 import { approxWithin } from "../../../_test/_util";
 import type { Writable } from "../../index";
 import { centroidLens, field, meanLens, midpointLens, Num, num, pose, Vec, vec } from "../../index";
-import { diffLens, pulleySum } from "../../new-primitives";
 import { procrustesLens } from "../factor-lens";
+import { diffLens, pulleySum } from "../geometry";
 import { bundle, factor, factorTuple, procrustesTyped } from "../typed-factor";
 
 const { near, vnear } = approxWithin(1e-4);

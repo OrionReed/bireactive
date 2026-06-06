@@ -7,4 +7,14 @@ export * from "./core";
 export * from "./ext";
 export * from "./shapes";
 export * from "./tex";
+export {
+  allNodes,
+  atPath,
+  isLeaf,
+  leavesOf,
+  node as treeNode,
+  nodeCount,
+  type TreeNode,
+  walkTree,
+} from "./tree";
 export * from "./web";

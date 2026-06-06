@@ -3,8 +3,7 @@
 // Invertibles return `: this` and ride on `Cell#lens(fwd, bwd)`;
 // chained calls compose into a lens chain.
 
-import type { Easing } from "../../animation";
-import { type Tween, tween } from "../anim";
+import { type Easing, type Tween, tween } from "../../animation";
 import {
   Cell,
   type Init,

@@ -6,9 +6,17 @@
 //   - `multiply(b)` — inverse multiplies by `invert(b)`
 //   - `invert()`    — its own inverse
 
-import { Cell, type Init, type Inner, reader, type Val, type Writable } from "../signal";
+import {
+  Cell,
+  derived,
+  field,
+  type Init,
+  type Inner,
+  reader,
+  type Val,
+  type Writable,
+} from "../signal";
 import type { TraitDict } from "../traits";
-import { derived, field } from "../writable";
 import { Num, num } from "./num";
 import type { Vec } from "./vec";
 

@@ -4,21 +4,21 @@
 // Verifies: tween, chain, parallel, detach, race, until, then, at,
 // spring, toward, from, driven.
 
-import { Anim, detach, linear, race, suspend } from "@bireactive/animation";
 import {
-  cell,
+  Anim,
+  detach,
   driven,
-  effect,
+  linear,
   not,
-  num,
   play,
+  race,
   spring,
+  suspend,
   Tween,
   toward,
-  transform,
-  vec,
   when,
-} from "@bireactive/core";
+} from "@bireactive/animation";
+import { cell, effect, num, transform, vec } from "@bireactive/core";
 import { describe, expect, it } from "vitest";
 
 function tick(anim: Anim, frames: number, dt = 1 / 60): void {
@@ -89,9 +89,10 @@ describe("animation", () => {
       })(),
     );
     tick(anim, 30);
-    expect(approx(v.value.x, 50, 1) && approx(v.value.y, 25, 1), "Vec halfway: x ≈ 50, y ≈ 25").toBe(
-      true,
-    );
+    expect(
+      approx(v.value.x, 50, 1) && approx(v.value.y, 25, 1),
+      "Vec halfway: x ≈ 50, y ≈ 25",
+    ).toBe(true);
     tick(anim, 30);
     expect(v.value.x === 100 && v.value.y === 50, "Vec done: x === 100, y === 50").toBe(true);
   });

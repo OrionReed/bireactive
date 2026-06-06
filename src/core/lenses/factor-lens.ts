@@ -16,8 +16,8 @@
 //
 // `bundleLens` sketches the 1→M dual (single source → M coupled views).
 
-import { solveSPD } from "../linalg";
 import { type Cell, Num, Vec, type Writable } from "../index";
+import { solveSPD } from "../linalg";
 
 // factorLens — generic Jacobian-LSQ N→M.
 //

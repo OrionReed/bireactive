@@ -9,7 +9,24 @@ export {
   type Tick,
   type Yieldable,
 } from "./anim";
-
+export {
+  type Animatable,
+  attract,
+  driven,
+  every,
+  loop,
+  not,
+  type Play,
+  play,
+  type SpringOpts,
+  spring,
+  Tween,
+  toward,
+  tween,
+  untilChange,
+  wave,
+  when,
+} from "./animators";
 export {
   all,
   allSettled,
@@ -26,5 +43,4 @@ export {
   untilEvent,
   untilPromise,
 } from "./combinators";
-
 export { type Easing, easeIn, easeInOut, easeOut, linear } from "./easings";

@@ -4,8 +4,8 @@
 // `yield*`, signal write attribution, latch (safety/liveness), the
 // fluent claim builder, intervals(), and firstOf event ordering.
 
-import { Anim, type Animator } from "@bireactive/animation";
-import { cell, derive, num, spring, tween } from "@bireactive/core";
+import { Anim, type Animator, spring, tween } from "@bireactive/animation";
+import { cell, derive, num } from "@bireactive/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   activeRecorder,

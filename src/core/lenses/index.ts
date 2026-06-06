@@ -11,6 +11,16 @@
 // See BIDIRECTIONAL-LENSES.md for the engine substrate.
 
 export {
+  type ArgminOpts,
+  type ArgminVecOpts,
+  argminNum,
+  argminVec,
+  centroidLens,
+  clampToDisc,
+  meanLens,
+  midpointLens,
+} from "./aggregates";
+export {
   bestFitCircleLens,
   bestFitLineLens,
   pcaLens,
@@ -42,6 +52,17 @@ export {
   procrustesJacobianLens,
   procrustesLens,
 } from "./factor-lens";
+export {
+  angleLens,
+  bezier2,
+  bezier3,
+  clampedMean,
+  diffLens,
+  distanceLens,
+  pulleySum,
+  reflectionLens,
+  vecLerp,
+} from "./geometry";
 export {
   type ContinuousOpts,
   continuous,

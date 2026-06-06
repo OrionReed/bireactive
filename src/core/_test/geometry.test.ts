@@ -1,4 +1,4 @@
-// new-primitives.test.ts — primitives natural under N-input lenses.
+// geometry.test.ts — geometric lens primitives over N-input lenses.
 
 import { describe, expect, it } from "vitest";
 import { cell, num, vec } from "../index";
@@ -12,7 +12,7 @@ import {
   pulleySum,
   reflectionLens,
   vecLerp,
-} from "../new-primitives";
+} from "../lenses/geometry";
 
 describe("distanceLens", () => {
   it("computes Euclidean distance", () => {
