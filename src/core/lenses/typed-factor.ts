@@ -15,6 +15,7 @@
 //
 // `bundle()` is the 1→M case: `factor()` over a single typed source.
 
+import { solveSPD } from "../linalg";
 import {
   type Cell,
   type Inner,
@@ -154,9 +155,9 @@ export function factor<
   const flatOutPerturbed = new Float64Array(M);
   const J = new Float64Array(M * N);
   const A = new Float64Array(M * M);
-  const Ainv = new Float64Array(M * M);
+  // `dy` carries the sparse residual in, then the solve overwrites it
+  // with `k` in place (SPD LDLᵀ destroys A and writes the solution here).
   const dy = new Float64Array(M);
-  const kvec = new Float64Array(M);
 
   // Per-write driver, shared by all M cells.
   const computeBwd = (
@@ -234,7 +235,7 @@ export function factor<
       }
     }
 
-    // 5. A = J W J^T + λI
+    // 5. A = J W J^T + λI  (SPD by construction: W ≥ 0, λ > 0).
     for (let r = 0; r < M; r++) {
       for (let c = 0; c < M; c++) {
         let s = 0;
@@ -245,14 +246,9 @@ export function factor<
       }
     }
 
-    // 6. Solve A · k = δy
-    if (!invertMatrix(A, M, Ainv)) {
+    // 6. Solve A · k = δy in place (LDLᵀ; `dy` is overwritten with k).
+    if (!solveSPD(A, dy, M)) {
       return vals.map(() => undefined);
-    }
-    for (let r = 0; r < M; r++) {
-      let s = 0;
-      for (let c = 0; c < M; c++) s += Ainv[r * M + c]! * dy[c]!;
-      kvec[r] = s;
     }
 
     // 7. δx = W J^T k, applied to flatIn → produces new flat input vector.
@@ -267,7 +263,7 @@ export function factor<
         const w = weights[flatIdx]!;
         if (w === 0) continue;
         let dxi = 0;
-        for (let r = 0; r < M; r++) dxi += J[r * N + flatIdx]! * kvec[r]!;
+        for (let r = 0; r < M; r++) dxi += J[r * N + flatIdx]! * dy[r]!;
         const newVal = flatIn[flatIdx]! + w * dxi;
         if (newVal !== flatIn[flatIdx]) anyChange = true;
         flatIn[flatIdx] = newVal;
@@ -380,47 +376,6 @@ export function bundle<
 
 // For field-style bundles, `field()` already covers the independent case;
 // use `bundle()` when you want coupled writes through the Jacobian solve.
-
-// Matrix inverse (Gauss-Jordan with partial pivoting).
-function invertMatrix(A: Float64Array, M: number, out: Float64Array): boolean {
-  const W = 2 * M;
-  const aug = new Float64Array(M * W);
-  for (let r = 0; r < M; r++) {
-    for (let c = 0; c < M; c++) aug[r * W + c] = A[r * M + c]!;
-    for (let c = 0; c < M; c++) aug[r * W + M + c] = r === c ? 1 : 0;
-  }
-  for (let i = 0; i < M; i++) {
-    let p = i;
-    let pv = Math.abs(aug[i * W + i]!);
-    for (let r = i + 1; r < M; r++) {
-      const v = Math.abs(aug[r * W + i]!);
-      if (v > pv) {
-        pv = v;
-        p = r;
-      }
-    }
-    if (pv < 1e-14) return false;
-    if (p !== i) {
-      for (let c = 0; c < W; c++) {
-        const t = aug[i * W + c]!;
-        aug[i * W + c] = aug[p * W + c]!;
-        aug[p * W + c] = t;
-      }
-    }
-    const inv = 1 / aug[i * W + i]!;
-    for (let c = 0; c < W; c++) aug[i * W + c] *= inv;
-    for (let r = 0; r < M; r++) {
-      if (r === i) continue;
-      const f = aug[r * W + i]!;
-      if (f === 0) continue;
-      for (let c = 0; c < W; c++) aug[r * W + c] -= f * aug[i * W + c]!;
-    }
-  }
-  for (let r = 0; r < M; r++) {
-    for (let c = 0; c < M; c++) out[r * M + c] = aug[r * W + M + c]!;
-  }
-  return true;
-}
 
 // Sugar: closed-form Procrustes via factor() typed API.
 //

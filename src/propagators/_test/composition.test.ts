@@ -3,8 +3,8 @@
 // without modification.
 
 import { describe, expect, it } from "vitest";
-import { effect, Num, num, Vec, vec } from "../../core";
-import { add, eq, propagators } from "..";
+import { centroidLens, effect, Num, num, Vec, vec } from "../../core";
+import { add, eq, propagator, propagators } from "..";
 
 describe("composition: non-coloring", () => {
   it("plain Num signals participate in propagators", () => {
@@ -217,6 +217,140 @@ describe("composition: typed cells without explicit Cell wrapper", () => {
     expect(root.value.x).toBe(99);
     expect(root.value.y).toBe(20); // y untouched
 
+    p.dispose();
+  });
+});
+
+// Lens × propagator routing guarantees. A reader propagator reading a lens
+// must subscribe transitively to the lens's parents, and that cascade has to
+// hold even when the parent is written by another propagator *within the same
+// settle* (AUTO-EXPAND closes that freshness gap). The write direction and
+// ordering behaviour is pinned here too.
+describe("composition: lens × propagator routing", () => {
+  it("in-fixpoint cascade: writer→parent→lens→reader settles in one fire", () => {
+    const trigger = num(0);
+    const a = num(0);
+    const doubled = a.scale(2);
+    const out = num(0);
+
+    const p = propagators();
+    p.add(
+      propagator([trigger], [a], () => {
+        a.value = trigger.value;
+      }),
+    );
+    p.add(
+      propagator([doubled], [out], () => {
+        out.value = doubled.value;
+      }),
+    );
+
+    trigger.value = 5;
+    expect(a.value).toBe(5);
+    expect(doubled.value).toBe(10);
+    expect(out.value).toBe(10); // reader saw the in-fixpoint parent write
+    p.dispose();
+  });
+
+  it("in-fixpoint cascade walks a multi-parent lens chain", () => {
+    const trigger = num(0);
+    const a = num(0);
+    const b = num(3);
+    const big = a.add(b).scale(2); // two parents: a and b
+    const out = num(0);
+
+    const p = propagators();
+    p.add(
+      propagator([trigger], [a], () => {
+        a.value = trigger.value;
+      }),
+    );
+    p.add(
+      propagator([big], [out], () => {
+        out.value = big.value;
+      }),
+    );
+
+    trigger.value = 4;
+    expect(out.value).toBe(14); // (4 + 3) * 2
+    b.value = 5;
+    expect(out.value).toBe(18); // (4 + 5) * 2 — the other parent is live too
+    p.dispose();
+  });
+
+  it("propagator write through an N-parent centroid lens redistributes", () => {
+    const verts = [vec(0, 0), vec(10, 0), vec(5, 10)];
+    const cent = centroidLens(verts);
+    const target = vec(100, 100);
+
+    const p = propagators();
+    p.add(
+      propagator([target], [cent], () => {
+        cent.value = target.value;
+      }),
+    );
+
+    // Initial centroid (5, 10/3); the delta to (100, 100) shifts every vert.
+    expect(verts[0]!.value.x).toBeCloseTo(95);
+    expect(verts[1]!.value.x).toBeCloseTo(105);
+    expect(verts[2]!.value.x).toBeCloseTo(100);
+    p.dispose();
+  });
+
+  it("two propagators writing one lens: the later-listed one wins per fire", () => {
+    const verts = [vec(0, 0), vec(0, 0), vec(0, 0)];
+    const cent = centroidLens(verts);
+    const target1 = vec(10, 0);
+    const target2 = vec(0, 20);
+
+    const p = propagators();
+    p.add(
+      propagator([target1], [cent], () => {
+        cent.value = target1.value;
+      }),
+    );
+    p.add(
+      propagator([target2], [cent], () => {
+        cent.value = target2.value;
+      }),
+    );
+
+    expect(cent.value).toEqual({ x: 0, y: 20 }); // second writer runs later
+    p.dispose();
+  });
+
+  it("disposing the network leaves the lens chain functional", () => {
+    const a = num(0);
+    const b = num(0);
+    const sum = a.add(b);
+    const out = num(0);
+
+    const p = propagators();
+    p.add(
+      propagator([sum], [out], () => {
+        out.value = sum.value;
+      }),
+    );
+    a.value = 5;
+    expect(out.value).toBe(5);
+
+    p.dispose();
+    a.value = 10;
+    expect(sum.value).toBe(10); // the lens is its own cell, still computes
+    expect(out.value).toBe(5); // the propagator stopped firing
+  });
+
+  it("bidirectional add overwrites the third cell on its initial fire", () => {
+    // add(a, b, c) installs a forward (a+b→c) propagator that fires on
+    // install, so a pre-set `c` is clobbered. Write the driver after install
+    // if you need `c` respected.
+    const a = num(0);
+    const b = num(0);
+    const c = num(7);
+
+    const p = propagators();
+    p.add(add(a, b, c));
+    expect(c.value).toBe(0); // a + b = 0 overwrote the initial 7
     p.dispose();
   });
 });

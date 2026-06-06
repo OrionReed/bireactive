@@ -16,6 +16,7 @@
 //
 // `bundleLens` sketches the 1→M dual (single source → M coupled views).
 
+import { solveSPD } from "../linalg";
 import { type Cell, Num, Vec, type Writable } from "../index";
 
 // factorLens — generic Jacobian-LSQ N→M.
@@ -48,13 +49,12 @@ export function factorLens(
   const lambda = opts.damping ?? 1e-6;
 
   // Per-call (NOT per-cell) scratch; safe because writes execute
-  // synchronously inside `_setWithExclusion`.
+  // synchronously inside `_setWithExclusion`. `dy` carries the residual
+  // in, then the SPD solve overwrites it with `k` in place.
   const J = new Array<number>(M * N);
   const A = new Array<number>(M * M);
-  const Ainv = new Array<number>(M * M);
   const ys = new Array<number>(M);
   const dy = new Array<number>(M);
-  const kvec = new Array<number>(M);
 
   const outputs: Writable<Num>[] = [];
   for (let outIdx = 0; outIdx < M; outIdx++) {
@@ -82,7 +82,7 @@ export function factorLens(
           xsm[i] = saved;
         }
 
-        // A = J W Jᵀ + λI
+        // A = J W Jᵀ + λI  (SPD by construction: w ≥ 0, λ > 0).
         for (let r = 0; r < M; r++) {
           for (let c = 0; c < M; c++) {
             let s = 0;
@@ -91,19 +91,15 @@ export function factorLens(
           }
         }
 
-        if (!invertMatrix(A, M, Ainv)) {
+        // Solve A · k = δy in place (LDLᵀ; `dy` is overwritten with k).
+        if (!solveSPD(A, dy, M)) {
           // Singular — leave inputs unchanged.
           for (let i = 0; i < N; i++) (out as (number | undefined)[])[i] = undefined;
           return out as never;
         }
-        for (let r = 0; r < M; r++) {
-          let s = 0;
-          for (let c = 0; c < M; c++) s += Ainv[r * M + c]! * dy[c]!;
-          kvec[r] = s;
-        }
         for (let i = 0; i < N; i++) {
           let dxi = 0;
-          for (let r = 0; r < M; r++) dxi += J[r * N + i]! * kvec[r]!;
+          for (let r = 0; r < M; r++) dxi += J[r * N + i]! * dy[r]!;
           out[i] = xsm[i]! + w[i]! * dxi;
         }
         return out as never;
@@ -112,49 +108,6 @@ export function factorLens(
     outputs.push(cell);
   }
   return outputs;
-}
-
-/** Gauss-Jordan inverse of a row-major M×M matrix. Returns false if
- *  singular (pivot below 1e-14). Allocates one 2M-wide row buffer.
- *  For M ≤ ~10 this is competitive with LAPACK and avoids the dep. */
-function invertMatrix(A: readonly number[], M: number, out: number[]): boolean {
-  const W = 2 * M;
-  const aug = new Array<number>(M * W);
-  for (let r = 0; r < M; r++) {
-    for (let c = 0; c < M; c++) aug[r * W + c] = A[r * M + c]!;
-    for (let c = 0; c < M; c++) aug[r * W + M + c] = r === c ? 1 : 0;
-  }
-  for (let i = 0; i < M; i++) {
-    let p = i;
-    let pv = Math.abs(aug[i * W + i]!);
-    for (let r = i + 1; r < M; r++) {
-      const v = Math.abs(aug[r * W + i]!);
-      if (v > pv) {
-        pv = v;
-        p = r;
-      }
-    }
-    if (pv < 1e-14) return false;
-    if (p !== i) {
-      for (let c = 0; c < W; c++) {
-        const t = aug[i * W + c]!;
-        aug[i * W + c] = aug[p * W + c]!;
-        aug[p * W + c] = t;
-      }
-    }
-    const inv = 1 / aug[i * W + i]!;
-    for (let c = 0; c < W; c++) aug[i * W + c] = aug[i * W + c]! * inv;
-    for (let r = 0; r < M; r++) {
-      if (r === i) continue;
-      const f = aug[r * W + i]!;
-      if (f === 0) continue;
-      for (let c = 0; c < W; c++) aug[r * W + c] = aug[r * W + c]! - f * aug[i * W + c]!;
-    }
-  }
-  for (let r = 0; r < M; r++) {
-    for (let c = 0; c < M; c++) out[r * M + c] = aug[r * W + M + c]!;
-  }
-  return true;
 }
 
 // meanDiffLens — M=2 isomorphism baseline.
