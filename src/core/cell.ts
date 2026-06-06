@@ -101,10 +101,10 @@ interface Stack<T> {
 // Backward writes reach it via `_writeSource`, attributing lens edits to
 // the source they resolve to.
 
-let writeHook: ((sig: Cell<unknown>) => void) | undefined;
+let writeHook: ((cell: Cell<unknown>) => void) | undefined;
 
 /** Install a hook fired on every source value-change; returns a restore fn. */
-export function setCellWriteHook(fn: ((sig: Cell<unknown>) => void) | undefined): () => void {
+export function setCellWriteHook(fn: ((cell: Cell<unknown>) => void) | undefined): () => void {
   const prev = writeHook;
   writeHook = fn;
   return () => {
@@ -1459,10 +1459,10 @@ export interface Network {
   flush(): void;
   /** Add cells to the topology (idempotent; does NOT fire the body). */
   // biome-ignore lint/suspicious/noExplicitAny: deps come in many flavours
-  subscribe(...sigs: Cell<any>[]): void;
+  subscribe(...cells: Cell<any>[]): void;
   /** Remove cells from the topology (idempotent; does NOT fire). */
   // biome-ignore lint/suspicious/noExplicitAny: deps come in many flavours
-  unsubscribe(...sigs: Cell<any>[]): void;
+  unsubscribe(...cells: Cell<any>[]): void;
 }
 
 type NetworkBody = (dirty: ReadonlySet<Cell<unknown>>, handle: Network) => void;
@@ -1531,10 +1531,10 @@ class _NetworkNode implements ReactiveNode {
 
   private _computeDirty(): ReadonlySet<Cell<unknown>> {
     let dirty: Set<Cell<unknown>> | undefined;
-    for (const [sig, lastVal] of this.lastValues) {
-      if (sig.peek() !== lastVal) {
+    for (const [cell, lastVal] of this.lastValues) {
+      if (cell.peek() !== lastVal) {
         if (dirty === undefined) dirty = new Set();
-        dirty.add(sig);
+        dirty.add(cell);
       }
     }
     return dirty ?? EMPTY_DIRTY;
@@ -1561,8 +1561,8 @@ class _NetworkNode implements ReactiveNode {
       this.lastValues.clear();
       let l = this.deps;
       while (l !== undefined) {
-        const sig = l.dep as Cell<unknown>;
-        this.lastValues.set(sig, sig.peek());
+        const cell = l.dep as Cell<unknown>;
+        this.lastValues.set(cell, cell.peek());
         l = l.nextDep;
       }
     }
@@ -1580,15 +1580,15 @@ class _NetworkNode implements ReactiveNode {
     this._runBody(this._computeDirty());
   }
 
-  subscribe(sigs: readonly Cell<unknown>[]): void {
+  subscribe(cells: readonly Cell<unknown>[]): void {
     if (this.disposed) return;
-    this._linkBatch(sigs);
+    this._linkBatch(cells);
   }
 
-  unsubscribe(sigs: readonly Cell<unknown>[]): void {
+  unsubscribe(cells: readonly Cell<unknown>[]): void {
     if (this.disposed) return;
     const set = this._depsSet;
-    for (const s of sigs) {
+    for (const s of cells) {
       if (!set.has(s)) continue;
       set.delete(s);
       let l = this.deps;
@@ -1602,14 +1602,14 @@ class _NetworkNode implements ReactiveNode {
     }
   }
 
-  private _linkBatch(sigs: readonly Cell<unknown>[]): void {
+  private _linkBatch(cells: readonly Cell<unknown>[]): void {
     const set = this._depsSet;
     let tail = this.deps;
     if (tail !== undefined) {
       while (tail.nextDep !== undefined) tail = tail.nextDep;
     }
     this.depsTail = tail;
-    for (const s of sigs) {
+    for (const s of cells) {
       if (set.has(s)) continue;
       set.add(s);
       link(s as ReactiveNode, this, ++this._ownCycle);
@@ -1633,8 +1633,8 @@ export function network(
   const handle: Network = {
     dispose: () => node._unwatched(),
     flush: () => node.flush(),
-    subscribe: (...sigs) => node.subscribe(sigs),
-    unsubscribe: (...sigs) => node.unsubscribe(sigs),
+    subscribe: (...cells) => node.subscribe(cells),
+    unsubscribe: (...cells) => node.unsubscribe(cells),
   };
   node._initWithHandle(handle, deps as readonly Cell<unknown>[]);
   return handle;
