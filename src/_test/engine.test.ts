@@ -1,7 +1,7 @@
 // engine.test.ts — engine semantics specific to bireactive's impl.
 //
-// RFTS (conformance.test.ts) covers the algorithm-level correctness;
-// this file tests our additions:
+// RFTS (suite/conformance/forward.test.ts) covers the algorithm-level
+// correctness; this file tests our additions:
 //   - peek() honors Dirty
 //   - Constructor takes plain T (binding via the `bind` free fn)
 //   - bind(target, source) — the binding API
@@ -9,67 +9,60 @@
 //   - readNow() unwraps reactives without footgunning plain {value: …}
 
 import { Cell, cell, derive, effect, isCell, Num, readNow } from "@bireactive/core";
-import { describe, it } from "vitest";
-import { check, section } from "./_check";
+import { describe, expect, it } from "vitest";
 
 describe("engine", () => {
-  it("all checks", () => {
-    section("peek() honors Dirty flag");
-    {
-      const s = cell(0);
-      let effectVal = -1;
-      const stop = effect(() => {
-        effectVal = s.value;
-      });
-      s.value = 42;
-      check("peek after write returns new value", s.peek() === 42);
-      check("effect saw new value", effectVal === 42);
-      stop();
-    }
+  it("peek() honors Dirty flag", () => {
+    const s = cell(0);
+    let effectVal = -1;
+    const stop = effect(() => {
+      effectVal = s.value;
+    });
+    s.value = 42;
+    expect(s.peek(), "peek after write returns new value").toBe(42);
+    expect(effectVal, "effect saw new value").toBe(42);
+    stop();
+  });
 
-    section("Constructor: plain T only");
-    {
-      const s = new Cell(7);
-      check("plain init", s.value === 7);
-    }
+  it("Constructor: plain T only", () => {
+    const s = new Cell(7);
+    expect(s.value, "plain init").toBe(7);
+  });
 
-    section("effect-driven mirror — auto-updates with disposer");
-    {
-      const a = cell(2);
-      const s = cell(0);
-      const stop = effect(() => {
-        s.value = a.value * 10;
-      });
-      check("initial computed via effect", s.value === 20);
-      a.value = 5;
-      check("auto-updates on a change", s.value === 50);
-      stop();
-      a.value = 99;
-      check("after dispose, no update", s.value === 50);
-    }
+  it("effect-driven mirror — auto-updates with disposer", () => {
+    const a = cell(2);
+    const s = cell(0);
+    const stop = effect(() => {
+      s.value = a.value * 10;
+    });
+    expect(s.value, "initial computed via effect").toBe(20);
+    a.value = 5;
+    expect(s.value, "auto-updates on a change").toBe(50);
+    stop();
+    a.value = 99;
+    expect(s.value, "after dispose, no update").toBe(50);
+  });
 
-    section("effect mirror with cell source");
-    {
-      const src = cell(100);
-      const t = cell(0);
-      const stop = effect(() => {
-        t.value = src.value;
-      });
-      check("initial sync", t.value === 100);
-      src.value = 200;
-      check("auto-updates", t.value === 200);
-      t.value = 999;
-      check("manual write takes effect", t.value === 999);
-      src.value = 50;
-      check("next src change overwrites manual", t.value === 50);
-      stop();
-    }
+  it("effect mirror with cell source", () => {
+    const src = cell(100);
+    const t = cell(0);
+    const stop = effect(() => {
+      t.value = src.value;
+    });
+    expect(t.value, "initial sync").toBe(100);
+    src.value = 200;
+    expect(t.value, "auto-updates").toBe(200);
+    t.value = 999;
+    expect(t.value, "manual write takes effect").toBe(999);
+    src.value = 50;
+    expect(t.value, "next src change overwrites manual").toBe(50);
+    stop();
+  });
 
-    section("isCell brand: branded prototypes, not structural .value");
-    check("isCell(cell)", isCell(cell(0)));
-    check("isCell(computed)", isCell(derive(() => 0)));
-    check(
-      "isCell(lens)",
+  it("isCell brand: branded prototypes, not structural .value", () => {
+    expect(isCell(cell(0)), "isCell(cell)").toBe(true);
+    expect(isCell(derive(() => 0)), "isCell(computed)").toBe(true);
+    expect(
       isCell(
         Num.lens(
           [cell(0)] as const,
@@ -77,19 +70,22 @@ describe("engine", () => {
           () => [undefined] as const,
         ),
       ),
-    );
-    check("isCell(plain {value: 5})", !isCell({ value: 5 }));
-    check("isCell(plain {value: 5, name: 'a'})", !isCell({ value: 5, name: "a" }));
-    check("isCell(number)", !isCell(5));
-    check("isCell(fn)", !isCell(() => 5));
-    check("isCell(null)", !isCell(null));
+      "isCell(lens)",
+    ).toBe(true);
+    expect(isCell({ value: 5 }), "isCell(plain {value: 5})").toBe(false);
+    expect(isCell({ value: 5, name: "a" }), "isCell(plain {value: 5, name: 'a'})").toBe(false);
+    expect(isCell(5), "isCell(number)").toBe(false);
+    expect(
+      isCell(() => 5),
+      "isCell(fn)",
+    ).toBe(false);
+    expect(isCell(null), "isCell(null)").toBe(false);
+  });
 
-    section("readNow() unwraps via brand, not structural shape");
-    {
-      check("readNow(5)", readNow(5) === 5);
-      check("readNow(cell(15))", readNow(cell(15)) === 15);
-      const plainT = { value: 5, name: "alice" };
-      check("plain T with .value is preserved", readNow(plainT as any) === plainT);
-    }
+  it("readNow() unwraps via brand, not structural shape", () => {
+    expect(readNow(5), "readNow(5)").toBe(5);
+    expect(readNow(cell(15)), "readNow(cell(15))").toBe(15);
+    const plainT = { value: 5, name: "alice" };
+    expect(readNow(plainT as never), "plain T with .value is preserved").toBe(plainT);
   });
 });

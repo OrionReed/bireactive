@@ -6,130 +6,121 @@
 // Plus the Symbol.toPrimitive footgun guard.
 
 import { batch, cell, derive, effect, type Inner, num, type Vec, vec } from "@bireactive/core";
-import { describe, it } from "vitest";
-import { check, section } from "./_check";
+import { describe, expect, it } from "vitest";
 
 describe("correctness", () => {
-  it("all checks", () => {
-    section("1.1 Computed rethrows getter errors + retries");
-    {
-      const a = cell(0);
-      let shouldThrow = true;
-      const c = derive(() => {
-        if (shouldThrow) throw new Error("boom");
-        return a.value * 2;
-      });
-      let caught: unknown;
-      try {
-        void c.value;
-      } catch (e) {
-        caught = e;
-      }
-      check("first read rethrows", (caught as Error).message === "boom");
-      let caught2: unknown;
-      try {
-        void c.value;
-      } catch (e) {
-        caught2 = e;
-      }
-      check("second read retries (rethrows again)", (caught2 as Error).message === "boom");
-      shouldThrow = false;
-      a.value = 5;
-      check("recovers when cause goes away", c.value === 10);
+  it("1.1 Computed rethrows getter errors + retries", () => {
+    const a = cell(0);
+    let shouldThrow = true;
+    const c = derive(() => {
+      if (shouldThrow) throw new Error("boom");
+      return a.value * 2;
+    });
+    let caught: unknown;
+    try {
+      void c.value;
+    } catch (e) {
+      caught = e;
     }
-
-    section("1.2 Computed honors equals trait");
-    {
-      const v = vec(1, 2);
-      const doubled = v.scale(2);
-      const tripled = doubled.scale(1);
-      let runs = 0;
-      effect(() => {
-        void tripled.value;
-        runs++;
-      });
-      const initial = runs;
-      check("initial run", initial === 1);
-      v.value = { x: 1, y: 2 };
-      check("structurally-equal write does not re-fire downstream", runs === initial);
-      v.value = { x: 5, y: 5 };
-      check("real change fires", runs === initial + 1);
+    expect((caught as Error).message, "first read rethrows").toBe("boom");
+    let caught2: unknown;
+    try {
+      void c.value;
+    } catch (e) {
+      caught2 = e;
     }
+    expect((caught2 as Error).message, "second read retries (rethrows again)").toBe("boom");
+    shouldThrow = false;
+    a.value = 5;
+    expect(c.value, "recovers when cause goes away").toBe(10);
+  });
 
-    section("per-instance equals via CellOptions");
-    {
-      const s = cell(0, { equals: (a, b) => Math.abs(a - b) < 0.01 });
-      let runs = 0;
-      effect(() => {
-        void s.value;
-        runs++;
-      });
-      check("baseline run", runs === 1);
-      s.value = 0.005;
-      check("epsilon-equal write skipped", runs === 1);
-      s.value = 0.5;
-      check("real change fires", runs === 2);
+  it("1.2 Computed honors equals trait", () => {
+    const v = vec(1, 2);
+    const doubled = v.scale(2);
+    const tripled = doubled.scale(1);
+    let runs = 0;
+    effect(() => {
+      void tripled.value;
+      runs++;
+    });
+    const initial = runs;
+    expect(initial, "initial run").toBe(1);
+    v.value = { x: 1, y: 2 };
+    expect(runs, "structurally-equal write does not re-fire downstream").toBe(initial);
+    v.value = { x: 5, y: 5 };
+    expect(runs, "real change fires").toBe(initial + 1);
+  });
+
+  it("per-instance equals via CellOptions", () => {
+    const s = cell(0, { equals: (a, b) => Math.abs(a - b) < 0.01 });
+    let runs = 0;
+    effect(() => {
+      void s.value;
+      runs++;
+    });
+    expect(runs, "baseline run").toBe(1);
+    s.value = 0.005;
+    expect(runs, "epsilon-equal write skipped").toBe(1);
+    s.value = 0.5;
+    expect(runs, "real change fires").toBe(2);
+  });
+
+  it("1.3 Cyclic computed throws RangeError", () => {
+    let c: { value: number };
+    c = derive(() => c.value + 1) as never;
+    let threw: unknown;
+    try {
+      void c.value;
+    } catch (e) {
+      threw = e;
     }
+    expect(threw, "direct cycle throws").toBeInstanceOf(RangeError);
+    expect((threw as Error).message, "error message mentions cycle").toMatch(/[Cc]yclic/);
 
-    section("1.3 Cyclic computed throws RangeError");
-    {
-      let c: { value: number };
-      c = derive(() => c.value + 1) as never;
-      let threw: unknown;
-      try {
-        void c.value;
-      } catch (e) {
-        threw = e;
-      }
-      check("direct cycle throws", threw instanceof RangeError);
-      check("error message mentions cycle", /[Cc]yclic/.test((threw as Error).message));
-
-      let a: { value: number }, b: { value: number };
-      a = derive(() => b.value + 1) as never;
-      b = derive(() => a.value + 1) as never;
-      let threw2: unknown;
-      try {
-        void a.value;
-      } catch (e) {
-        threw2 = e;
-      }
-      check("transitive cycle throws", threw2 instanceof RangeError);
+    let a: { value: number }, b: { value: number };
+    a = derive(() => b.value + 1) as never;
+    b = derive(() => a.value + 1) as never;
+    let threw2: unknown;
+    try {
+      void a.value;
+    } catch (e) {
+      threw2 = e;
     }
+    expect(threw2, "transitive cycle throws").toBeInstanceOf(RangeError);
+  });
 
-    section("4.2 vec(reactiveX, reactiveY) glitch-free under batch");
-    {
-      const rx = num(10);
-      const ry = num(20);
-      const v = vec(rx, ry);
-      const seen: Inner<Vec>[] = [];
-      effect(() => {
-        seen.push({ ...v.value });
-      });
-      check("initial value", v.value.x === 10 && v.value.y === 20);
-      seen.length = 0;
-      batch(() => {
-        rx.value = 100;
-        ry.value = 200;
-      });
-      check("batched update yields one final value", seen.length === 1);
-      check("final value is consistent", seen[0]?.x === 100 && seen[0]?.y === 200);
-    }
+  it("4.2 vec(reactiveX, reactiveY) glitch-free under batch", () => {
+    const rx = num(10);
+    const ry = num(20);
+    const v = vec(rx, ry);
+    const seen: Inner<Vec>[] = [];
+    effect(() => {
+      seen.push({ ...v.value });
+    });
+    expect(v.value.x === 10 && v.value.y === 20, "initial value").toBe(true);
+    seen.length = 0;
+    batch(() => {
+      rx.value = 100;
+      ry.value = 200;
+    });
+    expect(seen.length, "batched update yields one final value").toBe(1);
+    expect(seen[0]?.x === 100 && seen[0]?.y === 200, "final value is consistent").toBe(true);
+  });
 
-    section("Symbol.toPrimitive footgun guard");
-    {
-      const n = num(5);
-      let threw: unknown;
-      try {
-        const _ = `value is ${n}`;
-        void _;
-      } catch (e) {
-        threw = e;
-      }
-      check("template string throws", threw instanceof TypeError);
-      check("error mentions .value", /\.value/.test((threw as Error).message));
-      const m = num(5);
-      check("=== identity works", n === n);
-      check("!== different identity works", n !== m);
+  it("Symbol.toPrimitive footgun guard", () => {
+    const n = num(5);
+    let threw: unknown;
+    try {
+      const _ = `value is ${n}`;
+      void _;
+    } catch (e) {
+      threw = e;
     }
+    expect(threw, "template string throws").toBeInstanceOf(TypeError);
+    expect((threw as Error).message, "error mentions .value").toMatch(/\.value/);
+    const m = num(5);
+    expect(n === n, "=== identity works").toBe(true);
+    expect(n !== m, "!== different identity works").toBe(true);
   });
 });
