@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "declarationMap": false,
+    "sourceMap": false,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "allowImportingTsExtensions": false,
+    "paths": {
+      "@bireactive": ["./src/index.ts"],
+      "@bireactive/*": ["./src/*"]
+    }
+  },
+  "include": ["src"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "site",
+    "**/_test/**",
+    "**/_bench/**",
+    "**/_proto/**",
+    "**/_probes/**",
+    "**/*.test.ts",
+    "**/*.bench.ts"
+  ]
+}

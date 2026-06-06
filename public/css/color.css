@@ -1,0 +1,41 @@
+/* Native Light/Dark Mode Variables */
+
+:root {
+  --bg-color: light-dark(#ffffff, #17191f);
+  --text-color: light-dark(#24292e, #e9ecf0);
+  --text-secondary: light-dark(#999, #7c838b);
+  --code-bg: light-dark(#e4e9ee, #1f242c);
+  --code-text: light-dark(#38424c, #d6dae0);
+  --blockquote-bg: light-dark(#f1f1f1, #1f242c);
+  --table-border: light-dark(#ddd, #363c45);
+  --table-header-bg: light-dark(#f4f4f4, #282e36);
+  --table-stripe-bg: light-dark(#f9f9f9, #1f242c);
+  --border-color: light-dark(#ddd, #363c45);
+
+  /* Ink color system — see src/elements/color.ts.
+     L values derived via deriveAnchors() to hit APCA Lc ≈ 80 at the
+     mark anchor and Lc ≈ 35 at the spread anchor, against --paper-l. */
+  --paper-l: 100%; /* match --bg-color */
+  --ink-l: 49%;
+  --ink-c: 0.14;
+  --stroke-l: 5%;
+  --ink-fill-l: 81%;
+  --ink-fill-c: 0.06;
+}
+
+:root[data-theme="dark"] {
+  --paper-l: 16%; /* match --bg-color #17191f */
+  --ink-l: 85%;
+  --ink-fill-l: 57%;
+  --stroke-l: 95%;
+}
+
+/* Apply theme variables to base elements */
+html,
+body {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  transition:
+    background-color 0.3s ease,
+    color 0.3s ease;
+}

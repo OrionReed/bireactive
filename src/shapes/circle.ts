@@ -1,0 +1,71 @@
+import { Num, reader, type Val, Vec } from "@bireactive/core";
+import { TWO_PI } from "./dashed";
+import { type CommonOpts, type Segment, Shape } from "./shape";
+
+export interface CircleOpts extends CommonOpts {}
+
+export class Circle<O extends CircleOpts = CircleOpts> extends Shape<O> {
+  readonly radius: Num;
+
+  constructor(center: Vec, radius: Val<number>, opts: O = {} as O) {
+    const r = Num.from(radius);
+    super(
+      opts.dashed ? "path" : "circle",
+      () => ({
+        x: center.x.value - r.value,
+        y: center.y.value - r.value,
+        w: 2 * r.value,
+        h: 2 * r.value,
+      }),
+      opts,
+      { origin: center },
+    );
+    this.radius = r;
+    this.stroke(opts, true, { cx: center.x, cy: center.y, r });
+  }
+
+  /** Point on perimeter at angle θ (radians, y-down). */
+  atAngle(angle: Val<number>): Vec {
+    const a = reader(angle);
+    return Vec.derive(() => ({
+      x: this.center.x.value + this.radius.value * Math.cos(a()),
+      y: this.center.y.value + this.radius.value * Math.sin(a()),
+    }));
+  }
+  /** Unit tangent at angle θ. */
+  tangentAt(angle: Val<number>): Vec {
+    const a = reader(angle);
+    return Vec.derive(() => ({ x: -Math.sin(a()), y: Math.cos(a()) }));
+  }
+
+  override boundary(toward: Vec): Vec {
+    return Vec.derive(() => {
+      const t = toward.value;
+      const c = this.center.value;
+      const sc = this.scale.value;
+      // Boundary tracks the visual radius so pulses scale it; for
+      // non-uniform scale, approximate as a circle of the larger axis.
+      const r = this.radius.value * Math.max(sc.x, sc.y);
+      const len = Math.hypot(t.x - c.x, t.y - c.y) || 1;
+      return {
+        x: c.x + ((t.x - c.x) / len) * r,
+        y: c.y + ((t.y - c.y) / len) * r,
+      };
+    });
+  }
+
+  /** Two half-arcs (each span ≤ π, so `largeArc` stays unambiguous), in
+   *  local frame — derived from the Box, not parent-frame `this.center`. */
+  override segments(): Segment[] {
+    const cx = () => this.box.value.x + this.box.value.w / 2;
+    const cy = () => this.box.value.y + this.box.value.h / 2;
+    const r = () => this.radius.value;
+    return [
+      { type: "arc", cx, cy, r, a0: () => 0, a1: () => Math.PI },
+      { type: "arc", cx, cy, r, a0: () => Math.PI, a1: () => TWO_PI },
+    ];
+  }
+}
+
+export const circle = <const O extends CircleOpts>(at: Vec, r: Val<number>, opts?: O): Circle<O> =>
+  new Circle<O>(at, r, opts);

@@ -1,0 +1,94 @@
+import { type Cell, derive, Num, type Val, type Vec } from "@bireactive/core";
+import { type CommonOpts, type Segment, Shape } from "./shape";
+
+export interface AnnularSectorOpts extends CommonOpts {}
+
+/** Pie wedge with a hole — between two radii swept across two angles. */
+export class AnnularSector<O extends AnnularSectorOpts = AnnularSectorOpts> extends Shape<O> {
+  readonly rOuter: Cell<number>;
+  readonly rInner: Cell<number>;
+  readonly a0: Cell<number>;
+  readonly a1: Cell<number>;
+
+  constructor(
+    center: Vec,
+    rOuter: Val<number>,
+    rInner: Val<number>,
+    a0: Val<number>,
+    a1: Val<number>,
+    opts: O = {} as O,
+  ) {
+    const ro = Num.from(rOuter);
+    const ri = Num.from(rInner);
+    const a0s = Num.from(a0);
+    const a1s = Num.from(a1);
+    super(
+      "path",
+      () => ({
+        x: center.x.value - ro.value,
+        y: center.y.value - ro.value,
+        w: 2 * ro.value,
+        h: 2 * ro.value,
+      }),
+      opts,
+      { origin: center },
+    );
+    this.rOuter = ro;
+    this.rInner = ri;
+    this.a0 = a0s;
+    this.a1 = a1s;
+
+    this.stroke(opts, true, {
+      d: derive(() => {
+        const cx = center.x.value;
+        const cy = center.y.value;
+        const _ro = ro.value;
+        const _ri = ri.value;
+        const _a0 = a0s.value;
+        const _a1 = a1s.value;
+        const span = Math.abs(_a1 - _a0);
+        const largeArc = span > Math.PI ? 1 : 0;
+        const sweep = _a1 > _a0 ? 1 : 0;
+        const back = sweep ? 0 : 1;
+        const o0x = cx + _ro * Math.cos(_a0),
+          o0y = cy + _ro * Math.sin(_a0);
+        const o1x = cx + _ro * Math.cos(_a1),
+          o1y = cy + _ro * Math.sin(_a1);
+        const i1x = cx + _ri * Math.cos(_a1),
+          i1y = cy + _ri * Math.sin(_a1);
+        const i0x = cx + _ri * Math.cos(_a0),
+          i0y = cy + _ri * Math.sin(_a0);
+        return `M ${o0x},${o0y} A ${_ro},${_ro} 0 ${largeArc} ${sweep} ${o1x},${o1y} L ${i1x},${i1y} A ${_ri},${_ri} 0 ${largeArc} ${back} ${i0x},${i0y} Z`;
+      }),
+    });
+  }
+
+  /** Local-frame segments, derived from the Box (center = the given center). */
+  override segments(): Segment[] {
+    const cx = () => this.box.value.x + this.box.value.w / 2;
+    const cy = () => this.box.value.y + this.box.value.h / 2;
+    const ro = () => this.rOuter.value;
+    const ri = () => this.rInner.value;
+    const a0 = () => this.a0.value;
+    const a1 = () => this.a1.value;
+    const polar = (rfn: () => number, afn: () => number) => ({
+      x: cx() + rfn() * Math.cos(afn()),
+      y: cy() + rfn() * Math.sin(afn()),
+    });
+    return [
+      { type: "arc", cx, cy, r: ro, a0, a1 },
+      { type: "line", from: polar(ro, a1), to: polar(ri, a1) },
+      { type: "arc", cx, cy, r: ri, a0: a1, a1: a0 },
+      { type: "line", from: polar(ri, a0), to: polar(ro, a0) },
+    ];
+  }
+}
+
+export const annularSector = <const O extends AnnularSectorOpts>(
+  center: Vec,
+  rOuter: Val<number>,
+  rInner: Val<number>,
+  a0: Val<number>,
+  a1: Val<number>,
+  opts?: O,
+): AnnularSector<O> => new AnnularSector<O>(center, rOuter, rInner, a0, a1, opts);

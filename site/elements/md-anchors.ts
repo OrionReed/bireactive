@@ -1,0 +1,73 @@
+import {
+  circle,
+  Diagram,
+  easeInOut,
+  label,
+  line,
+  loop,
+  type Mount,
+  rect,
+  snapshot,
+} from "@bireactive";
+
+export class MdAnchors extends Diagram {
+  protected scene(s: Mount): void {
+    const view = this.view(560, 320);
+
+    const r = s(rect(0, 0, 130, 86, { thin: true, corner: 4 }));
+    r.center.value = view.center.peek();
+
+    const reset = snapshot(r.rotate, r.scale);
+    this.anim.start(
+      loop(function* () {
+        reset();
+        yield [
+          r.rotate.to(Math.PI * 2, 6),
+          r.scale
+            .to({ x: 1.35, y: 1.35 }, 1.5, easeInOut)
+            .to({ x: 1, y: 1 }, 1.5, easeInOut)
+            .to({ x: 0.7, y: 0.7 }, 1.5, easeInOut)
+            .to({ x: 1, y: 1 }, 1.5, easeInOut),
+        ];
+      }),
+    );
+
+    const corners: [number, number][] = [
+      [0, 0],
+      [1, 0],
+      [1, 1],
+      [0, 1],
+    ];
+    for (const [u, v] of corners) {
+      s(circle(r.at(u, v), 5, { fill: true }));
+    }
+
+    const edges = [r.top, r.right, r.bottom, r.left];
+    for (const e of edges) {
+      s(circle(e, 3.5, { fill: "var(--accent)" }));
+    }
+
+    s(
+      line(r.at(0, 0), r.at(1, 1), {
+        thin: true,
+        dashed: true,
+        opacity: 0.3,
+      }),
+      line(r.at(1, 0), r.at(0, 1), {
+        thin: true,
+        dashed: true,
+        opacity: 0.3,
+      }),
+    );
+
+    const sat = s(circle(view.right.left(48), 7, { fill: true, opacity: 0.6 }));
+    s(line(sat.center, r.right, { thin: true, opacity: 0.4 }));
+
+    s(
+      label(view.top.down(20), "writable anchors — bind tracks rotate × scale"),
+      label(view.bottom.up(16), "dot.center.bind(r.at(u, v))  ·  line(sat.center, r.right)", {
+        size: 10,
+      }),
+    );
+  }
+}

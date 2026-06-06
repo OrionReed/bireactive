@@ -1,0 +1,317 @@
+// LaTeX → MathML shape, rendered via Temml.
+
+import { Box, type Cell, cell, derive, type Inner, type Writable } from "@bireactive/core";
+import { Shape, type ShapeOpts, tokens } from "@bireactive/shapes";
+import temml from "temml";
+import { Part, type PartList, PartMarker } from "./parts";
+
+/** A `tex\`…\`` interpolation slot. Strings splice verbatim; PartMarkers
+ *  wrap content in `\class{bireactive-part-N}{…}` to be re-found post-render. */
+export type TexInterp = string | PartMarker;
+
+export interface TexOpts extends ShapeOpts {
+  /** Font size in user units. Defaults to `tokens.fontSize`. */
+  size?: number;
+  /** Font family. Defaults to `tokens.mathFont`. */
+  font?: string;
+  /** Background tint applied while a part's `highlighted` signal is
+   *  true. Default: `tokens.tex.highlightColor`. */
+  highlightColor?: string;
+  /** "inline" (default) or "block" display style. Maps to Temml's
+   *  `displayMode` — bigger fractions, limits above/below, `\begin{…}`. */
+  display?: "inline" | "block";
+}
+
+/** Union of `PartMarker` names in an interpolation tuple (strings drop out). */
+export type NamesOf<V extends readonly TexInterp[]> = V extends readonly (infer U)[]
+  ? U extends PartMarker<infer N>
+    ? N
+    : never
+  : never;
+
+/** Class on the rendered `<mrow>`, to re-find Parts in cloned subtrees. */
+const partClass = (name: string): string => `bireactive-part-${name}`;
+
+/** Build LaTeX source + PartMarker list. Reads `strings.raw` so authors
+ *  write single-backslash LaTeX without JS eating `\f`, `\t`, etc. */
+const compileTemplate = (
+  strings: TemplateStringsArray | readonly string[],
+  values: readonly TexInterp[],
+): { source: string; markers: PartMarker[] } => {
+  const chunks = (strings as TemplateStringsArray).raw ?? strings;
+  let source = "";
+  const markers: PartMarker[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < chunks.length; i++) {
+    source += chunks[i];
+    if (i >= values.length) continue;
+    const v = values[i];
+    if (v instanceof PartMarker) {
+      if (seen.has(v.name)) {
+        throw new Error(
+          `tex: duplicate part name "${v.name}" — names must be unique within a single template`,
+        );
+      }
+      seen.add(v.name);
+      markers.push(v);
+      source += `\\class{${partClass(v.name)}}{${v.content.peek()}}`;
+    } else {
+      source += v;
+    }
+  }
+  return { source, markers };
+};
+
+/** Render LaTeX → MathML via Temml (trust on, lenient errors). */
+export const renderToMathML = (source: string, opts: { displayMode?: boolean } = {}): string => {
+  try {
+    return temml.renderToString(source, {
+      trust: true,
+      displayMode: opts.displayMode ?? false,
+      strict: false,
+      throwOnError: false,
+    });
+  } catch (e) {
+    return `<span style="color:#c33;font:13px monospace">${(e as Error).message}</span>`;
+  }
+};
+
+/** Wrapper CSS — identical for the measurement div and the live
+ *  foreignObject child, so measured and live offsets agree. */
+const wrapperCss = (fontSize: number, fontFamily: string): string =>
+  [
+    `font-family:${fontFamily}`,
+    `font-size:${fontSize}px`,
+    `color:${tokens.stroke}`,
+    "line-height:1",
+    "white-space:nowrap",
+    "padding:0",
+    "margin:0",
+    "display:inline-block",
+  ].join(";");
+
+/** Font styles must live on `<math>` itself: MathML doesn't reliably
+ *  inherit `font-family`, and surd/vinculum thickness comes from the
+ *  font's OpenType MATH table. Never set `display` (MathML Core only
+ *  honors `inline math` / `block math`). */
+const styleMathRoot = (mathEl: HTMLElement, fontSize: number, fontFamily: string): void => {
+  mathEl.style.fontFamily = fontFamily;
+  mathEl.style.fontSize = `${fontSize}px`;
+  mathEl.style.color = tokens.stroke;
+  mathEl.style.lineHeight = "1";
+  mathEl.style.fontStyle = "normal";
+  mathEl.style.fontWeight = "normal";
+};
+
+/** Force a part's layout to be context-independent so a matched mrow
+ *  renders the same regardless of ambient context — morph rides it with
+ *  one scale factor, no pop. Overrides the `compact` style `<msqrt>` /
+ *  `<mfrac>` cascade; inherited, so propagates to descendants. */
+const stabilizePart = (el: HTMLElement): void => {
+  el.style.setProperty("math-shift", "normal");
+  el.style.setProperty("math-style", "normal");
+  el.style.borderRadius = `${tokens.tex.highlightCorner}px`;
+  el.style.transition = `background-color ${tokens.tex.highlightDurationMs}ms ease-out`;
+};
+
+interface Measurement {
+  width: number;
+  height: number;
+  rects: Map<string, Inner<Box>>;
+}
+
+const measureMathML = (mathml: string, fontSize: number, fontFamily: string): Measurement => {
+  const div = document.createElement("div");
+  div.style.cssText = `position:absolute;left:-99999px;top:0;visibility:hidden;${wrapperCss(fontSize, fontFamily)}`;
+  div.innerHTML = mathml;
+  const mathEl = div.querySelector("math") as HTMLElement | null;
+  if (mathEl) styleMathRoot(mathEl, fontSize, fontFamily);
+  div.querySelectorAll<HTMLElement>("[class*='bireactive-part-']").forEach(stabilizePart);
+  document.body.appendChild(div);
+  try {
+    const root = mathEl ?? (div.firstElementChild as HTMLElement) ?? div;
+    const rootRect = root.getBoundingClientRect();
+    // Anchor part rects to the wrapper, not `<math>`: `<mfrac>` can
+    // overflow its line-box upward, throwing off math-relative bounds.
+    const wrapperRect = div.getBoundingClientRect();
+    const rects = new Map<string, Inner<Box>>();
+    div.querySelectorAll<HTMLElement>("[class*='bireactive-part-']").forEach(el => {
+      const cls = Array.from(el.classList).find(c => c.startsWith("bireactive-part-"));
+      if (!cls) return;
+      const r = el.getBoundingClientRect();
+      rects.set(cls, {
+        x: r.left - wrapperRect.left,
+        y: r.top - wrapperRect.top,
+        w: r.width,
+        h: r.height,
+      });
+    });
+    return { width: rootRect.width, height: rootRect.height, rects };
+  } finally {
+    document.body.removeChild(div);
+  }
+};
+
+/** A LaTeX-rendered shape with addressable Parts. See `tex` (factory)
+ *  and `parts.ts` (Part / PartMarker). */
+export class TexShape<Names extends string = string> extends Shape {
+  readonly parts: PartList<Names>;
+  /** Width in local-frame user units (the rendered MathML bounding rect). */
+  readonly width: Cell<number>;
+  /** Height in local-frame user units. */
+  readonly height: Cell<number>;
+
+  constructor(
+    strings: TemplateStringsArray | readonly string[],
+    values: readonly TexInterp[],
+    opts: TexOpts = {},
+  ) {
+    const fontSize = opts.size ?? tokens.tex.size;
+    const fontFamily = opts.font ?? tokens.mathFont;
+    const highlightColor = opts.highlightColor ?? tokens.tex.highlightColor;
+    const displayMode = opts.display === "block";
+
+    const { source, markers } = compileTemplate(strings, values);
+    const initialMathml = renderToMathML(source, { displayMode });
+    const measured = measureMathML(initialMathml, fontSize, fontFamily);
+    const w = cell(measured.width);
+    const h = cell(measured.height);
+
+    super("foreignObject", () => ({ x: 0, y: 0, w: w.value, h: h.value }), opts, {
+      origin: derive(() => ({ x: w.value / 2, y: h.value / 2 })),
+    });
+
+    this.width = w;
+    this.height = h;
+
+    const fo = this.intrinsic as SVGForeignObjectElement;
+    fo.setAttribute("x", "0");
+    fo.setAttribute("y", "0");
+    fo.style.overflow = "visible";
+    this.attrs({ width: w, height: h });
+
+    // Inline-block wrapper, same CSS as the measurement div.
+    const wrapper = document.createElement("div");
+    wrapper.style.cssText = wrapperCss(fontSize, fontFamily);
+    fo.appendChild(wrapper);
+
+    // Parts built up front; `mountInto` populates the wrapper and binds
+    // each. `boxWriters` holds the writable bounds for re-measure.
+    const list: Part[] = [];
+    const boxWriters = new Map<string, Writable<Box>>();
+    for (const m of markers) {
+      const cls = partClass(m.name);
+      const boxSig = new Box(
+        measured.rects.get(cls) ?? { x: 0, y: 0, w: 0, h: 0 },
+      ) as Writable<Box>;
+      boxWriters.set(cls, boxSig);
+      list.push(new Part(m.name, m.content, boxSig, m, this as TexShape));
+    }
+    this.parts = buildPartList(list);
+
+    /** Render into the wrapper, push fresh bounds, rebind parts.
+     *  `bounds` lets the initial mount skip re-measuring. */
+    const mountInto = (mathml: string, bounds?: Measurement): void => {
+      wrapper.innerHTML = mathml;
+      const m = wrapper.querySelector("math") as HTMLElement | null;
+      if (m) styleMathRoot(m, fontSize, fontFamily);
+      wrapper.querySelectorAll<HTMLElement>("[class*='bireactive-part-']").forEach(stabilizePart);
+
+      const fresh = bounds ?? measureMathML(mathml, fontSize, fontFamily);
+      if (fresh.width !== w.peek()) w.value = fresh.width;
+      if (fresh.height !== h.peek()) h.value = fresh.height;
+      for (const p of list) {
+        const cls = partClass(p.name);
+        const r = fresh.rects.get(cls);
+        const sig = boxWriters.get(cls);
+        if (r && sig) {
+          const cur = sig.peek();
+          if (r.x !== cur.x || r.y !== cur.y || r.w !== cur.w || r.h !== cur.h) sig.value = r;
+        }
+        p.bind(wrapper.querySelector(`.${cls}`), highlightColor);
+      }
+    };
+
+    mountInto(initialMathml, measured);
+
+    let firstRun = true;
+    this.effect(() => {
+      for (const m of markers) void m.content.value; // track
+      if (firstRun) {
+        firstRun = false;
+        return;
+      }
+      const next = compileTemplate(strings, values);
+      mountInto(renderToMathML(next.source, { displayMode }));
+    });
+
+    // Re-measure once webfonts load: synchronous measurement uses
+    // fallback metrics until the CDN font arrives, else first morph pops.
+    const fonts = (document as { fonts?: FontFaceSet }).fonts;
+    if (fonts?.ready) {
+      void fonts.ready.then(() => {
+        const cur = compileTemplate(strings, values);
+        const fresh = measureMathML(
+          renderToMathML(cur.source, { displayMode }),
+          fontSize,
+          fontFamily,
+        );
+        if (fresh.width !== w.peek()) w.value = fresh.width;
+        if (fresh.height !== h.peek()) h.value = fresh.height;
+        for (const [cls, sig] of boxWriters) {
+          const r = fresh.rects.get(cls);
+          if (!r) continue;
+          const c = sig.peek();
+          if (r.x !== c.x || r.y !== c.y || r.w !== c.w || r.h !== c.h) sig.value = r;
+        }
+      });
+    }
+
+    this.track(() => {
+      for (const p of list) p.dispose();
+    });
+  }
+
+  /** Sugar: `eq.highlight("a")` → `eq.parts.a.highlighted.value = true`. */
+  highlight(name: Names, on = true): void {
+    const p = (this.parts as Record<string, Part>)[name];
+    if (p) p.highlighted.value = on;
+  }
+}
+
+/** Positional array with named keys: template-order iteration, name-indexable. */
+const buildPartList = <Names extends string>(list: readonly Part[]): PartList<Names> => {
+  const out = list.slice() as Part[] & Record<string, Part>;
+  for (const p of list) (out as Record<string, Part>)[p.name] = p;
+  return out as unknown as PartList<Names>;
+};
+
+const isTemplateStrings = (v: unknown): v is TemplateStringsArray =>
+  Array.isArray(v) && Object.prototype.hasOwnProperty.call(v, "raw");
+
+/** Render a LaTeX formula via Temml. Three forms:
+ *
+ *      tex`E = mc^2`                              // direct, default size
+ *      tex(28)`E = mc^2`                          // size-only shorthand
+ *      tex({ size: 28, display: "block" })`...`   // full options
+ *
+ *  Single-backslash LaTeX works directly (reads `strings.raw`). */
+export function tex<V extends readonly TexInterp[]>(
+  strings: TemplateStringsArray,
+  ...values: V
+): TexShape<NamesOf<V>>;
+export function tex(
+  opts: TexOpts | number,
+): <V extends readonly TexInterp[]>(
+  strings: TemplateStringsArray,
+  ...values: V
+) => TexShape<NamesOf<V>>;
+export function tex(...args: unknown[]): unknown {
+  if (isTemplateStrings(args[0])) {
+    const [strings, ...values] = args as [TemplateStringsArray, ...TexInterp[]];
+    return new TexShape(strings, values);
+  }
+  const opts: TexOpts = typeof args[0] === "number" ? { size: args[0] } : (args[0] as TexOpts);
+  return (strings: TemplateStringsArray, ...values: TexInterp[]) =>
+    new TexShape(strings, values, opts);
+}

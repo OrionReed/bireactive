@@ -1,0 +1,224 @@
+// range.ts — reactive numeric interval `[lo, hi]`.
+//
+// Home for sliders, scrollbars, and timeline clip spans. Field lenses
+// give start-knob (`.lo`) and end-knob (`.hi`) drag; `.start` is the
+// body-drag (shifts both, preserving width); `.slider(t)` is the
+// bidirectional `t ↔ lo + t·(hi - lo)` iso. Traits: `linear`, `lerp`,
+// `equals`, `pack` (scalar-only).
+
+import type { Easing } from "../../animation";
+import { type Tween, tween } from "../anim";
+import {
+  Cell,
+  type Init,
+  isComputed,
+  reader,
+  readNow,
+  type Val,
+  type Writable,
+  type WritableBrand,
+} from "../signal";
+import type { Linear, Pack, TraitDict } from "../traits";
+import { derived, field } from "../writable";
+import { Bool } from "./bool";
+import { Num, num } from "./num";
+
+type V = { lo: number; hi: number };
+
+export const add = (a: V, b: V): V => ({ lo: a.lo + b.lo, hi: a.hi + b.hi });
+export const sub = (a: V, b: V): V => ({ lo: a.lo - b.lo, hi: a.hi - b.hi });
+export const scale = (a: V, k: number): V => ({ lo: a.lo * k, hi: a.hi * k });
+export const lerp = (a: V, b: V, t: number): V => ({
+  lo: a.lo + (b.lo - a.lo) * t,
+  hi: a.hi + (b.hi - a.hi) * t,
+});
+export const equals = (a: V, b: V) => a === b || (a.lo === b.lo && a.hi === b.hi);
+/** L2 distance over (lo, hi). Treats a range as a point in 2-space. */
+export const metric = (a: V, b: V) => Math.hypot(a.lo - b.lo, a.hi - b.hi);
+
+export const width = (r: V) => r.hi - r.lo;
+export const center = (r: V) => (r.lo + r.hi) / 2;
+export const contains = (r: V, v: number) => v >= r.lo && v <= r.hi;
+export const clamp = (r: V, v: number) => (v < r.lo ? r.lo : v > r.hi ? r.hi : v);
+
+/** Closest value STRICTLY outside `[lo, hi]`, displaced past the
+ *  nearest endpoint by `eps`. Used by `Range#contains` as the bwd's
+ *  false-side policy. */
+export const eject = (r: V, v: number, eps = 1e-6) => {
+  if (!contains(r, v)) return v;
+  return v - r.lo <= r.hi - v ? r.lo - eps : r.hi + eps;
+};
+
+/** Sample at parameter `t`: `lo + t·(hi - lo)`. `t ∈ [0, 1]` stays
+ *  inside the range; values outside extrapolate linearly. */
+export const sample = (r: V, t: number) => r.lo + t * (r.hi - r.lo);
+
+/** Inverse of `sample`: given a value, recover the `t` that would
+ *  produce it. Degenerate (zero-width) ranges return 0. */
+export const paramOf = (r: V, v: number) => {
+  const w = r.hi - r.lo;
+  return w === 0 ? 0 : (v - r.lo) / w;
+};
+
+const linearImpl: Linear<V> = { add, sub, scale };
+const packImpl: Pack<V> = {
+  dim: 2,
+  read: (v, a, o) => {
+    a[o] = v.lo;
+    a[o + 1] = v.hi;
+  },
+  write: (a, o) => ({ lo: a[o]!, hi: a[o + 1]! }),
+};
+
+export class Range extends Cell<V> {
+  static traits = {
+    linear: linearImpl,
+    lerp,
+    metric,
+    equals,
+    pack: packImpl,
+  } satisfies TraitDict<V>;
+  declare readonly _t: typeof Range.traits;
+
+  constructor(v: V = { lo: 0, hi: 1 }) {
+    super(v, { equals });
+  }
+
+  /** Start endpoint. Writes preserve `hi` (start-knob semantics). */
+  get lo() {
+    return field(this, "lo", Num);
+  }
+  /** End endpoint. Writes preserve `lo` (end-knob semantics). */
+  get hi() {
+    return field(this, "hi", Num);
+  }
+
+  get width() {
+    return derived(this, "width", Num, width);
+  }
+  get center() {
+    return derived(this, "center", Num, center);
+  }
+
+  /** Translate by `by`. Reads shift the interval; writes shift back. */
+  shift(by: Val<number>): this {
+    const f = reader(by);
+    return this.lens(
+      v => ({ lo: v.lo + f(), hi: v.hi + f() }),
+      n => ({ lo: n.lo - f(), hi: n.hi - f() }),
+    );
+  }
+  /** Scale uniformly about the origin. Iso for `k ≠ 0`. */
+  scale(k: Val<number>): this {
+    const kf = reader(k);
+    return this.lens(
+      v => {
+        const k = kf();
+        return { lo: v.lo * k, hi: v.hi * k };
+      },
+      n => {
+        const k = kf();
+        return { lo: n.lo / k, hi: n.hi / k };
+      },
+    );
+  }
+
+  /** Body-drag handle: read returns `lo`; write shifts the range so `lo`
+   *  matches (width preserved). For start-knob editing use `.lo`. */
+  get start(): Writable<Num> {
+    return Num.lens(
+      this,
+      v => v.lo,
+      (newLo, src) => ({ lo: newLo, hi: newLo + (src.hi - src.lo) }),
+    );
+  }
+
+  /** RO sample at `t`. `t ∈ [0, 1]` stays inside; outside extrapolates. */
+  sample(t: Val<number>): Num {
+    return Num.derive(() => sample(this.value, readNow(t)));
+  }
+  /** Bidirectional `t ↔ value` slider. Read `lo + t·(hi - lo)`; write
+   *  solves for `t` and updates `t` only, leaving `lo` / `hi` put. */
+  slider(t: Writable<Num>): Writable<Num> {
+    // `this as Range` pins the tuple element type (polymorphic `this`
+    // defeats the mapped-tuple inference on `[this, t]`).
+    return Num.lens(
+      [this as Range, t] as const,
+      ([r, tv]) => sample(r, tv),
+      (v, [r]) => {
+        const w = r.hi - r.lo;
+        return [undefined, w === 0 ? 0 : (v - r.lo) / w];
+      },
+    );
+  }
+
+  /** Membership predicate. Conditional return type: a writable `Num`
+   *  yields `Writable<Bool>` and flipping the view bumps the source
+   *  (`true` clamps into `[lo, hi]`, `false` ejects past the nearest
+   *  endpoint by `eps`). Literal / RO inputs yield a bare RO `Bool`. */
+  contains<P extends Val<number>>(v: P): P extends WritableBrand ? Writable<Bool> : Bool {
+    if (v instanceof Num) {
+      // RO computed Num has no backward path → RO branch. Sources and
+      // writable lenses both accept write-back.
+      if (!isComputed(v)) {
+        return Bool.lens(
+          [this, v] as never,
+          (vals: readonly [V, number]) => contains(vals[0], vals[1]),
+          (target, vals) => {
+            const [r, n] = vals as readonly [V, number];
+            if (contains(r, n) === target) return [undefined, undefined] as never;
+            return [undefined, target ? clamp(r, n) : eject(r, n)] as never;
+          },
+        ) as never;
+      }
+    }
+    return Bool.derive(() => contains(this.value, readNow(v))) as never;
+  }
+  /** RO clamp: read `v` into `[lo, hi]`. For a writable clamping lens
+   *  on a single Num, see `Num#clamp(lo, hi)`. */
+  clampedRead(v: Val<number>): Num {
+    return Num.derive(() => clamp(this.value, readNow(v)));
+  }
+  /** Inverse of `sample`: derive the `t` that would produce `v`. */
+  paramOf(v: Val<number>): Num {
+    return Num.derive(() => paramOf(this.value, readNow(v)));
+  }
+
+  /** Tween-builder; animates `{lo, hi}` jointly. */
+  to(this: Writable<Range>, target: V, dur: Val<number>, ease?: Easing): Tween<V> {
+    return tween(this, target, dur, ease);
+  }
+}
+
+/** @internal — 2-input lens over two writable `Num`s; `range()` delegates
+ *  here after lifting literals. */
+function ends(lo: Writable<Num>, hi: Writable<Num>): Writable<Range> {
+  return Range.lens(
+    [lo, hi] as const,
+    (vals): V => ({ lo: vals[0], hi: vals[1] }),
+    (target: V) => [target.lo, target.hi] as never,
+  );
+}
+
+/** Range over `[at, at + dur]`, parameterised by start + duration. The
+ *  timeline-clip shape: `.lo` slides the start, `.hi` the end, `.start`
+ *  body-drags (preserving width). Backed by the live `at` / `dur` Nums. */
+export function span(at: Writable<Num>, dur: Writable<Num>): Writable<Range> {
+  return Range.lens(
+    [at, dur] as const,
+    (vals): V => ({ lo: vals[0], hi: vals[0] + vals[1] }),
+    (target: V) => [target.lo, target.hi - target.lo] as never,
+  );
+}
+
+/** Writable `Range` over `[lo, hi]`. Each endpoint is a literal `number`
+ *  (lifted to a fresh seed) or an existing `Writable<Num>` (identity
+ *  passthrough). RO sources are rejected at the type level — use
+ *  `Range.derive(...)` for reactive RO tracking, or `cell.value` to
+ *  snapshot. Lock an endpoint with `Num.pin(c)`. */
+export function range(lo: Init<Num> = 0, hi: Init<Num> = 1): Writable<Range> {
+  if (typeof lo === "number" && typeof hi === "number") {
+    return new Range({ lo, hi }) as Writable<Range>;
+  }
+  return ends(num(lo), num(hi));
+}

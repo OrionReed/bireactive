@@ -1,0 +1,123 @@
+import {
+  cell,
+  circle,
+  Diagram,
+  derive,
+  draggable,
+  EventBus,
+  label,
+  line,
+  loop,
+  type Mount,
+  rect,
+  sequential,
+  snapshot,
+  timeline,
+  Vec,
+  vec,
+} from "@bireactive";
+
+const PHASES = ["intro", "hold", "outro"] as const;
+const COLORS = ["#5b8def", "#f5a623", "#e25c5c"];
+const MAX_DUR = 2.5;
+
+export class MdTimelineEditor extends Diagram {
+  protected scene(s: Mount): void {
+    const view = this.view(600, 320);
+
+    const tl = timeline(sequential({ intro: 0.7, hold: 1.2, outro: 0.5 }));
+    const reset = snapshot(tl.clock);
+
+    const phaseName = derive(() => {
+      for (const name of PHASES) if (tl[name].active.value) return name;
+      return tl.clock.value >= tl.duration.value ? "rest" : PHASES[0];
+    });
+    const bus = new EventBus();
+    const taps = cell(0);
+    bus.on("ping", () => {
+      taps.value = taps.peek() + 1;
+    });
+
+    s(
+      label(
+        view.top.down(24),
+        derive(() => `phase: ${phaseName.value}   ·   taps: ${taps.value}`),
+        { size: 14 },
+      ),
+    );
+
+    const STRIP_X = 60;
+    const STRIP_W = view.w.value - 120;
+    const STRIP_Y = 60;
+    const STRIP_H = 36;
+    const scale = derive(() => STRIP_W / tl.duration.value);
+
+    PHASES.forEach((name, i) => {
+      const c = tl[name];
+      const body = s(
+        rect(
+          derive(() => STRIP_X + c.at.value * scale.value),
+          STRIP_Y,
+          derive(() => c.dur.value * scale.value),
+          STRIP_H,
+          { fill: COLORS[i] },
+        ),
+      );
+      s(
+        label(
+          body.center,
+          derive(() => `${name} ${c.dur.value.toFixed(2)}s`),
+        ),
+      );
+    });
+
+    const playhead = Vec.derive(() => ({ x: STRIP_X + tl.t.value * STRIP_W, y: STRIP_Y }));
+    s(line(playhead.up(6), playhead.down(STRIP_H + 6), { strokeWidth: 2 }));
+
+    const SLIDER_Y = 150;
+    const SLIDER_GAP = 24;
+    const SLIDER_W = (view.w.value - 120 - SLIDER_GAP * 2) / 3;
+
+    PHASES.forEach((name, i) => {
+      const x0 = 60 + i * (SLIDER_W + SLIDER_GAP);
+      const dur = tl[name].dur;
+
+      s(
+        line(vec(x0, SLIDER_Y), vec(x0 + SLIDER_W, SLIDER_Y), {
+          thin: true,
+          opacity: 0.3,
+          cap: "round",
+        }),
+      );
+
+      const knob = s(
+        circle(vec(dur.affine(SLIDER_W / MAX_DUR, x0), SLIDER_Y), 9, { fill: COLORS[i] }),
+      );
+      draggable(knob, local => {
+        const u = Math.min(Math.max((local.x - x0) / SLIDER_W, 0), 1);
+        // Floor at 0.1s — zero-duration phase would freeze the loop.
+        dur.value = Math.max(0.1, u * MAX_DUR);
+      });
+    });
+
+    const STAGE_Y = 240;
+    const actors = PHASES.map((name, i) => {
+      const c = circle(vec(120 + i * 180, STAGE_Y), 24, {
+        fill: COLORS[i],
+        opacity: derive(() => 0.1 + tl[name].t.value * 0.9),
+      });
+      c.on("click", () => bus.emit("ping"));
+      return c;
+    });
+    s(...actors);
+
+    s(label(view.bottom.up(16), "drag the knobs to retime · click any circle to ping"));
+
+    this.anim.start(
+      loop(function* () {
+        reset();
+        yield* tl;
+      }),
+    );
+  }
+}

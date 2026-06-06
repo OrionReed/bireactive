@@ -1,0 +1,50 @@
+// Prose-linking element for plain (non-math) text — same wiring as <md-tex sym="...">.
+
+import { effect } from "@bireactive/core";
+import { getMarker as getGlobalMarker, highlightTint, hover, type Marker } from "@bireactive/tex";
+
+type MarkerHost = { getMarker?: (id: string) => Marker | undefined };
+
+function resolveMarker(id: string, forId: string | null): Marker | undefined {
+  if (forId) {
+    const el = document.getElementById(forId) as MarkerHost | null;
+    return el?.getMarker?.(id);
+  }
+  return getGlobalMarker(id);
+}
+
+export class MdMarker extends HTMLElement {
+  #disposers: Array<() => void> = [];
+
+  connectedCallback(): void {
+    const id = this.getAttribute("sym");
+    if (!id) return;
+    const forId = this.getAttribute("for");
+    const m = resolveMarker(id, forId);
+    if (!m) return;
+
+    this.style.borderRadius = "2px";
+    this.style.transition = "background-color 120ms ease-out";
+    this.style.cursor = "default";
+
+    this.#disposers.push(
+      hover(this, m),
+      effect(() => {
+        this.style.color = m.color.value ?? "";
+      }),
+      effect(() => {
+        const color = m.color.value;
+        this.style.backgroundColor = m.active.value && color ? highlightTint(color) : "";
+      }),
+    );
+  }
+
+  disconnectedCallback(): void {
+    for (const d of this.#disposers) d();
+    this.#disposers.length = 0;
+  }
+
+  static define(): void {
+    customElements.define("md-marker", this);
+  }
+}
