@@ -25,7 +25,7 @@
 //
 // Mode table — a cell's role is fully determined by which fields are set:
 //   source      getter undefined                 (truth in currentValue)
-//   computed    getter, no _bwd                   (read-only derived)
+//   derived    getter, no _bwd                   (read-only derived)
 //   lens 1→1    getter + _bwd{ put, parent: Cell }
 //   multi-out   getter + _bwd{ put, parent: Cell[] }   (1→N / N→M bwd)
 //   merge       getter + _bwd{ merge }            (N→1 backward fold)
@@ -628,6 +628,12 @@ export class Cell<T = unknown> implements ReactiveNode {
     ) as this;
   }
 
+  /** Read-only same-type view: the RO dual of the endo `.lens`. For a cross-type view use the typed static
+   *  `Target.derive(src, fn)`. */
+  derive(this: Cell<T>, fn: (v: T) => T): this {
+    return buildDerived(this.constructor as CellCtor<Cell<T>>, () => fn(this.value)) as this;
+  }
+
   /** Backward-aggregating node — bwd dual of computed. Forward, the
    *  identity view of its parent; backward, folds contributions from
    *  upstream lenses (slot-keyed) and direct writes (DIRECT_SLOT). */
@@ -669,10 +675,7 @@ export class Cell<T = unknown> implements ReactiveNode {
   ): InstanceType<C>;
   // biome-ignore lint/suspicious/noExplicitAny: dispatch
   static derive(this: any, ...args: any[]): any {
-    if (args.length === 1) return buildComputed(this, args[0]);
-    const [parent, fn] = args;
-    if (Array.isArray(parent)) return buildLensN(this, parent, fn, undefined, false);
-    return buildComputed(this, () => fn((parent as Cell<unknown>).value));
+    return dispatchDerive(this, args);
   }
 
   /** Writable lens. `Cls.lens(parent, fwd, bwd)` for one input,
@@ -722,14 +725,7 @@ export class Cell<T = unknown> implements ReactiveNode {
   ): Writable<InstanceType<C>>;
   // biome-ignore lint/suspicious/noExplicitAny: dispatch
   static lens(this: any, ...args: any[]): any {
-    const [parent, a, b] = args;
-    if (args.length === 2) {
-      const ps = Array.isArray(parent) ? (parent as Cell<unknown>[]) : [parent as Cell<unknown>];
-      return ps.length === 1 ? buildStateful1(this, ps[0]!, a) : buildStateful(this, ps, a);
-    }
-    const readsSource = (b as (...xs: unknown[]) => unknown).length >= 2;
-    if (Array.isArray(parent)) return buildLensN(this, parent, a, b, readsSource);
-    return buildLens1(this, parent, a, b, readsSource);
+    return dispatchLens(this, args);
   }
 
   /** Type predicate against this class: `Vec.is(x)` narrows `x` to `Vec`.
@@ -789,7 +785,7 @@ export class Cell<T = unknown> implements ReactiveNode {
     // Read-only ⇔ computed: a getter with no backward sidecar.
     const ro = parent.getter !== undefined && parent._bwd === undefined;
     if (ro) {
-      return buildComputed(ctor, () => get(parent.value)) as InstanceType<C>;
+      return buildDerived(ctor, () => get(parent.value)) as InstanceType<C>;
     }
     // Spread-replace reads the current source ⇒ source-reading (lens) form.
     return buildLens1(
@@ -809,7 +805,7 @@ export class Cell<T = unknown> implements ReactiveNode {
 type CellCtor<C extends Cell<any>> = new (...args: never[]) => C;
 
 // biome-ignore lint/suspicious/noExplicitAny: variance escape
-function buildComputed<C extends Cell<any>>(Cls: CellCtor<C>, getter: () => unknown): C {
+function buildDerived<C extends Cell<any>>(Cls: CellCtor<C>, getter: () => unknown): C {
   const cell = new Cls();
   cell.getter = getter as () => never;
   cell.flags = F.Mutable | F.Dirty;
@@ -969,7 +965,32 @@ function buildStateful1<C extends Cell<any>>(
   return cell;
 }
 
-// Install `value` on the prototype (V8 JITs it better than a class get/set).
+// Shared runtime dispatch for `derive`/`lens`, parameterized by the cell
+// constructor: the polymorphic-`this` statics pass the typed subclass
+// (`Vec.derive` → Vec), the free functions pass the plain `Cell`. One body
+// each so the static and free forms can't drift (typed overloads live at
+// the call sites; only these `any` runtime bodies are shared).
+// biome-ignore lint/suspicious/noExplicitAny: dispatch
+function dispatchDerive(ctor: CellCtor<Cell<any>>, args: any[]): unknown {
+  if (args.length === 1) return buildDerived(ctor, args[0]);
+  const [parent, fn] = args;
+  if (Array.isArray(parent)) return buildLensN(ctor, parent, fn, undefined, false);
+  return buildDerived(ctor, () => fn((parent as Cell<unknown>).value));
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: dispatch
+function dispatchLens(ctor: CellCtor<Cell<any>>, args: any[]): unknown {
+  const [parent, a, b] = args;
+  if (args.length === 2) {
+    const ps = Array.isArray(parent) ? (parent as Cell<unknown>[]) : [parent as Cell<unknown>];
+    return ps.length === 1 ? buildStateful1(ctor, ps[0]!, a) : buildStateful(ctor, ps, a);
+  }
+  const readsSource = (b as (...xs: unknown[]) => unknown).length >= 2;
+  if (Array.isArray(parent)) return buildLensN(ctor, parent, a, b, readsSource);
+  return buildLens1(ctor, parent, a, b, readsSource);
+}
+
+// Install `value` on the prototype (for silly TypeScript inference reasons I'd like to avoid if we can figure it out).
 Object.defineProperty(Cell.prototype, "value", {
   get(this: Cell<unknown>): unknown {
     const flags = this.flags;
@@ -1267,10 +1288,7 @@ export function derive<P extends readonly Read<unknown>[], R>(
 export function derive<R>(fn: () => R): Cell<R>;
 // biome-ignore lint/suspicious/noExplicitAny: dispatch
 export function derive(...args: any[]): any {
-  if (args.length === 1) return buildComputed(CELL_CTOR, args[0]);
-  const [parent, fn] = args;
-  if (Array.isArray(parent)) return buildLensN(CELL_CTOR, parent, fn, undefined, false);
-  return buildComputed(CELL_CTOR, () => fn((parent as Cell<unknown>).value));
+  return dispatchDerive(CELL_CTOR, args);
 }
 
 /** Untyped lens, inferring `R` from the closures. A 2-arg `bwd` reads the
@@ -1299,13 +1317,7 @@ export function lens<P extends readonly Read<unknown>[], R, C>(
 ): Writable<Cell<R>>;
 // biome-ignore lint/suspicious/noExplicitAny: dispatch
 export function lens(...args: any[]): any {
-  const [parent, a, b] = args;
-  if (args.length === 2) {
-    return buildStateful(CELL_CTOR, Array.isArray(parent) ? parent : [parent], a);
-  }
-  const readsSource = (b as (...xs: unknown[]) => unknown).length >= 2;
-  if (Array.isArray(parent)) return buildLensN(CELL_CTOR, parent, a, b, readsSource);
-  return buildLens1(CELL_CTOR, parent, a, b, readsSource);
+  return dispatchLens(CELL_CTOR, args);
 }
 
 // Effect — alien-signals verbatim.
