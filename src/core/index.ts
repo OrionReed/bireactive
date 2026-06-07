@@ -10,8 +10,8 @@ export {
   type Init,
   type Inner,
   isCell,
-  isComputed,
   isLens,
+  isReadonly,
   lazy,
   lens,
   type Network,
@@ -51,7 +51,7 @@ export { Audio, type AudioClip, audio, stamp as audioStamp } from "./values/audi
 export * as BoolMath from "./values/bool";
 export { Bool, bool } from "./values/bool";
 export * as BoxMath from "./values/box";
-export { Box, box, edgeFrom, union as boxUnion } from "./values/box";
+export { Box, box } from "./values/box";
 export { Canvas, canvas, type Raster, stamp as canvasStamp } from "./values/canvas";
 export * as ColorMath from "./values/color";
 export { Color, rgb, rgba } from "./values/color";
@@ -66,22 +66,7 @@ export {
   type Tex,
 } from "./values/gpu";
 export * as MatrixMath from "./values/matrix";
-export {
-  compose,
-  determinant,
-  fromRotate,
-  fromScale,
-  fromTranslate,
-  identity,
-  invert,
-  isIdentity,
-  Matrix,
-  matrix,
-  multiply,
-  toMatrixString,
-  transformBox,
-  transformPoint,
-} from "./values/matrix";
+export { Matrix, matrix, transformBox, transformPoint } from "./values/matrix";
 export * as NumMath from "./values/num";
 export { Num, num } from "./values/num";
 export * as PoseMath from "./values/pose";

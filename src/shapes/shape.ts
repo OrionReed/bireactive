@@ -4,16 +4,15 @@ import {
   BoxMath,
   Cell,
   cell,
-  compose,
   derive,
   effect,
   type Inner,
   lazy,
   type Matrix,
+  MatrixMath,
   mean,
   Num,
   readNow,
-  toMatrixString,
   transformBox,
   transformPoint,
   type Val,
@@ -184,14 +183,14 @@ export class Shape<O extends ShapeOpts = ShapeOpts> {
       const r = this.rotate.value;
       const sc = this.scale.value;
       if (t.x === 0 && t.y === 0 && r === 0 && sc.x === 1 && sc.y === 1) {
-        return compose(t, r, sc, { x: 0, y: 0 });
+        return MatrixMath.compose(t, r, sc, { x: 0, y: 0 });
       }
-      return compose(t, r, sc, this.origin.value);
+      return MatrixMath.compose(t, r, sc, this.origin.value);
     });
 
     this.disposers.push(
       effect(() => {
-        this.el.style.transform = toMatrixString(this.localFrame.value);
+        this.el.style.transform = MatrixMath.toMatrixString(this.localFrame.value);
         this.el.style.opacity = String(this.opacity.value);
       }),
     );

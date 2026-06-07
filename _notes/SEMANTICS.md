@@ -39,7 +39,7 @@ that line" requires either:
 
 With composition, you write:
 ```ts
-const m = midpointLens(A, B);   // definition
+const m = mean([A, B]);          // definition
 p.add(onLine(m, L1, L2));        // constraint
 ```
 
@@ -65,8 +65,8 @@ function followGoal(target: Writable<Vec>, goal: Writable<Vec>) {
 }
 // Same propagator body works for:
 //   target = single Vec        → one cell moves
-//   target = midpointLens(a,b) → two cells move
-//   target = centroidLens(...) → N cells move
+//   target = mean([a, b])      → two cells move
+//   target = mean(pts)         → N cells move
 //   target = customLens        → custom distribution
 ```
 
@@ -128,7 +128,7 @@ lens × propagator, they're orthogonal.
 ## Why "lens equivalents exist" doesn't kill propagator variants
 
 Earlier I argued that `vCentroid`, `vMidpoint` etc. were redundant
-with `centroidLens`, `midpointLens`. Looking again through the
+with `mean`. Looking again through the
 composition lens (no pun intended):
 
 - The LENS form is the **definition role**.
@@ -139,11 +139,11 @@ use cases want one; some want the other; some want both:
 
 ```ts
 // Definition: m IS the midpoint.
-const m = midpointLens(a, b);
+const m = mean([a, b]);
 
 // Solver: maintain "midpoint of x, y == midpoint of a, b".
-p.add(propagator([m], [midpointLens(x, y)], () => {
-  midpointLens(x, y).value = m.value;
+p.add(propagator([m], [mean([x, y])], () => {
+  mean([x, y]).value = m.value;
 }));
 ```
 
@@ -398,7 +398,7 @@ The high-impact ones:
 | 4 | Two propagators writing the same lens — last write wins | Combine into one propagator with explicit policy |
 | 5 | Hot loop re-peeking a chain | Cache `chain.value` once at start of step body |
 | 6 | Disposing the propagator doesn't dispose the lens | Separate concerns; dispose what you own |
-| 7 | Writing through `centroidLens` moves ALL parents, not just one | Read the lens's bwd policy; use a custom Vec.lens if you want different distribution |
+| 7 | Writing through `mean` moves ALL parents, not just one | Read the lens's bwd policy; use a custom Vec.lens if you want different distribution |
 | 8 | Lens chain on cells outside the network: propagator observes but can't force | Recognise the boundary; use AVBD or another tool to force across boundaries |
 
 Footguns 1 and 3 are the substantive ones — both are about the

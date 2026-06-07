@@ -7,7 +7,7 @@ import {
   type Cell,
   derive,
   type Init,
-  isComputed,
+  isReadonly,
   Num,
   num,
   Range,
@@ -96,9 +96,9 @@ function makeClip(spec: ClipSpec, clock: Num): Clip {
   const dur = Num.from(spec.dur);
   const end = Num.derive(() => at.value + dur.value);
   // Bidirectional span when both inputs are writable; RO derive when
-  // either is computed. Mirrors `ResolvedSpan`.
+  // either is read-only. Mirrors `ResolvedSpan`.
   const sp =
-    isComputed(at) || isComputed(dur)
+    isReadonly(at) || isReadonly(dur)
       ? Range.derive(() => ({ lo: at.value, hi: at.value + dur.value }))
       : span(at as Writable<Num>, dur as Writable<Num>);
   const t = Num.derive(() => {

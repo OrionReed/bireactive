@@ -107,7 +107,7 @@ intersection (lattice meet); propagators are order-independent.
 
 | Want | Tool |
 |---|---|
-| New cell that's a function of others | **Lens** (`a.add(b)`, `centroidLens(...)`) |
+| New cell that's a function of others | **Lens** (`a.add(b)`, `mean(...)`) |
 | Constrain pre-existing cells | **Propagator** |
 | Cloth / soft-body / rigid-body physics | **`world()`** (AVBD) |
 | Multi-output relation (`a + b = c + d`) | **Propagator** |

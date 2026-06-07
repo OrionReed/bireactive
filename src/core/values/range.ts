@@ -12,7 +12,7 @@ import {
   cachedDerive,
   field,
   type Init,
-  isComputed,
+  isReadonly,
   reader,
   readNow,
   type Val,
@@ -158,9 +158,9 @@ export class Range extends Cell<V> {
    *  endpoint by `eps`). Literal / RO inputs yield a bare RO `Bool`. */
   contains<P extends Val<number>>(v: P): P extends WritableBrand ? Writable<Bool> : Bool {
     if (v instanceof Num) {
-      // RO computed Num has no backward path → RO branch. Sources and
+      // RO Num has no backward path → RO branch. Sources and
       // writable lenses both accept write-back.
-      if (!isComputed(v)) {
+      if (!isReadonly(v)) {
         return Bool.lens(
           [this, v] as never,
           (vals: readonly [V, number]) => contains(vals[0], vals[1]),

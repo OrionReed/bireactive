@@ -1,18 +1,3 @@
-// core/lenses/index.ts — N→1, N→M and 1→M bidirectional lens primitives.
-//
-// Layers:
-//   1. CLOSED-FORM POLICIES — `rigidTranslate`, `rotateAbout`,
-//      `scaleAbout`, `scaleAboutXY`: exact group-action primitives.
-//   2. AGGREGATES — `mean`, `spread`, `palette`, `total`, `bezierGestalt`,
-//      `timeSeries`, `mix`/`select`/`crossfade`: closed-form N→1 views.
-//   3. DECOMPOSITIONS — `procrustes`, `bbox`, `meanDiff`, `bestFitLine`,
-//      `bestFitCircle`, `pca`: exact M-output views over the policies.
-//   4. NUMERICAL — `factor`, `factorTuple`, `bundle`, `argminNum`,
-//      `argminVec`: generic Jacobian-LSQ, the escape hatch when no
-//      closed form fits.
-//
-// See BIDIRECTIONAL-LENSES.md for the engine substrate.
-
 export {
   type ArgminOpts,
   type ArgminVecOpts,

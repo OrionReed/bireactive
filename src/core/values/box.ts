@@ -10,7 +10,7 @@ import {
   field,
   type Init,
   type Inner,
-  isComputed,
+  isReadonly,
   lazy,
   type Read,
   reader,
@@ -166,9 +166,9 @@ export class Box extends Cell<V> {
    *  nearest edge by `eps`. Literal / RO inputs yield a bare RO `Bool`. */
   contains<P extends Val<Inner<Vec>>>(p: P): P extends WritableBrand ? Writable<Bool> : Bool {
     if (p instanceof Vec) {
-      // A computed Vec has no backward path → RO branch; sources and
+      // A read-only Vec has no backward path → RO branch; sources and
       // writable lenses accept write-back.
-      if (!isComputed(p)) {
+      if (!isReadonly(p)) {
         // `.bind(Bool)` + cast steps past the generic overloads, whose
         // mapped-tuple inference over the full class types otherwise blows
         // the instantiation depth.

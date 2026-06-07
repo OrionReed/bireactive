@@ -5,8 +5,8 @@ import {
   Box,
   box,
   effect,
-  isComputed,
   isLens,
+  isReadonly,
   num,
   Transform,
   transform,
@@ -37,7 +37,7 @@ describe("Box", () => {
     const b = box(0, 0, 100, 50);
     const c = b.center;
     expect(c).toBeInstanceOf(Vec);
-    expect(isComputed(c)).toBe(true);
+    expect(isReadonly(c)).toBe(true);
     expect(c.value).toEqual({ x: 50, y: 25 });
   });
 
@@ -57,7 +57,7 @@ describe("Box", () => {
   it("Box.derive / Box.lens / Box.is", () => {
     const b = box(0, 0, 10, 10);
     const half = Box.derive(() => ({ ...b.value, w: b.value.w / 2 }));
-    expect(isComputed(half)).toBe(true);
+    expect(isReadonly(half)).toBe(true);
     expect(half.value.w).toBe(5);
 
     const lens = Box.lens(

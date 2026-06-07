@@ -469,8 +469,8 @@ export const isCell = (v: unknown): v is Cell<unknown> => v instanceof Cell;
 export const isLens = (v: unknown): v is Cell<unknown> =>
   v instanceof Cell && v.getter !== undefined && v._bwd !== undefined;
 
-/** Computed mode: derived + read-only (no backward path). */
-export const isComputed = (v: unknown): v is Cell<unknown> =>
+/** Read-only mode: derived with no backward path. */
+export const isReadonly = (v: unknown): v is Cell<unknown> =>
   v instanceof Cell && v.getter !== undefined && v._bwd === undefined;
 
 export interface CellOptions<T = unknown> {

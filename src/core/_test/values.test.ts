@@ -1,7 +1,7 @@
 // values.test.ts — Num/Vec runtime + Writable<R> behaviour.
 
 import { describe, expect, it } from "vitest";
-import { effect, isComputed, isLens, Num, num, polar, tangentPoint, Vec, vec } from "../index";
+import { effect, isLens, isReadonly, Num, num, polar, tangentPoint, Vec, vec } from "../index";
 
 describe("Num", () => {
   it("num(v) writable, .value setter works", () => {
@@ -15,7 +15,7 @@ describe("Num", () => {
   it("Num.derive returns RO", () => {
     const n = num(3);
     const sq = Num.derive(() => n.value * n.value);
-    expect(isComputed(sq)).toBe(true);
+    expect(isReadonly(sq)).toBe(true);
     expect(sq.value).toBe(9);
     n.value = 4;
     expect(sq.value).toBe(16);
@@ -25,7 +25,7 @@ describe("Num", () => {
     const v = vec(3, 4);
     const m = Num.derive(v, p => Math.hypot(p.x, p.y));
     expect(m).toBeInstanceOf(Num);
-    expect(isComputed(m)).toBe(true);
+    expect(isReadonly(m)).toBe(true);
     expect(m.value).toBe(5);
     v.value = { x: 5, y: 12 };
     expect(m.value).toBe(13);
@@ -139,7 +139,7 @@ describe("Vec", () => {
   it("normalize is non-invertible", () => {
     const v = vec(3, 4);
     const n = v.normalize();
-    expect(isComputed(n)).toBe(true);
+    expect(isReadonly(n)).toBe(true);
     expect(n.value.x).toBeCloseTo(0.6);
   });
 

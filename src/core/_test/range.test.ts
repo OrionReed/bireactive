@@ -2,7 +2,7 @@
 // derived views, codec round-trips.
 
 import { describe, expect, it } from "vitest";
-import { isComputed, isLens, num, Range, range, span } from "../index";
+import { isLens, isReadonly, num, Range, range, span } from "../index";
 
 describe("Range — construction", () => {
   it("range(lo, hi) writable", () => {
@@ -57,7 +57,7 @@ describe("Range — derived views", () => {
     const r = range(2, 8);
     expect(r.width.value).toBe(6);
     expect(r.center.value).toBe(5);
-    expect(isComputed(r.width)).toBe(true);
+    expect(isReadonly(r.width)).toBe(true);
     r.lo.value = 0;
     expect(r.width.value).toBe(8);
     expect(r.center.value).toBe(4);
@@ -126,7 +126,7 @@ describe("Range — sample / paramOf / clampedRead", () => {
     const r = range(10, 20);
     const s = r.sample(0.4);
     expect(s.value).toBe(14);
-    expect(isComputed(s)).toBe(true);
+    expect(isReadonly(s)).toBe(true);
   });
 
   it("paramOf is the inverse of sample", () => {
