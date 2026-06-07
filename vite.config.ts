@@ -17,8 +17,8 @@ export default defineConfig(({ command }) => ({
     port: 5555,
   },
   build: {
-    // The library's compiled output lives in `dist` (see tsconfig.build.json
-    // + publishConfig); the demo site bundle gets its own dir.
+    // The library's compiled output lives in `dist` (see tsconfig.build.json);
+    // the demo site bundle gets its own dir.
     outDir: "dist-web",
     minify: false,
     target: "esnext",
