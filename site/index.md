@@ -124,6 +124,10 @@ Crossing types also gives combinators. `mix(weights, branches)` reads as a weigh
 
 <md-select></md-select>
 
+A lens is itself a value, so it can live in a cell. Then the *transformation* is reactive: the forward direction tracks the frame cell and the backward direction inverts whatever it currently holds, so swapping or blending the lens reconfigures a running pipeline without rebuilding the graph. `through(src, frame)` is one writable edge; stacking two gives a reconfigurable bidirectional pipeline. Stage one swaps an affine frame from a palette; stage two blends one continuously (a lens-valued crossfade) — drag the source or the image shape, change either stage, and every end stays in sync:
+
+<md-lens-algebra></md-lens-algebra>
+
 ## Trees
 
 Extending boolean to a sum type gives `Tri`, three-valued logic with an indeterminate state. A checkbox tree is its natural home: each folder is the Kleene-AND of its descendants — all checked, none checked, or partial. `Tri.allOf(leaves)` reads the aggregate and broadcasts on write, so both halves of the indeterminate checkbox live in one cell:
@@ -201,6 +205,10 @@ The root itself can be sprung. Hit *spring root* and per-pixel position/velocity
 When the inverse has no closed form, the backward direction runs a solver. It is still a single pass from the outside: the cluster doesn't own the state, the edge does more work. An N-link arm is a `Vec.lens` whose backward direction runs inverse kinematics on every write:
 
 <md-ik></md-ik>
+
+A constraint cluster is an *unoriented* relation; a lens is an oriented one. `exposeVec(c, cells, handle)` picks the orientation, handing back a single `Writable<Vec>` whose backward direction relaxes the whole network. The point isn't the solver — it's that the solver is now a *value*, so the closed-form lens algebra stacks on top of it. Here three fingers share a hub, each its own cluster with its tip exposed; `procrustes(tips)` lays an exact move/spin/size frame over all three. One gizmo write splits — through the closed form — into a per-finger target, and each cluster relaxes to meet it. Folding this into one flat network would dissolve the exact aggregate into more soft constraints, and *spin* and *size* are emergent: no single cell holds them.
+
+<md-network-lens></md-network-lens>
 
 A closed loop parameterizes each bar by angle and solves `Σ rᵢ · u(θᵢ) = 0` from the previous frame's seed, staying continuous as it travels around the cycle:
 

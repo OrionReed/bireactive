@@ -33,6 +33,7 @@ export {
   dilated,
   fixedStep,
 } from "./drivers";
+export { type ExposeOpts, exposeVec } from "./expose";
 export {
   angle,
   bend,
