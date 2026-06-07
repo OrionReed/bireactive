@@ -11,6 +11,8 @@ Reactive values flow one way: write an input and everything derived from it upda
 
 Each edge carries a forward and an inverse, so a change at any node propagates both ways.
 
+The full surface is documented in the [API reference](./api/).
+
 A solar system, every body positioned from one `time`.
 
 <md-solar-system></md-solar-system>
@@ -204,6 +206,27 @@ A `Flags` value is one integer with named bits; `flag(name)` is a `Bool` lens ov
 A tree of scalars: moving a boundary adjusts the siblings, the parent total, and the rows downstream:
 
 <md-budget-tree></md-budget-tree>
+
+## Collections
+
+A `coll(items)` holds stable element handles — records of cells — and each view is a *writable* structural lens.
+
+```ts
+const visible = tasks.filter(is(c => c.done, false));
+const board   = visible.groupBy(c => c.status, { order: COLUMNS, sort: c => c.rank });
+```
+
+The forward half is nothing exotic — `filter`/`sortBy`/`groupBy` are plain derivations, expressible on any signal library. What `coll` adds is the *backward* half as part of the same vocabulary: you edit the view, not the source. A drag is one call, and the lens chain writes the fields that make the view true:
+
+```ts
+board.move(card, "doing", i); // status := "doing" (the group key),
+                              // rank := between(neighbours) (the order field),
+                              // and the upstream filter's assert (done := false)
+```
+
+So the predicate that *derives* the view also *repairs* it: `is(c => c.done, false)` is one expression used forward (the test) and backward (the assert), and `done` is itself a `Bool` lens over `status`, so ticking it rewrites the column. Swap `c.status` for `c.assignee` or `c.priority` and the identical `move` re-targets the new field. The board, table, and timeline are three lenses over one `coll`, edited independently and kept in lockstep.
+
+<md-kanban></md-kanban>
 
 Each bone holds a local pose; world pose composes down the chain, and a joint handle decomposes a world target back into the local frame. Moving a hand bends one arm; moving the root translates the whole figure:
 

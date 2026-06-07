@@ -1,0 +1,13 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/index.ts"],
+  "tsconfig": "tsconfig.json",
+  "out": "dist-web/api",
+  "cleanOutputDir": true,
+  "name": "bireactive",
+  "includeVersion": true,
+  "navigationLinks": {
+    "Demo": "https://orionreed.github.io/bireactive/",
+    "GitHub": "https://github.com/OrionReed/bireactive"
+  }
+}

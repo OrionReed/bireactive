@@ -7,8 +7,8 @@ export class GithubLink extends BaseElement {
     :host {
       display: block;
       position: fixed;
-      top: 2rem;
-      right: calc(2rem + 40px + 0.25rem);
+      top: calc(2rem + 40px + 0.25rem);
+      right: 2rem;
       z-index: 1000;
     }
 
@@ -35,8 +35,8 @@ export class GithubLink extends BaseElement {
 
     @media (max-width: 600px) {
       :host {
-        top: 1rem;
-        right: calc(1rem + 36px + 0.25rem);
+        top: calc(1rem + 36px + 0.25rem);
+        right: 1rem;
       }
 
       .link {

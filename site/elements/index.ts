@@ -2,6 +2,7 @@
 
 import { MdMarker, MdTex } from "@bireactive/web";
 import { DarkModeToggle } from "./dark-mode-toggle";
+import { DocsLink } from "./docs-link";
 import { GithubLink } from "./github-link";
 import { MdAllen } from "./md-allen";
 import { MdAnchors } from "./md-anchors";
@@ -43,6 +44,7 @@ import { MdHistogram } from "./md-histogram";
 import { MdIk } from "./md-ik";
 import { MdIncidence } from "./md-incidence";
 import { MdInvertible } from "./md-invertible";
+import { MdKanban } from "./md-kanban";
 import { MdKeplerSystem } from "./md-kepler-system";
 import { MdLayoutDemo } from "./md-layout-demo";
 import { MdLensAlgebra } from "./md-lens-algebra";
@@ -90,6 +92,7 @@ import { MdWaapiDemo } from "./md-waapi-demo";
 
 DarkModeToggle.define();
 GithubLink.define();
+DocsLink.define();
 MdSyntax.define();
 MdCentering.define();
 MdCancel.define();
@@ -151,6 +154,7 @@ MdMadlibs.define();
 MdRouteParams.define();
 MdFlags.define();
 MdTriTree.define();
+MdKanban.define();
 MdGears.define();
 MdPulley.define();
 MdIk.define();

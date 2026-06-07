@@ -1,6 +1,6 @@
 # bi-reactive
 
-[npm](https://www.npmjs.com/package/bireactive) · [GitHub](https://github.com/OrionReed/bireactive) · [site](https://orionreed.github.io/bireactive/)
+[npm](https://www.npmjs.com/package/bireactive) · [GitHub](https://github.com/OrionReed/bireactive) · [site](https://orionreed.github.io/bireactive/) · [API](https://orionreed.github.io/bireactive/api/)
 
 A signals-like bidirectional reactive programming system where edges can go both ways. Forward and backward propagation are handled by the engine, with the same set of caveats as regular reactive programming.
 

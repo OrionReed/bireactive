@@ -165,8 +165,9 @@ function pageHTML(page: Page, isProduction: boolean): string {
     <meta name="twitter:description" content="${page.description}" />
   </head>
   <body>
-    <github-link></github-link>
     <dark-mode-toggle></dark-mode-toggle>
+    <github-link></github-link>
+    <docs-link></docs-link>
     <main class="post">
       ${content}
     </main>
