@@ -2,6 +2,7 @@ export class BaseElement extends HTMLElement {
   protected shadow: ShadowRoot;
   private static styleSheets = new Map<string, CSSStyleSheet>();
   static styles?: string;
+  static _attributes?: string[];
 
   constructor() {
     super();
@@ -21,7 +22,7 @@ export class BaseElement extends HTMLElement {
   }
 
   static get observedAttributes(): string[] {
-    return (this as any)._attributes || [];
+    return this._attributes || [];
   }
 
   static define(): void {
@@ -62,26 +63,6 @@ export class BaseElement extends HTMLElement {
   }
 
   protected render(): void {}
-}
-
-/** Decorator: maps a class field to a typed HTML attribute. */
-export function attr(options: { type?: "string" | "number" | "boolean" } = {}) {
-  return <T extends { constructor: any }>(target: T, propertyKey: string) => {
-    const constructor = target.constructor;
-    if (!constructor._attributes) constructor._attributes = [];
-    constructor._attributes.push(propertyKey);
-
-    Object.defineProperty(target, propertyKey, {
-      get(this: HTMLElement) {
-        const value = this.getAttribute(propertyKey);
-        if (options.type === "boolean") return value !== null;
-        if (options.type === "number") return value ? Number(value) : undefined;
-        return value;
-      },
-      enumerable: true,
-      configurable: true,
-    });
-  };
 }
 
 export const css = String.raw;

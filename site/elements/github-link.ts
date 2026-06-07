@@ -1,4 +1,4 @@
-import { BaseElement, css } from "./base-element.ts";
+import { BaseElement, css } from "./base-element";
 
 const REPO_URL = "https://github.com/OrionReed/bireactive";
 

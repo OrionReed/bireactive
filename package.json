@@ -31,7 +31,7 @@
   ],
   "scripts": {
     "dev": "vite --host",
-    "site": "vite-node site/build.ts && vite build && vite-node site/build.ts && typedoc",
+    "site": "vite build && typedoc",
     "preview": "vite preview",
     "prebuild": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json --resolve-full-paths",

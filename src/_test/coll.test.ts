@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import { allPass, coll, is } from "../coll";
-import { bool, type Bool, num, type Num, str, type Str, type Writable } from "../core";
+import { type Bool, bool, type Num, num, type Str, str, type Writable } from "../core";
 
 interface Item {
   id: string;
@@ -61,7 +61,12 @@ describe("backward composition across a chain", () => {
   it("one move asserts the filter, sets the group, and writes the rank", () => {
     const a = item("todo", "linus", 5, false);
     const board = tasks([a])
-      .filter(allPass(is<Item, string>(i => i.assignee, "ada"), is<Item, boolean>(i => i.done, false)))
+      .filter(
+        allPass(
+          is<Item, string>(i => i.assignee, "ada"),
+          is<Item, boolean>(i => i.done, false),
+        ),
+      )
       .groupBy(i => i.status, { order: STATUSES, sort: i => i.rank });
 
     board.move(a, "doing", 0);

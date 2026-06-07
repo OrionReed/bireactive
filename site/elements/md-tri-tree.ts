@@ -20,8 +20,7 @@ const node = (label: string, children: Node[] = [], init = false): Node => ({
   checked: children.length ? Tri.allOf(children.map(c => c.checked)) : tri(init),
 });
 
-const leavesOf = (n: Node): Node[] =>
-  n.children.length ? n.children.flatMap(leavesOf) : [n];
+const leavesOf = (n: Node): Node[] => (n.children.length ? n.children.flatMap(leavesOf) : [n]);
 
 export class MdTriTree extends BaseElement {
   static styles = css`
@@ -141,7 +140,10 @@ export class MdTriTree extends BaseElement {
         node("Reply to client email"),
       ]),
       node("Personal", [node("Buy groceries"), node("Call mom", [], true), node("Do laundry")]),
-      node("Reading", [node("Finish chapter 4", [], true), node("Take notes on chapter 5", [], true)]),
+      node("Reading", [
+        node("Finish chapter 4", [], true),
+        node("Take notes on chapter 5", [], true),
+      ]),
     ]);
 
     const leaves = leavesOf(tree);

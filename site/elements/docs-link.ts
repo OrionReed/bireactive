@@ -1,4 +1,4 @@
-import { BaseElement, css } from "./base-element.ts";
+import { BaseElement, css } from "./base-element";
 
 const DOCS_URL = "https://orionreed.github.io/bireactive/api/";
 

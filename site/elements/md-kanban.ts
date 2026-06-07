@@ -8,13 +8,13 @@
 // renderer never names a field — the chain owns the backward writes.
 
 import {
-  batch,
   Bool,
+  batch,
   bool,
   type Cell,
+  type Coll,
   cell,
   coll,
-  type Coll,
   derive,
   effect,
   type GroupView,
@@ -117,7 +117,12 @@ interface AxisDesc {
 }
 
 const AXES: Record<Axis, AxisDesc> = {
-  status: { keys: STATUSES, label: k => STATUS_LABEL[k], color: k => STATUS_COLOR[k], field: c => c.status },
+  status: {
+    keys: STATUSES,
+    label: k => STATUS_LABEL[k],
+    color: k => STATUS_COLOR[k],
+    field: c => c.status,
+  },
   assignee: {
     keys: ASSIGNEES,
     label: k => String(k),
@@ -694,7 +699,10 @@ export class MdKanban extends BaseElement {
       (c: Card) => {
         if (this.#activeOnly.value && c.done.value) return false;
         const q = this.#query.value.trim().toLowerCase();
-        if (q) return c.title.value.toLowerCase().includes(q) || c.assignee.value.toLowerCase().includes(q);
+        if (q)
+          return (
+            c.title.value.toLowerCase().includes(q) || c.assignee.value.toLowerCase().includes(q)
+          );
         return true;
       },
       {
@@ -719,7 +727,8 @@ export class MdKanban extends BaseElement {
     boardPane.className = "pane";
     const bh = document.createElement("p");
     bh.className = "pane-hint";
-    bh.textContent = "Drag a card between columns or reorder within one — the move writes the grouping field and rank.";
+    bh.textContent =
+      "Drag a card between columns or reorder within one — the move writes the grouping field and rank.";
     this.#boardEl = document.createElement("div");
     boardPane.append(bh, this.#boardEl);
 
@@ -919,13 +928,15 @@ export class MdKanban extends BaseElement {
       // The entire move: backward pass writes the group key, the rank, and
       // asserts the active filters — one call, every view re-flows.
       this.#board.move(dragged, key, index);
-      for (const m of this.shadow.querySelectorAll(".drop-before")) m.classList.remove("drop-before");
+      for (const m of this.shadow.querySelectorAll(".drop-before"))
+        m.classList.remove("drop-before");
     });
   }
 
   #cardsIn(body: HTMLElement, excludeId?: string): HTMLElement[] {
     return [...body.children].filter(
-      (n): n is HTMLElement => n instanceof HTMLElement && !!n.dataset.id && n.dataset.id !== excludeId,
+      (n): n is HTMLElement =>
+        n instanceof HTMLElement && !!n.dataset.id && n.dataset.id !== excludeId,
     );
   }
 
@@ -1028,7 +1039,8 @@ export class MdKanban extends BaseElement {
     el.addEventListener("dragend", () => {
       this.#dragId = null;
       el.classList.remove("dragging");
-      for (const m of this.shadow.querySelectorAll(".drop-before")) m.classList.remove("drop-before");
+      for (const m of this.shadow.querySelectorAll(".drop-before"))
+        m.classList.remove("drop-before");
       for (const m of this.shadow.querySelectorAll(".col.dragover")) m.classList.remove("dragover");
     });
 
@@ -1093,7 +1105,8 @@ export class MdKanban extends BaseElement {
     const wrap = document.createElement("div");
     const h = document.createElement("p");
     h.className = "pane-hint";
-    h.textContent = "Click a header to sort. Edit any cell — chips and pills are leaf writes; the board and timeline update with it.";
+    h.textContent =
+      "Click a header to sort. Edit any cell — chips and pills are leaf writes; the board and timeline update with it.";
     const table = document.createElement("table");
     const thead = document.createElement("tr");
 
@@ -1116,7 +1129,8 @@ export class MdKanban extends BaseElement {
         arrows.set(key, arrow);
         th.addEventListener("click", () => {
           const cur = this.#sort.value;
-          this.#sort.value = cur.key === key ? { key, dir: cur.dir === 1 ? -1 : 1 } : { key, dir: 1 };
+          this.#sort.value =
+            cur.key === key ? { key, dir: cur.dir === 1 ? -1 : 1 } : { key, dir: 1 };
         });
       }
       thead.append(th);
@@ -1135,7 +1149,8 @@ export class MdKanban extends BaseElement {
 
     this.#bind(() => {
       const { key, dir } = this.#sort.value;
-      for (const [k, arrow] of arrows) arrow.textContent = k === key ? (dir === 1 ? " ▲" : " ▼") : "";
+      for (const [k, arrow] of arrows)
+        arrow.textContent = k === key ? (dir === 1 ? " ▲" : " ▼") : "";
       this.#reconcile(
         tbody,
         rows.value.map(c => this.#rowEl(c)),
@@ -1204,7 +1219,8 @@ export class MdKanban extends BaseElement {
     const wrap = document.createElement("div");
     const h = document.createElement("p");
     h.className = "pane-hint";
-    h.textContent = "Lanes are the assignee lens; each bar sits at its due day, width = estimate. Drag a bar to write due.";
+    h.textContent =
+      "Lanes are the assignee lens; each bar sits at its due day, width = estimate. Drag a bar to write due.";
     wrap.append(h);
 
     const tl = document.createElement("div");
@@ -1400,7 +1416,10 @@ export class MdKanban extends BaseElement {
     wlabel.textContent = "Load";
     wlGroup.append(wlabel);
 
-    const rows = new Map<string, { check: HTMLInputElement; bar: HTMLElement; meta: HTMLElement }>();
+    const rows = new Map<
+      string,
+      { check: HTMLInputElement; bar: HTMLElement; meta: HTMLElement }
+    >();
     for (const name of ASSIGNEES) {
       const unit = document.createElement("span");
       unit.className = "wl";

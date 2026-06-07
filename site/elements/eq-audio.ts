@@ -89,115 +89,150 @@ export async function loadClip(ctx: AudioContext, url: string): Promise<Clip> {
   return stamp(pcm, buf.sampleRate);
 }
 
+const FFT_SIZE = 2048;
+// Assumed rate for the visual response curve before a live context exists.
+// The live filters use the real ctx rate; the curve difference is negligible.
+const FALLBACK_RATE = 44100;
+
 /** Live native-WebAudio engine: source → peaking cascade → master → analyser →
  *  destination. The reactive layer drives `setGain`, points playback at a clip
- *  via `setSource`, and reads `spectrum`. */
+ *  via `setSource`, and reads `spectrum`.
+ *
+ *  The AudioContext is created lazily on the first user gesture (`resume`/
+ *  `play`/`ensureContext`) so browsers don't warn about an auto-started
+ *  context. Until then, gains and source are buffered and the spectrum reads
+ *  as silence. */
 export class AudioEngine {
-  readonly ctx: AudioContext;
-  private readonly master: GainNode;
-  private readonly analyser: AnalyserNode;
-  private readonly filters: BiquadFilterNode[];
-  private source: AudioBufferSourceNode | null = null;
-  private clip: Clip | null = null;
+  #ctx: AudioContext | null = null;
+  #master: GainNode | null = null;
+  #analyser: AnalyserNode | null = null;
+  #filters: BiquadFilterNode[] = [];
+  #source: AudioBufferSourceNode | null = null;
+  #clip: Clip | null = null;
+  // Buffered band gains (dB), applied to the filters once the context exists.
+  readonly #gains: number[];
   playing = false;
 
-  constructor(bands: readonly EqBand[]) {
+  constructor(private readonly bands: readonly EqBand[]) {
+    this.#gains = bands.map(() => 0);
+  }
+
+  /** Create the AudioContext + graph on first use. Must be reached from a user
+   *  gesture; idempotent thereafter. */
+  ensureContext(): AudioContext {
+    if (this.#ctx) return this.#ctx;
     // biome-ignore lint/suspicious/noExplicitAny: webkit-prefixed fallback
     const Ctx: typeof AudioContext = window.AudioContext ?? (window as any).webkitAudioContext;
-    this.ctx = new Ctx();
+    const ctx = new Ctx();
 
-    this.master = this.ctx.createGain();
-    this.master.gain.value = 0.6;
-    this.analyser = this.ctx.createAnalyser();
-    this.analyser.fftSize = 2048;
-    this.analyser.smoothingTimeConstant = 0.75;
+    const master = ctx.createGain();
+    master.gain.value = 0.6;
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = FFT_SIZE;
+    analyser.smoothingTimeConstant = 0.75;
 
-    this.filters = bands.map(b => {
-      const f = this.ctx.createBiquadFilter();
+    this.#filters = this.bands.map((b, i) => {
+      const f = ctx.createBiquadFilter();
       f.type = "peaking";
       f.frequency.value = b.freq;
       f.Q.value = b.q;
-      f.gain.value = 0;
+      f.gain.value = this.#gains[i]!;
       return f;
     });
-    for (let i = 0; i < this.filters.length - 1; i++)
-      this.filters[i]!.connect(this.filters[i + 1]!);
-    this.filters[this.filters.length - 1]!.connect(this.master);
-    this.master.connect(this.analyser);
-    this.analyser.connect(this.ctx.destination);
+    for (let i = 0; i < this.#filters.length - 1; i++)
+      this.#filters[i]!.connect(this.#filters[i + 1]!);
+    this.#filters[this.#filters.length - 1]!.connect(master);
+    master.connect(analyser);
+    analyser.connect(ctx.destination);
+
+    this.#ctx = ctx;
+    this.#master = master;
+    this.#analyser = analyser;
+    return ctx;
+  }
+
+  /** Live context rate, or the assumed fallback before one exists. */
+  get sampleRate(): number {
+    return this.#ctx?.sampleRate ?? FALLBACK_RATE;
   }
 
   /** Push a solved band gain (dB) onto the live filter (smoothed, clamped so
-   *  macro solves can't blow up the output). */
+   *  macro solves can't blow up the output). Buffered until the context exists. */
   setGain(i: number, db: number): void {
     const c = db < -24 ? -24 : db > 24 ? 24 : db;
-    this.filters[i]?.gain.setTargetAtTime(c, this.ctx.currentTime, 0.02);
+    this.#gains[i] = c;
+    if (this.#ctx) this.#filters[i]?.gain.setTargetAtTime(c, this.#ctx.currentTime, 0.02);
   }
 
   /** Point playback at a clip; rebuilds the live source if already playing. The
    *  reactive layer calls this from an `effect` over an `Audio` cell. */
   setSource(clip: Clip): void {
-    this.clip = clip;
-    if (this.playing) this.restart();
+    this.#clip = clip;
+    if (this.playing) this.#restart();
   }
 
-  private toBuffer(clip: Clip): AudioBuffer {
+  #toBuffer(ctx: AudioContext, clip: Clip): AudioBuffer {
     const len = clip.pcm[0]?.length ?? 1;
-    const buf = this.ctx.createBuffer(Math.max(1, clip.pcm.length), len, clip.sampleRate);
+    const buf = ctx.createBuffer(Math.max(1, clip.pcm.length), len, clip.sampleRate);
     for (let c = 0; c < clip.pcm.length; c++)
       buf.copyToChannel(clip.pcm[c]! as Float32Array<ArrayBuffer>, c);
     return buf;
   }
 
-  private stopSource(): void {
+  #stopSource(): void {
     try {
-      this.source?.stop();
-      this.source?.disconnect();
+      this.#source?.stop();
+      this.#source?.disconnect();
     } catch {}
-    this.source = null;
+    this.#source = null;
   }
 
-  private restart(): void {
-    this.stopSource();
-    if (!this.clip || this.clip.pcm.length === 0) return;
-    const s = this.ctx.createBufferSource();
-    s.buffer = this.toBuffer(this.clip);
+  #restart(): void {
+    this.#stopSource();
+    const ctx = this.#ctx;
+    if (!ctx || !this.#clip || this.#clip.pcm.length === 0) return;
+    const s = ctx.createBufferSource();
+    s.buffer = this.#toBuffer(ctx, this.#clip);
     s.loop = true;
-    s.connect(this.filters[0]!);
+    s.connect(this.#filters[0]!);
     s.start();
-    this.source = s;
+    this.#source = s;
   }
 
   get binCount(): number {
-    return this.analyser.frequencyBinCount;
+    return FFT_SIZE / 2;
   }
   freqForBin(i: number): number {
-    return (i * this.ctx.sampleRate) / this.analyser.fftSize;
+    return (i * this.sampleRate) / FFT_SIZE;
   }
-  /** Fill `out` (length `binCount`) with the live magnitude spectrum (dB). */
+  /** Fill `out` (length `binCount`) with the live magnitude spectrum (dB), or
+   *  silence before the context exists. */
   spectrum(out: Float32Array<ArrayBuffer>): void {
-    this.analyser.getFloatFrequencyData(out);
+    if (this.#analyser) this.#analyser.getFloatFrequencyData(out);
+    else out.fill(Number.NEGATIVE_INFINITY);
   }
 
   async resume(): Promise<void> {
-    if (this.ctx.state !== "running") await this.ctx.resume();
+    const ctx = this.ensureContext();
+    if (ctx.state !== "running") await ctx.resume();
   }
   play(): void {
     if (this.playing) return;
+    this.ensureContext();
     this.playing = true;
-    this.restart();
+    this.#restart();
   }
   pause(): void {
     if (!this.playing) return;
     this.playing = false;
-    this.stopSource();
+    this.#stopSource();
   }
   dispose(): void {
     try {
       this.pause();
     } catch {}
     try {
-      void this.ctx.close();
+      void this.#ctx?.close();
     } catch {}
   }
 }

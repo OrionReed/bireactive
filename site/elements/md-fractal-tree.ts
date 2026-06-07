@@ -6,8 +6,8 @@
 
 import {
   circle,
-  derive,
   Diagram,
+  derive,
   drag,
   forEach,
   type Inner,

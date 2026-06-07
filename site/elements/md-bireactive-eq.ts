@@ -88,7 +88,7 @@ export class MdBireactiveEq extends Diagram {
     const view = this.view(W, H);
     const engine = new AudioEngine(BANDS);
     this.#engine = engine;
-    const fs = engine.ctx.sampleRate;
+    const fs = engine.sampleRate;
 
     // `setSource` runs in an effect, rebuilding the live BufferSource only when
     // the clip's epoch changes (O(1) handle equality).
@@ -98,12 +98,21 @@ export class MdBireactiveEq extends Diagram {
     const musicReady = cell(false);
     let musicClip: Clip | null = null;
     effect(() => engine.setSource(source.value));
-    void loadClip(engine.ctx, MUSIC_URL)
-      .then(c => {
-        musicClip = c;
-        musicReady.value = true;
-      })
-      .catch(() => {});
+
+    // Fetch + decode the remote track lazily — decoding needs an AudioContext,
+    // so it waits for the first user gesture (when one is created) rather than
+    // forcing the context to start on load.
+    let musicRequested = false;
+    const ensureMusic = (): void => {
+      if (musicRequested) return;
+      musicRequested = true;
+      void loadClip(engine.ensureContext(), MUSIC_URL)
+        .then(c => {
+          musicClip = c;
+          musicReady.value = true;
+        })
+        .catch(() => {});
+    };
 
     const gains = BANDS.map(() => num(0));
     gains.forEach((g, i) => effect(() => engine.setGain(i, g.value)));
@@ -290,6 +299,7 @@ export class MdBireactiveEq extends Diagram {
     );
     const toggle = async (): Promise<void> => {
       await engine.resume();
+      ensureMusic();
       if (engine.playing) engine.pause();
       else engine.play();
       playing.value = engine.playing;

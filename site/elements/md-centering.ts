@@ -86,12 +86,18 @@ export class MdCentering extends Diagram {
     const [yMin, yMid, yMax] = F.map(f => O.lerp(yEnd, f));
     const c = Vec.derive(() => ({ x: xMid.x.value, y: yMid.y.value }));
 
-    const rectBox = Box.derive(() => ({
-      x: xMin.x.value,
-      y: yMin.y.value,
-      w: xMax.x.value - xMin.x.value,
-      h: yMax.y.value - yMin.y.value,
-    }));
+    const rectBox = Box.derive(() => {
+      const x0 = xMin.x.value;
+      const x1 = xMax.x.value;
+      const y0 = yMin.y.value;
+      const y1 = yMax.y.value;
+      return {
+        x: Math.min(x0, x1),
+        y: Math.min(y0, y1),
+        w: Math.abs(x1 - x0),
+        h: Math.abs(y1 - y0),
+      };
+    });
     s(
       rect(rectBox, {
         thin: true,

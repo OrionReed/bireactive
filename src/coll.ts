@@ -168,7 +168,10 @@ export class SortView<E> extends View<E> {
     const others = this.items.filter(x => x !== e);
     batch(() => {
       this.assertContains(e);
-      this.#field(e).value = between(rankAt(others, this.#field, to - 1), rankAt(others, this.#field, to));
+      this.#field(e).value = between(
+        rankAt(others, this.#field, to - 1),
+        rankAt(others, this.#field, to),
+      );
     });
   }
 }
@@ -189,7 +192,9 @@ export class GroupView<K, E> {
     this.#sort = opts.sort;
     this.groups = derive(() => {
       const sort = this.#sort;
-      const items = sort ? [...parent.items].sort((a, b) => sort(a).value - sort(b).value) : parent.items;
+      const items = sort
+        ? [...parent.items].sort((a, b) => sort(a).value - sort(b).value)
+        : parent.items;
       return groupItems(items, e => field(e).value, this.#order);
     });
   }
@@ -206,7 +211,9 @@ export class GroupView<K, E> {
    *  it isn't there yet, asserts every upstream filter, then writes the
    *  group key and order field — all in one batch. */
   move(e: E, toKey: K, index?: number): void {
-    const target = (this.value.find(g => Object.is(g.key, toKey))?.items ?? []).filter(x => x !== e);
+    const target = (this.value.find(g => Object.is(g.key, toKey))?.items ?? []).filter(
+      x => x !== e,
+    );
     const sort = this.#sort;
     batch(() => {
       this.#parent.assertContains(e);

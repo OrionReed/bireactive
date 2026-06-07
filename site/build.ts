@@ -22,9 +22,9 @@ const SOURCE = fileURLToPath(new URL("./index.md", import.meta.url));
 const DIST_DIR = `${ROOT}/dist-web`;
 
 // GitHub Pages serves this project repo under /bireactive/, so the production
-// page references assets with that prefix. Keep in sync with `base` in
-// vite.config.ts. Dev is served from the root.
-const PROD_BASE = "/bireactive/";
+// page references assets with that prefix. `vite.config.ts` imports this for
+// its `base`, so the two can't drift. Dev is served from the root.
+export const PROD_BASE = "/bireactive/";
 
 /** Marked extension that renders `$$...$$` (block) and `$...$` (inline)
  *  math via Temml → MathML. No runtime CSS dependency — the New CM Math
@@ -70,22 +70,6 @@ interface Page {
   content: string;
 }
 
-function extractAndDeferScripts(htmlContent: string): {
-  content: string;
-  scripts: string[];
-} {
-  const scripts: string[] = [];
-  const scriptRegex = /<script(?:\s[^>]*)?>[\s\S]*?<\/script>/gi;
-
-  const content = htmlContent.replace(scriptRegex, match => {
-    const scriptContent = match.replace(/<script(?:\s[^>]*)?>|<\/script>/gi, "");
-    if (scriptContent.trim()) scripts.push(scriptContent.trim());
-    return "";
-  });
-
-  return { content, scripts };
-}
-
 function renderPage(): Page {
   const raw = readFileSync(SOURCE, "utf-8");
   const { content: markdown, data: frontmatter } = matter(raw);
@@ -123,14 +107,6 @@ function renderPage(): Page {
 function pageHTML(page: Page, isProduction: boolean): string {
   const base = isProduction ? PROD_BASE : "/";
   const elementsScript = isProduction ? `${base}js/elements.js` : "/site/elements/index.ts";
-  const { content, scripts } = extractAndDeferScripts(page.content);
-
-  const deferredScripts = scripts.length
-    ? `
-    <script type="module">
-      ${scripts.map(script => `(async () => {\n${script}\n})();`).join("\n")}
-    </script>`
-    : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -148,11 +124,16 @@ function pageHTML(page: Page, isProduction: boolean): string {
     <link rel="stylesheet" href="${base}css/reset.css" />
     <link rel="stylesheet" href="${base}css/style.css" />
 
-    <!-- Prevent flash of unstyled content by applying theme immediately -->
+    <!-- Resolve the theme before first paint to avoid a flash. Must match
+         DarkModeToggle.loadTheme(): saved preference, else OS preference. The
+         ink-color overrides key on [data-theme], the rest on color-scheme. -->
     <script>
       (function () {
-        const theme = localStorage.getItem("theme") || "light";
-        document.documentElement.style.colorScheme = theme === "dark" ? "dark" : "light";
+        var saved = localStorage.getItem("theme");
+        var theme = saved || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        var root = document.documentElement;
+        root.setAttribute("data-theme", theme);
+        root.style.colorScheme = theme === "dark" ? "dark" : "light";
       })();
     </script>
 
@@ -169,9 +150,9 @@ function pageHTML(page: Page, isProduction: boolean): string {
     <github-link></github-link>
     <docs-link></docs-link>
     <main class="post">
-      ${content}
+      ${page.content}
     </main>
-    <script type="module" src="${elementsScript}"></script>${deferredScripts}
+    <script type="module" src="${elementsScript}"></script>
   </body>
 </html>`;
 }
@@ -194,6 +175,3 @@ export function buildSite() {
 
   console.log("✅ Built landing page");
 }
-
-// Always run when this file is executed (also triggered on import by vite).
-buildSite();

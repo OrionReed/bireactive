@@ -62,15 +62,29 @@ const compileTemplate = (
   return { source, markers };
 };
 
+// Temml renders accents (\dot, \hat, \bar, …) as <mover> without an explicit
+// `accent` attribute, leaning on the browser to infer it from the core
+// operator — which Gecko now warns is deprecated. The accent operator's <mo>
+// carries an "…-acc" class, so mark just those scripts explicitly (limits like
+// \sum/\lim are <munder>/<munderover> and stay untouched). Render-neutral: the
+// browser was already inferring accent="true" for these.
+const markAccents = (mathml: string): string =>
+  mathml.replace(
+    /<mover>((?:(?!<\/?mover>)[\s\S])*?<mo[^>]*class="[^"]*-acc[^"]*"[^>]*>(?:(?!<\/?mover>)[\s\S])*?)<\/mover>/g,
+    '<mover accent="true">$1</mover>',
+  );
+
 /** Render LaTeX → MathML via Temml (trust on, lenient errors). */
 export const renderToMathML = (source: string, opts: { displayMode?: boolean } = {}): string => {
   try {
-    return temml.renderToString(source, {
-      trust: true,
-      displayMode: opts.displayMode ?? false,
-      strict: false,
-      throwOnError: false,
-    });
+    return markAccents(
+      temml.renderToString(source, {
+        trust: true,
+        displayMode: opts.displayMode ?? false,
+        strict: false,
+        throwOnError: false,
+      }),
+    );
   } catch (e) {
     return `<span style="color:#c33;font:13px monospace">${(e as Error).message}</span>`;
   }
