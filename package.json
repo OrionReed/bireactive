@@ -40,7 +40,12 @@
     "bench": "node --expose-gc node_modules/.bin/vite-node",
     "typecheck": "tsc --noEmit --pretty",
     "fmt": "biome check --write .",
-    "prepublishOnly": "npm test && npm run build"
+    "prepublishOnly": "npm test && npm run build",
+    "release": "npm run release:patch",
+    "release:patch": "npm version patch",
+    "release:minor": "npm version minor",
+    "release:major": "npm version major",
+    "postversion": "npm publish && git push --follow-tags"
   },
   "dependencies": {
     "prism-esm": "^1.29.0-fix.6",
