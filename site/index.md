@@ -130,35 +130,30 @@ A lens is itself a value, so it can live in a cell. Then the *transformation* is
 
 ## Trees
 
-Extending boolean to a sum type gives `Tri`, three-valued logic with an indeterminate state. A checkbox tree is its natural home: each folder is the Kleene-AND of its descendants — all checked, none checked, or partial. `Tri.allOf(leaves)` reads the aggregate and broadcasts on write, so both halves of the indeterminate checkbox live in one cell:
+Extending boolean to a sum type gives `Tri`, three-valued logic with an indeterminate state. A checkbox tree is with hierarchical mixed state can be quite nicely expressed in a few lines of code.
 
 ```ts
-const leaf = (label, init = false) =>
-  ({ kind: "leaf", label, checked: bool(init) });
-
-const folder = (label, children) => ({
-  kind: "folder", label, children,
-  checked: Tri.allOf(collectLeaves(children)),
+const node = (label, children = [], init = false) => ({
+  label,
+  children,
+  checked: children.length ? Tri.allOf(children.map(c => c.checked)) : tri(init),
 });
 
-const tree = folder("Tasks", [
-  folder("Work",     [leaf("Report"), leaf("Review", true), leaf("Email")]),
-  folder("Personal", [leaf("Groceries"), leaf("Call mom", true), leaf("Laundry")]),
-  folder("Reading",  [leaf("Chapter 4", true), leaf("Chapter 5", true)]),
+const tree = node("Tasks", [
+  node("Work",     [node("Report"), node("Review", [], true), node("Email")]),
+  node("Personal", [node("Groceries"), node("Call mom", [], true), node("Laundry")]),
+  node("Reading",  [node("Chapter 4", [], true), node("Chapter 5", [], true)]),
 ]);
 ```
 
 <md-tri-tree></md-tri-tree>
 
-Every folder is a cell of the same shape as a leaf, so rendering is one uniform loop with no separate aggregate pass. Setting a folder broadcasts down to its descendants in a single batch.
 
-The same `Tri.allOf` aggregate shows up packed flat instead of nested. A `Flags` value is a single integer whose bits are named at construction; `flag(name)` is a `Bool` lens that sets or clears one bit through the packed value. Unix file permissions are the canonical case — one integer seen five ways. The 3×3 grid is nine bit lenses, each row an `all`/`none`/`mixed` `Tri` over its triad, and the octal, symbolic, and raw-binary fields are format/parse views of the same cell. Edit any surface and the other four re-derive:
+A `Flags` value is a single integer whose bits are named at construction; `flag(name)` is a `Bool` lens that sets or clears one bit through the packed value. The 3×3 grid of Unix file permissions is nine bit lenses, each row an `all`/`none`/`mixed` `Tri` over its triad, and the octal, symbolic, and raw-binary fields are format/parse views of the same cell.
 
 <md-flags></md-flags>
 
-This generalizes to `TreeNode<T>`: the tree value is the cell graph itself, so a write is a field update rather than a copy of the whole tree. Two directions read out of it — aggregate (bottom-up) and propagate (top-down).
-
-In the aggregate direction each category sums its children and the root sums the categories. Moving a boundary adjusts the siblings, the parent total, and the rows downstream, with the sums kept consistent throughout:
+Here is a tree of scalars. Moving a boundary adjusts the siblings, the parent total, and the rows downstream, with the sums kept consistent throughout:
 
 <md-budget-tree></md-budget-tree>
 

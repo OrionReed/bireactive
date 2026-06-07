@@ -259,4 +259,25 @@ describe("Nested Tri aggregates — tree structure", () => {
     l2.value = false;
     expect(folder.value).toBe(false);
   });
+
+  it("aggregates compose over Tri children (folder of folders)", () => {
+    const l1 = bool(true);
+    const l2 = bool(true);
+    const l3 = bool(false);
+    const folder1 = Tri.allOf([l1, l2]); // true
+    const folder2 = Tri.allOf([l3]); // false
+    const root = Tri.allOf([folder1, folder2]); // agreement → mixed
+
+    expect(root.value).toBe("mixed"); // equals flat allOf([l1,l2,l3])
+    // A child's own "mixed" is absorbing.
+    l2.value = false;
+    expect(folder1.value).toBe("mixed");
+    expect(root.value).toBe("mixed");
+    // Writing the root cascades through the nested aggregate to the leaves.
+    root.value = false;
+    expect(l1.value).toBe(false);
+    expect(l2.value).toBe(false);
+    expect(l3.value).toBe(false);
+    expect(root.value).toBe(false);
+  });
 });

@@ -1,45 +1,27 @@
 // Nested checkbox tree with three-valued (Tri) folder aggregates.
+//
+// One node shape, one factory: a leaf is a source `Tri`; a folder's cell
+// is `Tri.allOf` over its children's cells. Aggregation composes up the
+// tree and a write cascades back down, so rendering is a single uniform
+// recursion with no separate aggregate pass and no leaf-flattening.
 
-import { type Bool, bool, effect, Num, Tri, type Writable } from "@bireactive";
+import { effect, Num, Tri, tri, type Writable } from "@bireactive";
 import { BaseElement, css } from "./base-element";
 
-interface Leaf {
-  kind: "leaf";
+interface Node {
   label: string;
-  checked: Writable<Bool>;
-}
-interface Folder {
-  kind: "folder";
-  label: string;
-  children: Node[];
   checked: Writable<Tri>;
+  children: Node[];
 }
-type Node = Leaf | Folder;
 
-const leaf = (label: string, initial = false): Leaf => ({
-  kind: "leaf",
+const node = (label: string, children: Node[] = [], init = false): Node => ({
   label,
-  checked: bool(initial),
+  children,
+  checked: children.length ? Tri.allOf(children.map(c => c.checked)) : tri(init),
 });
 
-const folder = (label: string, children: Node[]): Folder => {
-  const leaves = collectLeaves(children);
-  return {
-    kind: "folder",
-    label,
-    children,
-    checked: Tri.allOf(leaves),
-  };
-};
-
-function collectLeaves(nodes: Node[]): Writable<Bool>[] {
-  const out: Writable<Bool>[] = [];
-  for (const n of nodes) {
-    if (n.kind === "leaf") out.push(n.checked);
-    else out.push(...collectLeaves(n.children));
-  }
-  return out;
-}
+const leavesOf = (n: Node): Node[] =>
+  n.children.length ? n.children.flatMap(leavesOf) : [n];
 
 export class MdTriTree extends BaseElement {
   static styles = css`
@@ -138,55 +120,52 @@ export class MdTriTree extends BaseElement {
 
   #disposers: Array<() => void> = [];
 
+  /** Run `fn` as an effect tied to this element's lifetime. */
+  #bind(fn: () => void): void {
+    this.#disposers.push(effect(fn));
+  }
+
   disconnectedCallback(): void {
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
   }
 
   protected render(): void {
-    for (const d of this.#disposers) d();
-    this.#disposers.length = 0;
+    this.disconnectedCallback();
     this.shadow.replaceChildren();
 
-    // Tree data
-    const tree = folder("Tasks", [
-      folder("Work", [
-        leaf("Write quarterly report"),
-        leaf("Review pull request", true),
-        leaf("Reply to client email"),
+    const tree = node("Tasks", [
+      node("Work", [
+        node("Write quarterly report"),
+        node("Review pull request", [], true),
+        node("Reply to client email"),
       ]),
-      folder("Personal", [leaf("Buy groceries"), leaf("Call mom", true), leaf("Do laundry")]),
-      folder("Reading", [leaf("Finish chapter 4", true), leaf("Take notes on chapter 5", true)]),
+      node("Personal", [node("Buy groceries"), node("Call mom", [], true), node("Do laundry")]),
+      node("Reading", [node("Finish chapter 4", [], true), node("Take notes on chapter 5", [], true)]),
     ]);
 
-    const allLeaves = collectLeaves([tree]);
-    const total = allLeaves.length;
-    const checkedCount = Num.derive(() => allLeaves.filter(b => b.value).length);
+    const leaves = leavesOf(tree);
+    const checkedCount = Num.derive(() => leaves.filter(l => l.checked.value === true).length);
 
-    // DOM scaffold
     const hint = document.createElement("p");
     hint.className = "hint";
     hint.textContent =
-      "Click any checkbox. Folders are Tri.allOf(descendants) — clicking cascades; partial states show indeterminate.";
+      "Click any checkbox. Folders are Tri.allOf(children) — clicking cascades; partial states show indeterminate.";
     this.shadow.append(hint);
 
     const wrap = document.createElement("div");
     wrap.className = "wrap";
-    wrap.append(this.#renderTree(tree));
-    wrap.append(this.#renderStats(checkedCount, total));
+    const ul = document.createElement("ul");
+    ul.append(this.#renderNode(tree));
+    wrap.append(ul, this.#renderStats(checkedCount, leaves.length));
     this.shadow.append(wrap);
   }
 
-  #renderTree(root: Node): HTMLElement {
-    const ul = document.createElement("ul");
-    ul.append(this.#renderNode(root));
-    return ul;
-  }
-
   #renderNode(node: Node): HTMLLIElement {
+    const kind = node.children.length ? "folder" : "leaf";
     const li = document.createElement("li");
     const row = document.createElement("div");
-    row.className = `row ${node.kind}`;
+    row.className = `row ${kind}`;
     const cb = document.createElement("input");
     cb.type = "checkbox";
     const label = document.createElement("span");
@@ -195,33 +174,26 @@ export class MdTriTree extends BaseElement {
     row.append(cb, label);
     li.append(row);
 
-    // Unified cell ↔ checkbox binding. Bool's `value` is `boolean`;
-    // Tri's is `boolean | "mixed"`. The same effect handles both —
-    // `v === "mixed"` is `false` for plain booleans, so the
-    // `indeterminate` line is a harmless no-op on leaves. Writes go
-    // out as `boolean` either way; for Tri that's a valid subset of
-    // its domain and triggers the broadcast policy in its bwd.
-    const cell = node.checked as Writable<Tri>;
-    const dispose = effect(() => {
+    // One binding for both kinds: `mixed` drives `indeterminate` (a no-op
+    // for leaves, which never go mixed on their own). Writes go out as a
+    // plain boolean — for a folder that's a valid Tri value and triggers
+    // the broadcast-down policy in its bwd.
+    const cell = node.checked;
+    this.#bind(() => {
       const v = cell.value;
       cb.checked = v === true;
       cb.indeterminate = v === "mixed";
     });
-    this.#disposers.push(dispose);
     cb.addEventListener("change", () => {
       cell.value = cb.checked;
     });
     label.addEventListener("click", () => {
-      // mixed / false → true; true → false. Same as native click on
-      // an indeterminate checkbox.
       cell.value = cell.peek() === true ? false : true;
     });
 
-    if (node.kind === "folder") {
+    if (node.children.length) {
       const childUl = document.createElement("ul");
-      for (const child of node.children) {
-        childUl.append(this.#renderNode(child));
-      }
+      for (const child of node.children) childUl.append(this.#renderNode(child));
       li.append(childUl);
     }
     return li;
@@ -240,7 +212,7 @@ export class MdTriTree extends BaseElement {
     bar.className = "bar";
     progress.append(bar);
 
-    const dispose = effect(() => {
+    this.#bind(() => {
       const c = checked.value;
       const pct = total > 0 ? (c / total) * 100 : 0;
       countLine.textContent = `${c} / ${total} checked`;
@@ -248,7 +220,6 @@ export class MdTriTree extends BaseElement {
       percentLine.textContent = `${pct.toFixed(0)}% complete`;
       bar.style.width = `${pct}%`;
     });
-    this.#disposers.push(dispose);
 
     wrap.append(countLine, remainingLine, progress, percentLine);
     return wrap;

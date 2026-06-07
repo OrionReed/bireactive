@@ -3,12 +3,6 @@
 // `Tri.value ∈ { true, false, "mixed" }` — Bool plus an unknown state
 // fixed under negation. Strong-Kleene AND/OR follow the partial-info
 // reading (`mixed AND false` → `false`, `mixed AND true` → `mixed`).
-//
-// Headline use: aggregate N booleans via `Tri.allOf` / `Tri.anyOf`
-// (all-agree → that value, disagreement → `"mixed"`). Writing the
-// aggregate broadcasts to every parent ("select all" / "deselect all");
-// writing `"mixed"` is a no-op. Morally `Maybe<Bool>` — the basis for
-// mixed-state checkbox trees and "loading" predicate states.
 
 import { Cell, type Init, type Writable } from "../cell";
 import type { TraitDict } from "../traits";
@@ -50,16 +44,18 @@ export class Tri extends Cell<V> {
     return this.lens(not, not);
   }
 
-  /** Aggregate over N writable Bools. Read: all-true → `true`,
-   *  all-false → `false`, disagreement → `"mixed"`. Write: `true` /
-   *  `false` broadcast to every parent; `"mixed"` is a no-op. */
-  static allOf(parents: readonly Bool[]): Writable<Tri> {
+  /** Aggregate over N writable `Bool` / `Tri` children. Read: all-true →
+   *  `true`, all-false → `false`, any disagreement (or any child already
+   *  `"mixed"`) → `"mixed"`. Write: `true` / `false` broadcast to every
+   *  child, recursing through nested aggregates; `"mixed"` is a no-op. */
+  static allOf(parents: readonly (Bool | Tri)[]): Writable<Tri> {
     return Tri.lens(
       parents as never,
-      (vs: readonly boolean[]) => {
+      (vs: readonly V[]) => {
         let anyT = false;
         let anyF = false;
         for (const v of vs) {
+          if (v === "mixed") return "mixed";
           if (v) anyT = true;
           else anyF = true;
           if (anyT && anyF) return "mixed";
@@ -73,15 +69,17 @@ export class Tri extends Cell<V> {
     );
   }
 
-  /** Dual of `allOf` (Kleene OR): any-true → `true`, all-false →
-   *  `false`, else `"mixed"`. Same broadcast write policy. */
-  static anyOf(parents: readonly Bool[]): Writable<Tri> {
+  /** Dual of `allOf` (Kleene OR) over `Bool` / `Tri` children: any-true →
+   *  `true`, all-false → `false`, else (or any child `"mixed"`) →
+   *  `"mixed"`. Same broadcast write policy. */
+  static anyOf(parents: readonly (Bool | Tri)[]): Writable<Tri> {
     return Tri.lens(
       parents as never,
-      (vs: readonly boolean[]) => {
+      (vs: readonly V[]) => {
         let anyT = false;
         let anyF = false;
         for (const v of vs) {
+          if (v === "mixed") return "mixed";
           if (v) anyT = true;
           else anyF = true;
         }
