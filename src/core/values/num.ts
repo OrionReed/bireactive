@@ -25,6 +25,12 @@ export const lerp = (a: V, b: V, t: number) => a + (b - a) * t;
 export const metric = (a: V, b: V) => Math.abs(a - b);
 export const equals = (a: V, b: V) => a === b;
 
+const TAU = 2 * Math.PI;
+/** Representative of `x + 2πk` nearest `s` (shortest-arc branch pick). */
+const nearestTo = (s: V, x: V) => x + TAU * Math.round((s - x) / TAU);
+/** Clamp to the sin/cos domain `[-1, 1]`. */
+const unit = (t: V) => (t < -1 ? -1 : t > 1 ? 1 : t);
+
 const linearImpl: Linear<V> = { add, sub, scale };
 const packImpl: Pack<V> = {
   dim: 1,
@@ -77,6 +83,29 @@ export class Num extends Cell<V> {
     return this.lens(
       v => v * kf() + of(),
       n => (n - of()) / kf(),
+    );
+  }
+
+  /** `sin(this)` (radians). Forward lands in [−1, 1]; the inverse is
+   *  multi-valued, so a write clamps to that domain and returns the
+   *  pre-image nearest the current source — the drag stays on its branch. */
+  sin(): this {
+    return this.lens(
+      v => Math.sin(v),
+      (target, s) => {
+        const p = Math.asin(unit(target));
+        const a = nearestTo(s, p);
+        const b = nearestTo(s, Math.PI - p);
+        return Math.abs(a - s) <= Math.abs(b - s) ? a : b;
+      },
+    );
+  }
+
+  /** `exp(this)` — bijection on the reals; inverse is the natural log. */
+  exp(): this {
+    return this.lens(
+      v => Math.exp(v),
+      n => Math.log(n),
     );
   }
 

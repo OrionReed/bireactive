@@ -34,6 +34,19 @@ export const normalize = (v: V): V => {
   return m === 0 ? { x: 0, y: 0 } : { x: v.x / m, y: v.y / m };
 };
 export const perp = (v: V): V => ({ x: v.y, y: -v.x });
+export const rotateAbout = (v: V, p: V, dθ: number): V => {
+  const cos = Math.cos(dθ);
+  const sin = Math.sin(dθ);
+  const dx = v.x - p.x;
+  const dy = v.y - p.y;
+  return { x: p.x + cos * dx - sin * dy, y: p.y + sin * dx + cos * dy };
+};
+export const scaleAbout = (v: V, p: V, k: number): V => ({
+  x: p.x + k * (v.x - p.x),
+  y: p.y + k * (v.y - p.y),
+});
+
+const ORIGIN: V = { x: 0, y: 0 };
 
 /** Tangent point on the circle (radius `r`, centre `c`) from external
  *  point `p`. `side: -1` picks the CCW tangent from `pc`, `+1` the CW
@@ -67,19 +80,7 @@ const packImpl: Pack<V> = {
   },
   write: (a, o) => ({ x: a[o]!, y: a[o + 1]! }),
 };
-const pivotalImpl: Pivotal<V> = {
-  rotateAbout: (v, p, dθ) => {
-    const cos = Math.cos(dθ);
-    const sin = Math.sin(dθ);
-    const dx = v.x - p.x;
-    const dy = v.y - p.y;
-    return { x: p.x + cos * dx - sin * dy, y: p.y + sin * dx + cos * dy };
-  },
-  scaleAbout: (v, p, k) => ({
-    x: p.x + k * (v.x - p.x),
-    y: p.y + k * (v.y - p.y),
-  }),
-};
+const pivotalImpl: Pivotal<V> = { rotateAbout, scaleAbout };
 
 export class Vec extends Cell<V> {
   static traits = {
@@ -122,17 +123,30 @@ export class Vec extends Cell<V> {
       },
     );
   }
-  scale(k: Val<number>): this {
+  /** Uniform scale by `k` about `pivot` (default origin). Inverse scales
+   *  by `1/k`; exact bijection for `k ≠ 0`. */
+  scale(k: Val<number>, pivot?: Val<V>): this {
     const kf = reader(k);
+    const pf = pivot === undefined ? undefined : reader(pivot);
     return this.lens(
       v => {
         const k = kf();
-        return { x: v.x * k, y: v.y * k };
+        return pf ? scaleAbout(v, pf(), k) : { x: v.x * k, y: v.y * k };
       },
       n => {
         const k = kf();
-        return { x: n.x / k, y: n.y / k };
+        return pf ? scaleAbout(n, pf(), 1 / k) : { x: n.x / k, y: n.y / k };
       },
+    );
+  }
+  /** Rotate by `angle` (radians) about `pivot` (default origin). Inverse
+   *  rotates by `−angle`; exact bijection. */
+  rotate(angle: Val<number>, pivot: Val<V> = ORIGIN): this {
+    const af = reader(angle);
+    const pf = reader(pivot);
+    return this.lens(
+      v => rotateAbout(v, pf(), af()),
+      n => rotateAbout(n, pf(), -af()),
     );
   }
   offset(dx: Val<number>, dy: Val<number>): this {
