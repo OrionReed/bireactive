@@ -118,9 +118,9 @@ export class MdHistogram extends Diagram {
         ),
       );
       const top = Vec.lens(
-        [ci] as const,
-        ([c]) => ({ x: cx, y: BASE - c * UNIT }),
-        (p, [_c]) => [(BASE - p.y) / UNIT],
+        ci,
+        c => ({ x: cx, y: BASE - c * UNIT }),
+        p => (BASE - p.y) / UNIT,
       );
       s(handle(top, { fill: FILLS[i]!, r: 6, cursor: "ns-resize" }));
     }
@@ -134,9 +134,9 @@ export class MdHistogram extends Diagram {
     s(line(vec(AX0, DOTY), vec(AX1, DOTY), { thin: true, opacity: 0.3 }));
     samples.forEach(sample => {
       const pos = Vec.lens(
-        [sample] as const,
-        ([v]) => ({ x: xOf(v), y: DOTY }),
-        p => [clamp01(vOf(p.x))],
+        sample,
+        v => ({ x: xOf(v), y: DOTY }),
+        p => clamp01(vOf(p.x)),
       );
       s(handle(pos, { fill: derive(() => FILLS[binOf(sample.value)]!), r: 5 }));
     });

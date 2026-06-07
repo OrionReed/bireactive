@@ -98,12 +98,12 @@ export class MdFourier extends Diagram {
         ),
       );
       const handle = Vec.lens(
-        [a] as const,
-        ([arr]) => ({ x: bx, y: SPEC_MID - (arr[k] ?? 0) * SPEC_SCALE }),
+        a,
+        arr => ({ x: bx, y: SPEC_MID - (arr[k] ?? 0) * SPEC_SCALE }),
         t => {
           const b = [...a.value];
           b[k] = (SPEC_MID - t.y) / SPEC_SCALE;
-          return [b] as never;
+          return b as never;
         },
       );
       const dot = s(circle(handle, 5, { fill: color, stroke: color }));

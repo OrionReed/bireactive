@@ -28,6 +28,7 @@ export {
   type Writable,
   type WritableBrand,
 } from "./cell";
+export { bezier2, bezier3 } from "./derived-geometry";
 export * from "./lenses";
 export { each, type Lifecycle } from "./lifecycle";
 export {

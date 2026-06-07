@@ -74,19 +74,19 @@ export class MdTraitsCrossDomain extends Diagram {
     const p0 = poseSpread.value;
     const SMAX = 2.0;
     const vecRel = Num.lens(
-      [vecSpread] as const,
-      ([sv]) => sv / v0,
-      t => [t * v0] as never,
+      vecSpread,
+      sv => sv / v0,
+      t => t * v0,
     );
     const colorRel = Num.lens(
-      [colorSpread] as const,
-      ([sv]) => sv / c0,
-      t => [t * c0] as never,
+      colorSpread,
+      sv => sv / c0,
+      t => t * c0,
     );
     const poseRel = Num.lens(
-      [poseSpread] as const,
-      ([sv]) => sv / p0,
-      t => [t * p0] as never,
+      poseSpread,
+      sv => sv / p0,
+      t => t * p0,
     );
     const master = mean([vecRel, colorRel, poseRel] as never);
 
@@ -95,10 +95,9 @@ export class MdTraitsCrossDomain extends Diagram {
     const SW = 220;
     const sliderHandle = (val: Writable<Num>, y: number) =>
       Vec.lens(
-        [val] as const,
-        (vals: readonly number[]) => ({ x: SX + (vals[0]! / SMAX) * SW, y }),
-        (t: { x: number; y: number }) =>
-          [Math.max(0, Math.min(SMAX, ((t.x - SX) / SW) * SMAX))] as never,
+        val,
+        (sv: number) => ({ x: SX + (sv / SMAX) * SW, y }),
+        (t: { x: number; y: number }) => Math.max(0, Math.min(SMAX, ((t.x - SX) / SW) * SMAX)),
       );
     const vecSliderH = sliderHandle(vecRel, 90);
     const colorSliderH = sliderHandle(colorRel, 210);
@@ -115,20 +114,17 @@ export class MdTraitsCrossDomain extends Diagram {
     const PICK_X0 = PICK_CX - PICK_R / 2;
     const PICK_Y0 = PICK_CY - PICK_R / 2;
     const colorMeanHandle = Vec.lens(
-      [colorMean] as const,
-      (vals: readonly ColorV[]) => ({
-        x: PICK_X0 + vals[0]!.r * PICK_R,
-        y: PICK_Y0 + vals[0]!.g * PICK_R,
+      colorMean,
+      (c: ColorV) => ({
+        x: PICK_X0 + c.r * PICK_R,
+        y: PICK_Y0 + c.g * PICK_R,
       }),
-      (t: { x: number; y: number }, vals: readonly ColorV[]) =>
-        [
-          {
-            r: Math.max(0, Math.min(1, (t.x - PICK_X0) / PICK_R)),
-            g: Math.max(0, Math.min(1, (t.y - PICK_Y0) / PICK_R)),
-            b: vals[0]!.b,
-            a: vals[0]!.a,
-          },
-        ] as never,
+      (t: { x: number; y: number }, c: ColorV) => ({
+        r: Math.max(0, Math.min(1, (t.x - PICK_X0) / PICK_R)),
+        g: Math.max(0, Math.min(1, (t.y - PICK_Y0) / PICK_R)),
+        b: c.b,
+        a: c.a,
+      }),
     );
 
     s(
@@ -147,14 +143,13 @@ export class MdTraitsCrossDomain extends Diagram {
       // Row 3: Poses
       ...poses.flatMap(p => {
         const pPos = Vec.lens(
-          [p] as const,
-          (vals: readonly PoseV[]) => ({ x: vals[0]!.x, y: vals[0]!.y }),
-          (t: { x: number; y: number }, vals: readonly PoseV[]) =>
-            [{ ...vals[0]!, x: t.x, y: t.y }] as never,
+          p,
+          (pv: PoseV) => ({ x: pv.x, y: pv.y }),
+          (t: { x: number; y: number }, pv: PoseV) => ({ ...pv, x: t.x, y: t.y }),
         );
-        const pTip = Vec.derive([p] as const, (vals: readonly PoseV[]) => ({
-          x: vals[0]!.x + 20 * Math.cos(vals[0]!.theta),
-          y: vals[0]!.y + 20 * Math.sin(vals[0]!.theta),
+        const pTip = Vec.derive(p, (pv: PoseV) => ({
+          x: pv.x + 20 * Math.cos(pv.theta),
+          y: pv.y + 20 * Math.sin(pv.theta),
         }));
         return [
           line(pPos, pTip, { stroke: "#7ed321", strokeWidth: 2.5 }),
@@ -163,10 +158,9 @@ export class MdTraitsCrossDomain extends Diagram {
       }),
       handle(
         Vec.lens(
-          [poseMean] as const,
-          (vals: readonly PoseV[]) => ({ x: vals[0]!.x, y: vals[0]!.y }),
-          (t: { x: number; y: number }, vals: readonly PoseV[]) =>
-            [{ ...vals[0]!, x: t.x, y: t.y }] as never,
+          poseMean,
+          (pv: PoseV) => ({ x: pv.x, y: pv.y }),
+          (t: { x: number; y: number }, pv: PoseV) => ({ ...pv, x: t.x, y: t.y }),
         ),
         { fill: "#f5a623", r: 11 },
       ),

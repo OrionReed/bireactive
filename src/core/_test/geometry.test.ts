@@ -4,8 +4,6 @@ import { describe, expect, it } from "vitest";
 import { cell, num, vec } from "../index";
 import {
   angle,
-  bezier2,
-  bezier3,
   clampedMean,
   diff,
   distance,
@@ -13,6 +11,9 @@ import {
   reflection,
   vecLerp,
 } from "../lenses/geometry";
+
+const vnear = (a: { x: number; y: number }, b: { x: number; y: number }): boolean =>
+  Math.hypot(a.x - b.x, a.y - b.y) < 1e-9;
 
 describe("distance", () => {
   it("computes Euclidean distance", () => {
@@ -23,6 +24,29 @@ describe("distance", () => {
     a.value = { x: 1, y: 1 };
     expect(d.value).toBeCloseTo(Math.hypot(2, 3));
   });
+
+  it("writing scales both points symmetrically about their midpoint", () => {
+    const a = vec(0, 0);
+    const b = vec(10, 0);
+    const d = distance(a, b);
+    expect(d.value).toBe(10);
+    d.value = 20; // midpoint (5,0) fixed; each point moves to keep |a-b| = 20
+    expect(vnear(a.value, { x: -5, y: 0 })).toBe(true);
+    expect(vnear(b.value, { x: 15, y: 0 })).toBe(true);
+    expect(d.value).toBeCloseTo(20);
+  });
+
+  it("collapse to 0 then back reinflates the remembered direction", () => {
+    const a = vec(0, 0);
+    const b = vec(8, 6); // distance 10, direction (0.8, 0.6)
+    const d = distance(a, b);
+    d.value = 0; // collapse onto midpoint (4, 3)
+    expect(vnear(a.value, { x: 4, y: 3 })).toBe(true);
+    expect(vnear(b.value, { x: 4, y: 3 })).toBe(true);
+    d.value = 10; // reinflate along the stored direction
+    expect(vnear(a.value, { x: 0, y: 0 })).toBe(true);
+    expect(vnear(b.value, { x: 8, y: 6 })).toBe(true);
+  });
 });
 
 describe("angle", () => {
@@ -32,6 +56,17 @@ describe("angle", () => {
     const ang = angle(a, b);
     expect(ang.value).toBe(0);
     b.value = { x: 0, y: 1 };
+    expect(ang.value).toBeCloseTo(Math.PI / 2);
+  });
+
+  it("writing rotates b about a (a fixed, separation preserved)", () => {
+    const a = vec(0, 0);
+    const b = vec(10, 0);
+    const ang = angle(a, b);
+    expect(ang.value).toBeCloseTo(0);
+    ang.value = Math.PI / 2; // rotate b 90° CCW about a
+    expect(vnear(a.value, { x: 0, y: 0 })).toBe(true);
+    expect(vnear(b.value, { x: 0, y: 10 })).toBe(true);
     expect(ang.value).toBeCloseTo(Math.PI / 2);
   });
 });
@@ -130,32 +165,5 @@ describe("clampedMean", () => {
     m.value = -50;
     expect(a.value).toBe(0);
     expect(b.value).toBe(0);
-  });
-});
-
-describe("bezier2 / bezier3", () => {
-  it("quadratic at t=0.5 = midpoint of (p0p1, p1p2) midpoints", () => {
-    const p0 = vec(0, 0);
-    const p1 = vec(10, 10);
-    const p2 = vec(20, 0);
-    const t = cell(0.5);
-    const b = bezier2(p0, p1, p2, t);
-    expect(b.value).toEqual({ x: 10, y: 5 });
-  });
-
-  it("cubic endpoints at t=0 and t=1", () => {
-    const p0 = vec(0, 0);
-    const p1 = vec(1, 5);
-    const p2 = vec(9, 5);
-    const p3 = vec(10, 0);
-    const t = cell(0);
-    const b = bezier3(p0, p1, p2, p3, t);
-    expect(b.value).toEqual({ x: 0, y: 0 });
-    t.value = 1;
-    expect(b.value).toEqual({ x: 10, y: 0 });
-    t.value = 0.5;
-    // Symmetric curve: b(0.5).y should be max
-    expect(b.value.x).toBe(5);
-    expect(b.value.y).toBeCloseTo(3.75);
   });
 });

@@ -136,14 +136,12 @@ export class MdHeatmap extends Diagram {
 
     points.forEach(pt => {
       const clamped = Vec.lens(
-        [pt] as const,
-        ([p]) => p,
-        p => [
-          {
-            x: Math.max(GR.x + 2, Math.min(GR.x + GR.w - 2, p.x)),
-            y: Math.max(GR.y + 2, Math.min(GR.y + GR.h - 2, p.y)),
-          },
-        ],
+        pt,
+        p => p,
+        p => ({
+          x: Math.max(GR.x + 2, Math.min(GR.x + GR.w - 2, p.x)),
+          y: Math.max(GR.y + 2, Math.min(GR.y + GR.h - 2, p.y)),
+        }),
       );
       s(handle(clamped, { fill: "#1f3a63", r: 4 }));
     });

@@ -207,9 +207,9 @@ export class MdBireactiveEq extends Diagram {
       const out = curve[`b${j}`]!;
       const bx = freqToX(b.freq);
       const handle = Vec.lens(
-        [out] as const,
-        ([db]) => ({ x: bx, y: dbToY(db) }),
-        t => [yToDb(t.y)] as never,
+        out,
+        (db: number) => ({ x: bx, y: dbToY(db) }),
+        t => yToDb(t.y),
       ) as Writable<Vec>;
       const dot = s(circle(handle, 7, { fill: ACCENT, stroke: ACCENT }));
       drag(dot, handle);
@@ -219,9 +219,9 @@ export class MdBireactiveEq extends Diagram {
     const macro = (x: number, out: Writable<Num>, name: string): void => {
       s(line(vec(x, dbToY(FADER_DB)), vec(x, dbToY(-FADER_DB)), { thin: true, opacity: 0.25 }));
       const h = Vec.lens(
-        [out] as const,
-        ([v]) => ({ x, y: dbToY(clampF(v)) }),
-        t => [yToDbF(t.y)] as never,
+        out,
+        v => ({ x, y: dbToY(clampF(v)) }),
+        t => yToDbF(t.y),
       ) as Writable<Vec>;
       const dot = s(circle(h, 6.5, { fill: META, stroke: META }));
       drag(dot, h);

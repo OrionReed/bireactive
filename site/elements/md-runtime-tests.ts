@@ -675,9 +675,9 @@ const TESTS: TestCase[] = [
     run: assert => {
       const parent = cell({ a: 1, b: 2 });
       const lensA = Num.lens(
-        [parent] as const,
-        ([p]) => p.a,
-        (n, [p]) => [{ ...p, a: n }],
+        parent,
+        p => p.a,
+        (n, p) => ({ ...p, a: n }),
       );
       assert(lensA.value === 1, `read mismatch: ${lensA.value}`);
       lensA.value = 10;

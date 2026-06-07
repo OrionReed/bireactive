@@ -137,9 +137,9 @@ export class MdBoolBridges extends Diagram {
       const above = t2.greaterThan(threshold, 0.06);
       const knobX = t2.clamp(0, 1).affine(trackX1 - trackX0, trackX0);
       const knobPos = Vec.lens(
-        [knobX] as const,
-        ([x]) => ({ x, y: trackY }),
-        p => [p.x],
+        knobX,
+        x => ({ x, y: trackY }),
+        p => p.x,
       );
       const tx = trackX0 + threshold * (trackX1 - trackX0);
       s(
@@ -240,9 +240,9 @@ export class MdBoolBridges extends Diagram {
       const even = snapped.isEven;
       const knobX = snapped.affine((trackX1 - trackX0) / NMAX, trackX0);
       const knobPos = Vec.lens(
-        [knobX] as const,
-        ([x]) => ({ x, y: trackY }),
-        p => [p.x],
+        knobX,
+        x => ({ x, y: trackY }),
+        p => p.x,
       );
       const ticks = Array.from({ length: NMAX + 1 }, (_, i) => {
         const x = trackX0 + (i / NMAX) * (trackX1 - trackX0);

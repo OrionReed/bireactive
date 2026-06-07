@@ -154,9 +154,9 @@ function toggle(
 /** Drag slider over [0, 1] writing a Num via a Vec.lens-backed handle. */
 function slider(s: Mount, x0: number, x1: number, y: number, t: Writable<Num>): void {
   const knobPos = Vec.lens(
-    [t] as const,
-    ([tv]) => ({ x: x0 + tv * (x1 - x0), y }),
-    p => [Math.max(0, Math.min(1, (p.x - x0) / (x1 - x0)))],
+    t,
+    tv => ({ x: x0 + tv * (x1 - x0), y }),
+    p => Math.max(0, Math.min(1, (p.x - x0) / (x1 - x0))),
   );
   s(
     line(vec(x0, y), vec(x1, y), { thin: true, opacity: 0.4 }),

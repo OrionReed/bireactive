@@ -116,9 +116,9 @@ const tOnPath = (p: Path, t: Cell<number>, opts?: HandleOpts & { samples?: numbe
     return bestT;
   };
   const pos = Vec.lens(
-    [t] as const,
-    ([tv]) => p.pointAt(tv).value,
-    target => [project(target)],
+    t,
+    tv => p.pointAt(tv).value,
+    target => project(target),
   );
   return handleFn(pos, opts);
 };

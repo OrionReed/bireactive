@@ -131,14 +131,14 @@ export class MdRcc8 extends Diagram {
 
     const drawBox = (Bx: Box, fill: string, stroke: string, labelText: string) => {
       const center = Vec.lens(
-        [Bx] as const,
-        ([b]) => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 }),
-        (p, [b]) => [{ x: p.x - b.w / 2, y: p.y - b.h / 2, w: b.w, h: b.h }],
+        Bx,
+        b => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 }),
+        (p, b) => ({ x: p.x - b.w / 2, y: p.y - b.h / 2, w: b.w, h: b.h }),
       );
       const corner = Vec.lens(
-        [Bx] as const,
-        ([b]) => ({ x: b.x + b.w, y: b.y + b.h }),
-        (p, [b]) => [{ x: b.x, y: b.y, w: Math.max(MIN, p.x - b.x), h: Math.max(MIN, p.y - b.y) }],
+        Bx,
+        b => ({ x: b.x + b.w, y: b.y + b.h }),
+        (p, b) => ({ x: b.x, y: b.y, w: Math.max(MIN, p.x - b.x), h: Math.max(MIN, p.y - b.y) }),
       );
       const body = rect(
         derive(() => Bx.value.x),

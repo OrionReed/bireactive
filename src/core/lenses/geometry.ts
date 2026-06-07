@@ -1,24 +1,31 @@
 // geometry.ts — geometric lens building blocks over the N-input
 // `Cls.lens` / `Cls.derive` forms. All are a few lines on top of the engine.
 
-import type { Cell, Writable } from "../cell";
+import type { Cell, Read, Writable } from "../cell";
 import { Num } from "../values/num";
 import { Vec } from "../values/vec";
+import { rotateAbout } from "./closed-form-policies";
+import { remember } from "./memory";
 
 type V = { x: number; y: number };
 
-/** Distance between two Vecs. RO — the inverse isn't unique. */
-export function distance(a: Cell<V>, b: Cell<V>): Num {
-  return Num.derive([a, b] as const, vals =>
-    Math.hypot(vals[0].x - vals[1].x, vals[0].y - vals[1].y),
-  );
+/** Distance between two Vecs; writing scales them symmetrically about
+ *  their midpoint (collapse to 0 reinflates the last direction). */
+export function distance(a: Writable<Vec>, b: Writable<Vec>): Writable<Num> {
+  const points = [a, b] as readonly Writable<Vec>[];
+  return remember(points, {
+    anchor: (vals: readonly V[]) => ({
+      x: (vals[0]!.x + vals[1]!.x) / 2,
+      y: (vals[0]!.y + vals[1]!.y) / 2,
+    }),
+    feature: (vals: readonly V[]) => Math.hypot(vals[0]!.x - vals[1]!.x, vals[0]!.y - vals[1]!.y),
+  });
 }
 
-/** Angle from `a` to `b`, in radians. RO. */
-export function angle(a: Cell<V>, b: Cell<V>): Num {
-  return Num.derive([a, b] as const, vals =>
-    Math.atan2(vals[1].y - vals[0].y, vals[1].x - vals[0].x),
-  );
+/** Angle from `a` to `b`, in radians; writing rotates `b` about `a`
+ *  (a fixed, separation preserved). */
+export function angle(a: Read<V>, b: Writable<Vec>): Writable<Num> {
+  return rotateAbout([b], a);
 }
 
 /** Reflect `point` across the line through `axisStart`/`axisEnd`. Writes
@@ -116,30 +123,4 @@ export function clampedMean(parents: readonly Num[], lo: number, hi: number): Wr
       return out as never;
     },
   );
-}
-
-/** Quadratic Bézier point at parameter `t`. RO. */
-export function bezier2(p0: Cell<V>, p1: Cell<V>, p2: Cell<V>, t: Cell<number>): Vec {
-  return Vec.derive([p0, p1, p2, t] as const, vals => {
-    const [a, b, c, tv] = vals;
-    const u = 1 - tv;
-    return {
-      x: u * u * a.x + 2 * u * tv * b.x + tv * tv * c.x,
-      y: u * u * a.y + 2 * u * tv * b.y + tv * tv * c.y,
-    };
-  });
-}
-
-/** Cubic Bézier point at parameter `t`. RO. */
-export function bezier3(p0: Cell<V>, p1: Cell<V>, p2: Cell<V>, p3: Cell<V>, t: Cell<number>): Vec {
-  return Vec.derive([p0, p1, p2, p3, t] as const, vals => {
-    const [a, b, c, d, tv] = vals;
-    const u = 1 - tv;
-    const u2 = u * u;
-    const t2 = tv * tv;
-    return {
-      x: u2 * u * a.x + 3 * u2 * tv * b.x + 3 * u * t2 * c.x + t2 * tv * d.x,
-      y: u2 * u * a.y + 3 * u2 * tv * b.y + 3 * u * t2 * c.y + t2 * tv * d.y,
-    };
-  });
 }

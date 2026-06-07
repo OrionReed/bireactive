@@ -723,7 +723,10 @@ export class Cell<T = unknown> implements ReactiveNode {
   // biome-ignore lint/suspicious/noExplicitAny: dispatch
   static lens(this: any, ...args: any[]): any {
     const [parent, a, b] = args;
-    if (args.length === 2) return buildStateful(this, Array.isArray(parent) ? parent : [parent], a);
+    if (args.length === 2) {
+      const ps = Array.isArray(parent) ? (parent as Cell<unknown>[]) : [parent as Cell<unknown>];
+      return ps.length === 1 ? buildStateful1(this, ps[0]!, a) : buildStateful(this, ps, a);
+    }
     const readsSource = (b as (...xs: unknown[]) => unknown).length >= 2;
     if (Array.isArray(parent)) return buildLensN(this, parent, a, b, readsSource);
     return buildLens1(this, parent, a, b, readsSource);
@@ -927,6 +930,39 @@ function buildStateful<C extends Cell<any>>(
         }
       }
     }
+    sc.complement = sc.step(vals, sc.complement, external);
+    return sc.fwd(vals, sc.complement);
+  }) as () => never;
+  return cell;
+}
+
+// Single-source stateful lens: the `buildLens1` of the complement path.
+// Drops the per-read copy/external loops to direct index-0 access; the
+// spec stays array-shaped (`init: ([s]) => …`), so a reused length-1
+// `vals` still feeds the closures and `b.parent` stays an array for the
+// shared split backward path.
+// biome-ignore lint/suspicious/noExplicitAny: variance escape
+function buildStateful1<C extends Cell<any>>(
+  Cls: CellCtor<C>,
+  parent: Cell<unknown>,
+  // biome-ignore lint/suspicious/noExplicitAny: opaque spec
+  spec: StatefulLensSpec<any, any, any>,
+): C {
+  const cell = new Cls();
+  cell.flags = F.Mutable | F.Dirty;
+  const b = (cell._bwd = new BwdSpec());
+  const sc = (b.stateful = new StatefulCore(
+    spec.init([parent.peek()]),
+    spec.fwd as (s: unknown, c: unknown) => unknown,
+    spec.step,
+  ));
+  b.put = spec.bwd as (t: unknown, c?: unknown) => unknown;
+  b.parent = [parent];
+  const vals: unknown[] = [undefined];
+  cell.getter = (() => {
+    const v = (vals[0] = parent.value);
+    const lb = sc.lastBwd;
+    const external = lb === undefined || lb[0] !== v;
     sc.complement = sc.step(vals, sc.complement, external);
     return sc.fwd(vals, sc.complement);
   }) as () => never;

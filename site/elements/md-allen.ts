@@ -141,12 +141,12 @@ export class MdAllen extends Diagram {
     // The bar drags the whole interval; endpoint handles resize.
     const bar = (R: Range, y: number, color: string) => {
       const body = Vec.lens(
-        [R] as const,
-        ([r]) => ({ x: xOf((r.lo + r.hi) / 2), y }),
-        (p, [r]) => {
+        R,
+        r => ({ x: xOf((r.lo + r.hi) / 2), y }),
+        (p, r) => {
           const half = (r.hi - r.lo) / 2;
           const c = clampT(vOf(p.x));
-          return [{ lo: c - half, hi: c + half }];
+          return { lo: c - half, hi: c + half };
         },
       );
       const barRect = rect(
@@ -161,9 +161,9 @@ export class MdAllen extends Diagram {
       barRect.el.style.cursor = "grab";
       const endHandle = (which: "lo" | "hi") =>
         Vec.lens(
-          [R] as const,
-          ([r]) => ({ x: xOf(r[which]), y }),
-          (p, [r]) => [{ ...r, [which]: clampT(vOf(p.x)) }],
+          R,
+          r => ({ x: xOf(r[which]), y }),
+          (p, r) => ({ ...r, [which]: clampT(vOf(p.x)) }),
         );
       s(
         handle(endHandle("lo"), { fill: "#222", r: 5 }),
