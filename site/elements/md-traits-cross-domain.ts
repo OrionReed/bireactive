@@ -1,7 +1,6 @@
 // Same `meanSpread(inputs) → {mean, spread}` across Vec, Color, and Pose domains, wired into one master.
 
 import {
-  type Cell,
   type Color,
   Diagram,
   handle,
@@ -11,6 +10,7 @@ import {
   mean,
   meanSpread,
   Num,
+  type Pose,
   pose,
   rect,
   rgba,
@@ -64,7 +64,7 @@ export class MdTraitsCrossDomain extends Diagram {
       pose({ x: VX + 4 * VSP, y: PY, theta: 0.5 }),
     ];
     const { mean: poseMean, spread: poseSpread } = meanSpread(poses as never) as unknown as {
-      mean: Writable<Cell<PoseV>>;
+      mean: Writable<Pose>;
       spread: Writable<Num>;
     };
 
@@ -94,11 +94,7 @@ export class MdTraitsCrossDomain extends Diagram {
     const SX = 440;
     const SW = 220;
     const sliderHandle = (val: Writable<Num>, y: number) =>
-      Vec.lens(
-        val,
-        (sv: number) => ({ x: SX + (sv / SMAX) * SW, y }),
-        (t: { x: number; y: number }) => Math.max(0, Math.min(SMAX, ((t.x - SX) / SW) * SMAX)),
-      );
+      vec(val.clamp(0, SMAX).affine(SW / SMAX, SX), Num.pin(y));
     const vecSliderH = sliderHandle(vecRel, 90);
     const colorSliderH = sliderHandle(colorRel, 210);
     const poseSliderH = sliderHandle(poseRel, 360);
@@ -142,11 +138,7 @@ export class MdTraitsCrossDomain extends Diagram {
 
       // Row 3: Poses
       ...poses.flatMap(p => {
-        const pPos = Vec.lens(
-          p,
-          (pv: PoseV) => ({ x: pv.x, y: pv.y }),
-          (t: { x: number; y: number }, pv: PoseV) => ({ ...pv, x: t.x, y: t.y }),
-        );
+        const pPos = vec(p.x, p.y);
         const pTip = Vec.derive(p, (pv: PoseV) => ({
           x: pv.x + 20 * Math.cos(pv.theta),
           y: pv.y + 20 * Math.sin(pv.theta),
@@ -156,14 +148,7 @@ export class MdTraitsCrossDomain extends Diagram {
           handle(pPos, { fill: "#7ed321", r: 5 }),
         ];
       }),
-      handle(
-        Vec.lens(
-          poseMean,
-          (pv: PoseV) => ({ x: pv.x, y: pv.y }),
-          (t: { x: number; y: number }, pv: PoseV) => ({ ...pv, x: t.x, y: t.y }),
-        ),
-        { fill: "#f5a623", r: 11 },
-      ),
+      handle(vec(poseMean.x, poseMean.y), { fill: "#f5a623", r: 11 }),
 
       // Slider tracks
       line(vec(SX, 90), vec(SX + SW, 90), { thin: true, opacity: 0.4 }),

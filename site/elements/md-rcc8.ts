@@ -15,6 +15,7 @@ import {
   rect,
   Vec,
   vec,
+  type Writable,
 } from "@bireactive";
 
 const W = 720;
@@ -129,16 +130,14 @@ export class MdRcc8 extends Diagram {
       (target, [a, b]) => [undefined, realize(target, a, b)],
     );
 
-    const drawBox = (Bx: Box, fill: string, stroke: string, labelText: string) => {
-      const center = Vec.lens(
-        Bx,
-        b => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 }),
-        (p, b) => ({ x: p.x - b.w / 2, y: p.y - b.h / 2, w: b.w, h: b.h }),
-      );
-      const corner = Vec.lens(
-        Bx,
-        b => ({ x: b.x + b.w, y: b.y + b.h }),
-        (p, b) => ({ x: b.x, y: b.y, w: Math.max(MIN, p.x - b.x), h: Math.max(MIN, p.y - b.y) }),
+    const drawBox = (Bx: Writable<Box>, fill: string, stroke: string, labelText: string) => {
+      // center drags the box: `add`'s bwd subtracts the (read-only) half-extent,
+      // so x/y move and w/h stay put. corner resizes from a pinned top-left:
+      // the `clamp(MIN, ∞)` floor lives on w/h, keeping each ≥ MIN.
+      const center = vec(Bx.x.add(Bx.w.scale(0.5)), Bx.y.add(Bx.h.scale(0.5)));
+      const corner = vec(
+        Bx.w.clamp(MIN, Number.POSITIVE_INFINITY).add(Bx.x),
+        Bx.h.clamp(MIN, Number.POSITIVE_INFINITY).add(Bx.y),
       );
       const body = rect(
         derive(() => Bx.value.x),

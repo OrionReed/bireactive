@@ -7,8 +7,8 @@ import {
   label,
   line,
   type Mount,
+  Num,
   num,
-  Vec,
   vec,
 } from "@bireactive";
 import { part, tex, tint } from "@bireactive/tex";
@@ -54,11 +54,7 @@ export class MdTexLive extends Diagram {
     // dragging the knob writes back through `affine` and `clamp` into
     // `t`. No manual lens; just the algebra.
     const knobX = t.clamp(0, 1).affine(trackW, TRACK_X0);
-    const knobPos = Vec.lens(
-      knobX,
-      x => ({ x, y: TRACK_Y }),
-      p => p.x,
-    );
+    const knobPos = vec(knobX, Num.pin(TRACK_Y));
     s(handle(knobPos));
 
     s(label(vec(TRACK_X0 - 16, TRACK_Y), nStr, { align: Anchor.Right }));

@@ -74,8 +74,6 @@ const ACCENT = "#5b8def";
 const MEASURED = "#e0a458";
 const META = "#46c08a";
 const FADER_DB = 14;
-const clampF = (db: number): number => (db < -FADER_DB ? -FADER_DB : db > FADER_DB ? FADER_DB : db);
-const yToDbF = (y: number): number => clampF((EQ_MID - y) / PX_PER_DB);
 
 export class MdBireactiveEq extends Diagram {
   #engine: AudioEngine | null = null;
@@ -218,11 +216,7 @@ export class MdBireactiveEq extends Diagram {
 
     const macro = (x: number, out: Writable<Num>, name: string): void => {
       s(line(vec(x, dbToY(FADER_DB)), vec(x, dbToY(-FADER_DB)), { thin: true, opacity: 0.25 }));
-      const h = Vec.lens(
-        out,
-        v => ({ x, y: dbToY(clampF(v)) }),
-        t => yToDbF(t.y),
-      ) as Writable<Vec>;
+      const h = vec(Num.pin(x), out.clamp(-FADER_DB, FADER_DB).affine(-PX_PER_DB, EQ_MID));
       const dot = s(circle(h, 6.5, { fill: META, stroke: META }));
       drag(dot, h);
       dot.el.style.cursor = "ns-resize";

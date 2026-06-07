@@ -5,8 +5,9 @@
 // IK, and physics all observe the same value. Vec / Num lenses compose
 // for consumers that care only about translation or rotation.
 
-import { Cell, type Init, type Writable } from "../cell";
+import { Cell, field, type Init, type Writable } from "../cell";
 import type { Linear, Pack, Pivotal, TraitDict } from "../traits";
+import { Num } from "./num";
 
 type V = { x: number; y: number; theta: number };
 
@@ -78,6 +79,16 @@ export class Pose extends Cell<V> {
 
   constructor(v: V = { x: 0, y: 0, theta: 0 }) {
     super(v, { equals });
+  }
+
+  get x() {
+    return field(this, "x", Num);
+  }
+  get y() {
+    return field(this, "y", Num);
+  }
+  get theta() {
+    return field(this, "theta", Num);
   }
 }
 

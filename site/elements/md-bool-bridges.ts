@@ -13,9 +13,9 @@ import {
   label,
   line,
   type Mount,
+  Num,
   num,
   rect,
-  Vec,
   vec,
   type Writable,
 } from "@bireactive";
@@ -136,11 +136,7 @@ export class MdBoolBridges extends Diagram {
       const t2 = num(0.7);
       const above = t2.greaterThan(threshold, 0.06);
       const knobX = t2.clamp(0, 1).affine(trackX1 - trackX0, trackX0);
-      const knobPos = Vec.lens(
-        knobX,
-        x => ({ x, y: trackY }),
-        p => p.x,
-      );
+      const knobPos = vec(knobX, Num.pin(trackY));
       const tx = trackX0 + threshold * (trackX1 - trackX0);
       s(
         rect(trackX0, trackY - 4, tx - trackX0, 8, {
@@ -239,11 +235,7 @@ export class MdBoolBridges extends Diagram {
       const snapped = n5.clamp(0, NMAX).quantize(1);
       const even = snapped.isEven;
       const knobX = snapped.affine((trackX1 - trackX0) / NMAX, trackX0);
-      const knobPos = Vec.lens(
-        knobX,
-        x => ({ x, y: trackY }),
-        p => p.x,
-      );
+      const knobPos = vec(knobX, Num.pin(trackY));
       const ticks = Array.from({ length: NMAX + 1 }, (_, i) => {
         const x = trackX0 + (i / NMAX) * (trackX1 - trackX0);
         const isEven = i % 2 === 0;

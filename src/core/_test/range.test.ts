@@ -53,7 +53,7 @@ describe("Range — field lenses (start/end knob)", () => {
 });
 
 describe("Range — derived views", () => {
-  it(".width and .center are RO derives", () => {
+  it(".width is an RO derive; .center reads the midpoint", () => {
     const r = range(2, 8);
     expect(r.width.value).toBe(6);
     expect(r.center.value).toBe(5);
@@ -61,6 +61,13 @@ describe("Range — derived views", () => {
     r.lo.value = 0;
     expect(r.width.value).toBe(8);
     expect(r.center.value).toBe(4);
+  });
+
+  it(".center body-drag recenters, preserving width", () => {
+    const r = range(2, 8);
+    r.center.value = 10;
+    expect(r.value).toEqual({ lo: 7, hi: 13 });
+    expect(r.width.value).toBe(6);
   });
 
   it(".contains(v) tracks v reactively", () => {

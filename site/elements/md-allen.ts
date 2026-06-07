@@ -11,11 +11,12 @@ import {
   handle,
   label,
   type Mount,
+  Num,
   type Range,
   range,
   rect,
-  Vec,
   vec,
+  type Writable,
 } from "@bireactive";
 
 const W = 720;
@@ -121,8 +122,6 @@ export class MdAllen extends Diagram {
     const x0 = 70;
     const x1 = 650;
     const xOf = (v: number) => x0 + (v / T) * (x1 - x0);
-    const vOf = (x: number) => ((x - x0) / (x1 - x0)) * T;
-    const clampT = (v: number) => Math.max(0, Math.min(T, v));
     const EPS = 1.6;
 
     const yA = 70;
@@ -138,17 +137,13 @@ export class MdAllen extends Diagram {
       (target, [a, b]) => [undefined, realize(target, a, b)],
     );
 
-    // The bar drags the whole interval; endpoint handles resize.
-    const bar = (R: Range, y: number, color: string) => {
-      const body = Vec.lens(
-        R,
-        r => ({ x: xOf((r.lo + r.hi) / 2), y }),
-        (p, r) => {
-          const half = (r.hi - r.lo) / 2;
-          const c = clampT(vOf(p.x));
-          return { lo: c - half, hi: c + half };
-        },
-      );
+    // The bar drags the whole interval; endpoint handles resize. Each
+    // on-track handle is a scalar chain pinned to the row: `.center`
+    // body-drags (width preserved), `.lo` / `.hi` move the endpoints.
+    const bar = (R: Writable<Range>, y: number, color: string) => {
+      const onTrack = (n: Writable<Num>) =>
+        vec(n.clamp(0, T).affine((x1 - x0) / T, x0), Num.pin(y));
+      const body = onTrack(R.center);
       const barRect = rect(
         derive(() => xOf(Math.min(R.value.lo, R.value.hi))),
         y - barH / 2,
@@ -159,15 +154,9 @@ export class MdAllen extends Diagram {
       s(barRect);
       drag(barRect, body);
       barRect.el.style.cursor = "grab";
-      const endHandle = (which: "lo" | "hi") =>
-        Vec.lens(
-          R,
-          r => ({ x: xOf(r[which]), y }),
-          (p, r) => ({ ...r, [which]: clampT(vOf(p.x)) }),
-        );
       s(
-        handle(endHandle("lo"), { fill: "#222", r: 5 }),
-        handle(endHandle("hi"), { fill: "#222", r: 5 }),
+        handle(onTrack(R.lo), { fill: "#222", r: 5 }),
+        handle(onTrack(R.hi), { fill: "#222", r: 5 }),
       );
     };
     bar(A, yA, "#5b8def");

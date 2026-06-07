@@ -30,8 +30,6 @@ const UNIT = 17; // px per sample in a bar
 const FILLS = ["#5b8def", "#e8833a", "#3aae6f", "#b563d6", "#d6a23a", "#d65c6f"];
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
-const xOf = (v: number) => AX0 + clamp01(v) * (AX1 - AX0);
-const vOf = (x: number) => (x - AX0) / (AX1 - AX0);
 const binOf = (v: number) => Math.min(K - 1, Math.max(0, Math.floor(clamp01(v) * K)));
 
 const INIT = [
@@ -117,11 +115,7 @@ export class MdHistogram extends Diagram {
           { size: 12, bold: true, align: Anchor.Center, fill: FILLS[i]! },
         ),
       );
-      const top = Vec.lens(
-        ci,
-        c => ({ x: cx, y: BASE - c * UNIT }),
-        p => (BASE - p.y) / UNIT,
-      );
+      const top = vec(Num.pin(cx), ci.affine(-UNIT, BASE));
       s(handle(top, { fill: FILLS[i]!, r: 6, cursor: "ns-resize" }));
     }
 
@@ -133,11 +127,7 @@ export class MdHistogram extends Diagram {
 
     s(line(vec(AX0, DOTY), vec(AX1, DOTY), { thin: true, opacity: 0.3 }));
     samples.forEach(sample => {
-      const pos = Vec.lens(
-        sample,
-        v => ({ x: xOf(v), y: DOTY }),
-        p => clamp01(vOf(p.x)),
-      );
+      const pos = vec(sample.clamp(0, 1).affine(AX1 - AX0, AX0), Num.pin(DOTY));
       s(handle(pos, { fill: derive(() => FILLS[binOf(sample.value)]!), r: 5 }));
     });
 

@@ -14,12 +14,12 @@ import {
   label,
   line,
   type Mount,
-  type Num,
+  Num,
   num,
   rect,
   rgb,
   select,
-  Vec,
+  type Vec,
   vec,
   type Writable,
   wave,
@@ -151,13 +151,9 @@ function toggle(
   s(g);
 }
 
-/** Drag slider over [0, 1] writing a Num via a Vec.lens-backed handle. */
+/** Drag slider over [0, 1] writing a Num through an affine+clamp chain. */
 function slider(s: Mount, x0: number, x1: number, y: number, t: Writable<Num>): void {
-  const knobPos = Vec.lens(
-    t,
-    tv => ({ x: x0 + tv * (x1 - x0), y }),
-    p => Math.max(0, Math.min(1, (p.x - x0) / (x1 - x0))),
-  );
+  const knobPos = vec(t.clamp(0, 1).affine(x1 - x0, x0), Num.pin(y));
   s(
     line(vec(x0, y), vec(x1, y), { thin: true, opacity: 0.4 }),
     label(

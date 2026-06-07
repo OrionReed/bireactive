@@ -10,7 +10,7 @@ import {
   label,
   type Mount,
   rect,
-  Vec,
+  type Vec,
   vec,
   type Writable,
 } from "@bireactive";
@@ -135,8 +135,7 @@ export class MdHeatmap extends Diagram {
     }
 
     points.forEach(pt => {
-      const clamped = Vec.lens(
-        pt,
+      const clamped = pt.lens(
         p => p,
         p => ({
           x: Math.max(GR.x + 2, Math.min(GR.x + GR.w - 2, p.x)),

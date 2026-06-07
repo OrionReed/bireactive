@@ -1,10 +1,10 @@
 // range.ts — reactive numeric interval `[lo, hi]`.
 //
 // Home for sliders, scrollbars, and timeline clip spans. Field lenses
-// give start-knob (`.lo`) and end-knob (`.hi`) drag; `.start` is the
-// body-drag (shifts both, preserving width); `.slider(t)` is the
-// bidirectional `t ↔ lo + t·(hi - lo)` iso. Traits: `linear`, `lerp`,
-// `equals`, `pack` (scalar-only).
+// give start-knob (`.lo`) and end-knob (`.hi`) drag; `.start` / `.center`
+// are body-drags (shift both, preserving width — anchored at lo / midpoint
+// respectively); `.slider(t)` is the bidirectional `t ↔ lo + t·(hi - lo)`
+// iso. Traits: `linear`, `lerp`, `equals`, `pack` (scalar-only).
 
 import { type Easing, type Tween, tween } from "../../animation";
 import {
@@ -96,8 +96,14 @@ export class Range extends Cell<V> {
   get width() {
     return cachedDerive(this, "width", Num, width);
   }
-  get center() {
-    return cachedDerive(this, "center", Num, center);
+  /** Midpoint body-drag: read returns the center; write shifts the range
+   *  so the center matches (width preserved). `.start` is the lo-anchored
+   *  variant; `.lo` / `.hi` edit the endpoints. */
+  get center(): Writable<Num> {
+    return Num.lens(this, center, (c, src) => {
+      const half = (src.hi - src.lo) / 2;
+      return { lo: c - half, hi: c + half };
+    });
   }
 
   /** Translate by `by`. Reads shift the interval; writes shift back. */
