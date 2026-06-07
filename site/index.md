@@ -330,6 +330,24 @@ The demo steps through four expressions one fixpoint wave at a time. The fourth 
 
 <md-prop-types></md-prop-types>
 
+The interval lattice also lays out graphs. Sugiyama layering reduces to the atoms we already have: assign each node a layer so every edge `u → v` drops at least one rank, i.e. `order(layer(u), layer(v), 1)`. The solver narrows each layer cell's lower bound to the *longest* path reaching it — a join node fed by two branches takes the deeper one, the fan-in a single defining function can't express. Cycles are handled by decomposition. `scc()` (Tarjan) finds the strongly-connected components; the condensation — the graph with each component collapsed to a point — is always a DAG, so it ranks like anything else, and each cyclic core is wrapped in a violet region. The **Recurrent** layout takes this further: it lays the condensation out hierarchically and draws every cyclic component as a *ring*, so the cycle closes by going around a centre rather than as a backward arrow (the recurrent-hierarchy style of the original Sugiyama paper). Barycenter sweeps order each layer and pool-adjacent-violators places the coordinates. One ranking, many renderings — pick a topology and a layout:
+
+```ts
+const layer = rank(graph); // longest-path = order() atoms run to a fixpoint
+const place = layered(graph, { direction: "TB" }); // + crossings + coordinates
+```
+
+<md-sugiyama></md-sugiyama>
+
+The layout primitive composes with itself. Here each node of the outer graph is *itself a graph*: `layered()` lays out every cluster, the clusters are sized to their own extent and laid out as a graph in turn, and node positions fall out of the two offsets added together. Inter-cluster edges (grey) thread between boxes; intra-cluster edges (tinted) stay inside. Same solve, nested:
+
+```ts
+const inner = layered(cluster);          // lay out each subgraph
+const meta = layered(clusters, { sizeOf: extentOf }); // then the clusters
+```
+
+<md-subgraphs></md-subgraphs>
+
 ### Constraints
 
 `Constraints` binds cells and runs an Augmented Vertex Block Descent[^avbd] solve per write. The factories (`distance`, `angle`, `onCircle`, `generic`, …) compose, and membership is reactive: `addWhile(flag, rel)` keeps a relation alive only while a cell is truthy.
