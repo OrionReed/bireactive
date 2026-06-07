@@ -7,7 +7,7 @@ import { type Easing, type Tween, tween } from "../../animation";
 import {
   Cell,
   cachedDerive,
-  field,
+  fieldLens,
   type Init,
   type Inner,
   isReadonly,
@@ -192,16 +192,16 @@ export class Box extends Cell<V> {
   }
 
   get x() {
-    return field(this, "x", Num);
+    return fieldLens(this, "x", Num);
   }
   get y() {
-    return field(this, "y", Num);
+    return fieldLens(this, "y", Num);
   }
   get w() {
-    return field(this, "w", Num);
+    return fieldLens(this, "w", Num);
   }
   get h() {
-    return field(this, "h", Num);
+    return fieldLens(this, "h", Num);
   }
   get area() {
     return cachedDerive(this, "area", Num, b => b.w * b.h);

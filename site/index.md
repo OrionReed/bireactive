@@ -166,10 +166,6 @@ A histogram coarsens: `Array<Num> ⇌ Array<BinCount>` (bin / transport) keeps c
 
 <md-histogram></md-histogram>
 
-In 2D, a heatmap: `Array<Vec> ⇌ Grid<Count>` (bin / pull). Moving a point re-bins it; selecting a cell pulls the nearest point in:
-
-<md-heatmap></md-heatmap>
-
 `mix(weights, branches)` reads as a weighted sum and writes back split by weight. `select` and `crossfade` are the same lens with the control on the weight simplex — a boolean snaps between branches, a number blends them across position, colour, and size:
 
 <md-select></md-select>
@@ -266,6 +262,12 @@ Several tiers stack here. `downsample` projects to a thumbnail whose complement 
 
 Hit *spring root* and per-pixel position/velocity state — float textures that never leave the card — makes every pixel a damped oscillator chasing a target image; the settle metric is a GPU reduction, so even the "are we done?" check stays off the CPU. The spring drives the root each frame and the whole DAG re-derives until it settles.
 
+A `Field<T>` generalises the raster: a dense grid of `T` (scalar, vector, colour — whatever the encoding's `Pack` codec packs into texture channels) held as one cell, the same handle/epoch trick so a 1000×1000 field is a single reactive node. Its reductions (`mean`, `regionMean`) are ordinary read-only derived cells, and that is the interesting part — it puts a *continuously-running GPU simulation* and the *reactive graph* on the same value. Below, a `Field<Vec>` runs Gray–Scott reaction–diffusion: `field.evolve(kernel)` steps the PDE on its own animation clock, `field.colormap(V)` is a `Field → Canvas` render lens, and the probe rectangle's mean concentration is `field.regionMean(box)` — a plain cell. So `density ≥ threshold` is a `Bool` the alarm, the crossing counter, and the readout all just *observe*:
+
+<md-reaction-diffusion></md-reaction-diffusion>
+
+The reactive logic is loosely coupled to time: none of those effects mention a frame, or know a simulation is advancing the texture underneath them — they fire only when their scalar actually crosses, because the derived cell propagates on change, not on tick. The sim writes one new epoch per frame; the graph decides what, if anything, that means. Drag the probe across a quiet region and back into the activity to watch the same threshold rule react to wherever you point it.
+
 ## Solvers
 
 When the inverse has no closed form, the backward direction runs a solver — still a single pass from the outside. An N-link arm is a `Vec.lens` whose backward direction runs inverse kinematics on each write:
@@ -286,36 +288,29 @@ Some relationships have no source end at all — a four-bar linkage, a cloth, a 
 
 ### Propagators
 
-A propagator declares which cells it reads and which it writes, and the network runs them to a fixpoint driven by what's stale. Combinators dispatch on type — `centroid(G, A, B, C)` runs both ways, `mid(A, B, M)` is the two-point form — so a triangle's medians stack from a centroid and three midpoints:
+A propagator declares which cells it reads and which it writes and narrows the writes via `merge` — it only ever *sharpens* partial knowledge. Cells hold lattice values (an interval, a candidate set), `merge` is the lattice meet, and the network runs to a fixpoint driven by what's stale. Because meet only narrows, iteration terminates by the structure of the lattice: no fuel cap, no divergence error, and many independent relations can co-own one cell — the thing a lens, with its single defining function, cannot do.
+
+Estimate one quantity from several independent measurements. Each is an interval; the estimate is their running intersection. Evidence accumulates order-independently, and a measurement that disagrees collapses the cell to a contradiction:
 
 ```ts
-const p = propagators();
-p.add(centroid(G, A, B, C));
-p.add(mid(A, B, Mab));
-p.add(mid(B, C, Mbc));
-p.add(mid(C, A, Mca));
+const est = intervalCell();
+solve(...sensors.map(m => propagator([m], [est], () => merge(est, m.value))));
 ```
 
-<md-prop-geom></md-prop-geom>
+<md-partial></md-partial>
 
-But a propagator isn't *required* here. The dependency graph is a fan-in DAG rooted at the three vertices: `G` and each midpoint are pure functions of `A`, `B`, `C` — no cycle, no cell co-owned by two relations. That's exactly the lens-expressible subset, so the same construction drops the network entirely. Each derived point IS a value (`mean`), and its backward direction is the drag policy — centroid and midpoint collapse into the *same* primitive:
+The same lattice, applied to sizes, is flexbox. A line is two phases: `total(widths, content)` *narrows* each item to the band it can occupy (catching "doesn't fit" as a real contradiction, not a silent overflow), then grow/shrink weights *resolve* the slack to a point. `row`/`col` desugar to those atoms over plain `Box` cells, so nesting composes through the ordinary graph — drag the right edge:
 
 ```ts
-const G = mean([A, B, C]);
-const Mab = mean([A, B]);
-const Mbc = mean([B, C]);
-const Mca = mean([C, A]);
+solve(
+  col(container, [{ box: toolbar, min: 44, max: 44 }, body], { gap: 10, padding: 10 }),
+  row(body, panes, { gap: 10, align: "stretch" }),
+);
 ```
 
-<md-lens-geom></md-lens-geom>
+<md-flex></md-flex>
 
-Drag the two demos side by side: behaviourally identical. The split is one of role, not capability — the lens *defines* the value ("`G` is the centroid"), the propagator *solves* a relation ("these should satisfy `a+b=c`"). Lenses win whenever the relation is a one-directional derivation: total, ~8× cheaper per drag, never inconsistent. Propagators earn their network the moment you need a *cycle*, a cell *co-owned* by two relations, or a *peer* constraint where both endpoints stay independently draggable (`keepDistance`, `onLine`, the sudoku below) — none of which a single lens can own.
-
-Layout is one large propagator: `hstack(container, items, opts)` reads the container, gap, and widths and writes positions in a single pass:
-
-<md-prop-flex></md-prop-flex>
-
-The same network narrows sets. A 9×9 sudoku is set-narrowing on `Cell<Set<T>>` — the same `network()` with a different value type and merge rule:
+Swap the interval lattice for a finite-set one and narrowing becomes constraint satisfaction. A 9×9 sudoku is 27 `allDifferent` relations over candidate-set cells — the same solver, a different lattice:
 
 <md-prop-sudoku></md-prop-sudoku>
 
@@ -324,8 +319,7 @@ Narrowing on a different lattice is type inference. Each AST node is a cell of c
 ```ts
 function unify(a: TypeNode, b: TypeNode) {
   return [
-    propagator([a.tag], [b.tag], () => intersectInto(b.tag, a.tag)),
-    propagator([b.tag], [a.tag], () => intersectInto(a.tag, b.tag)),
+    ...same(a.tag, b.tag), // intersect candidate sets both ways
     ...(a.dom && b.dom ? unify(a.dom, b.dom) : []),
     ...(a.cod && b.cod ? unify(a.cod, b.cod) : []),
   ];

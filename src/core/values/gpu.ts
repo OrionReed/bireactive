@@ -21,9 +21,14 @@ export function gl(): WebGL2RenderingContext {
   if (!ctx) throw new Error("WebGL2 unavailable");
   if (!ctx.getExtension("EXT_color_buffer_float"))
     throw new Error("EXT_color_buffer_float unavailable");
+  // Optional: linear filtering of RGBA32F (continuous Field sampling/render).
+  // Absent on some mobile GPUs — `newTex(..., linear)` falls back to NEAREST.
+  _floatLinear = ctx.getExtension("OES_texture_float_linear") !== null;
   _gl = ctx;
   return ctx;
 }
+
+let _floatLinear = false;
 
 const QUAD = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
 
@@ -97,14 +102,22 @@ export interface Tex {
   h: number;
 }
 
-/** Allocate an RGBA32F texture (`data` in 0–1 floats, or null). */
-export function newTex(w: number, h: number, data: Float32Array | null = null): WebGLTexture {
+/** Allocate an RGBA32F texture (`data` in 0–1 floats, or null). `linear`
+ *  requests bilinear filtering (continuous Field sampling), silently
+ *  downgraded to NEAREST where `OES_texture_float_linear` is unavailable. */
+export function newTex(
+  w: number,
+  h: number,
+  data: Float32Array | null = null,
+  linear = false,
+): WebGLTexture {
   const g = gl();
   const t = g.createTexture()!;
   g.bindTexture(g.TEXTURE_2D, t);
   g.texImage2D(g.TEXTURE_2D, 0, g.RGBA32F, w, h, 0, g.RGBA, g.FLOAT, data);
-  g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MIN_FILTER, g.NEAREST);
-  g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, g.NEAREST);
+  const filter = linear && _floatLinear ? g.LINEAR : g.NEAREST;
+  g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MIN_FILTER, filter);
+  g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, filter);
   g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE);
   g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_T, g.CLAMP_TO_EDGE);
   return t;

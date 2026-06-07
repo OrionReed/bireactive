@@ -2,12 +2,12 @@
 //
 // Invertibles (`add`, `sub`) return `: this` and ride on
 // `Cell#lens(fwd, bwd)`; chained calls compose into a lens chain.
-// Field-lens getters use `field()`, so writability propagates through
+// Field-lens getters use `fieldLens()`, so writability propagates through
 // nested chains
 // (`Transform.translate.x.value = 5` works on writable receivers).
 
 import { type Easing, type Tween, tween } from "../../animation";
-import { Cell, field, type Inner, reader, readNow, type Val, type Writable } from "../cell";
+import { Cell, fieldLens, type Inner, reader, readNow, type Val, type Writable } from "../cell";
 import type { Linear, TraitDict } from "../traits";
 import { Num } from "./num";
 import {
@@ -110,19 +110,19 @@ export class Transform extends Cell<V> {
   }
 
   get translate() {
-    return field(this, "translate", Vec);
+    return fieldLens(this, "translate", Vec);
   }
   get scale() {
-    return field(this, "scale", Vec);
+    return fieldLens(this, "scale", Vec);
   }
   get origin() {
-    return field(this, "origin", Vec);
+    return fieldLens(this, "origin", Vec);
   }
   get rotate() {
-    return field(this, "rotate", Num);
+    return fieldLens(this, "rotate", Num);
   }
   get opacity() {
-    return field(this, "opacity", Num);
+    return fieldLens(this, "opacity", Num);
   }
 
   /** Tween-builder, implied by the lerp trait. */

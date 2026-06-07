@@ -25,7 +25,7 @@ import {
   vec,
   type Writable,
 } from "@bireactive";
-import { propagate, propagator } from "@bireactive/propagators";
+import { propagator, solve } from "@bireactive/propagators";
 
 const RED = "#e25c5c";
 const BLUE = "#5b8def";
@@ -375,7 +375,7 @@ export class MdBireactive extends Diagram {
     for (const n of allNodes) byLayer[layer.get(n)!]!.push(n);
     const xOf = (n: Vec) => n.x as Writable<Num>;
 
-    propagate(
+    solve(
       // y: each node's y is its layer's centerline.
       propagator(
         [],

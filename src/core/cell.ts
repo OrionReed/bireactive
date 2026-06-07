@@ -1685,7 +1685,7 @@ export function network(
 
 // ── value-class authoring helpers ──────────────────────────────────
 //
-// `field`/`cachedDerive` are the two getter forms a value class declares.
+// `fieldLens`/`cachedDerive` are the two getter forms a value class declares.
 // The choice between them IS the local declaration of writability at each
 // getter (mirroring `: this` invertible method returns). For arbitrary
 // cached views, use `lazy()` directly.
@@ -1694,8 +1694,8 @@ export function network(
  *  replaces the composite. Cached per (instance, key). Return type is
  *  conditional: `Writable<Cls>` on a writable parent, bare `Cls` on RO.
  *
- *      get x() { return field(this, "x", Num); } */
-export function field<
+ *      get x() { return fieldLens(this, "x", Num); } */
+export function fieldLens<
   // biome-ignore lint/suspicious/noExplicitAny: variance escape on Cls.lens
   S extends Cell<any>,
   K extends keyof Inner<S>,

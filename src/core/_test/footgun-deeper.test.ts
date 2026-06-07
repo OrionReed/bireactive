@@ -2,7 +2,7 @@
 // effect cleanup across the fast path, reactive args in fwd/bwd, sequencing.
 
 import { describe, expect, it } from "vitest";
-import { Cell, field } from "../cell";
+import { Cell, fieldLens } from "../cell";
 import { cell, derive, effect, lens, Num, num, transform, Vec, vec } from "../index";
 
 void vec;
@@ -23,7 +23,7 @@ describe("footgun: field on top of a structural lens", () => {
       },
     );
 
-    const x = field(aLens, "x", Num);
+    const x = fieldLens(aLens, "x", Num);
 
     expect(x.value).toBe(1);
     (x as unknown as { value: number }).value = 99;

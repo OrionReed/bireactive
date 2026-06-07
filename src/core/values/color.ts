@@ -8,7 +8,7 @@ import {
   Cell,
   cachedDerive,
   derive,
-  field,
+  fieldLens,
   type Init,
   lazy,
   reader,
@@ -87,16 +87,16 @@ export class Color extends Cell<V> {
   }
 
   get r() {
-    return field(this, "r", Num);
+    return fieldLens(this, "r", Num);
   }
   get g() {
-    return field(this, "g", Num);
+    return fieldLens(this, "g", Num);
   }
   get b() {
-    return field(this, "b", Num);
+    return fieldLens(this, "b", Num);
   }
   get a() {
-    return field(this, "a", Num);
+    return fieldLens(this, "a", Num);
   }
   get luminance() {
     return cachedDerive(this, "luminance", Num, c => 0.299 * c.r + 0.587 * c.g + 0.114 * c.b);

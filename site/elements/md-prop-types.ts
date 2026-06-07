@@ -1,24 +1,18 @@
 // Hindley-Milner-style type inference as set narrowing on a propagator lattice.
 
 import { cell, Diagram, derive, label, line, loop, type Mount, rect, vec } from "@bireactive";
-import { propagator, propagators, type SetCell } from "@bireactive/propagators";
+import { type LatticeCell, restrict, same, setCell, solver } from "@bireactive/propagators";
 
 // Type language
 
 type Tag = "int" | "str" | "bool" | "fn";
-const ALL_TAGS: ReadonlySet<Tag> = new Set<Tag>(["int", "str", "bool", "fn"]);
+const ALL_TAGS: readonly Tag[] = ["int", "str", "bool", "fn"];
+type TagCell = LatticeCell<ReadonlySet<Tag>>;
 
-const eqTagSet = (a: ReadonlySet<Tag>, b: ReadonlySet<Tag>): boolean => {
-  if (a.size !== b.size) return false;
-  for (const v of a) if (!b.has(v)) return false;
-  return true;
-};
-
-const tagCell = (init: Iterable<Tag>): SetCell<Tag> =>
-  cell<ReadonlySet<Tag>>(new Set(init), { equals: eqTagSet });
+const tagCell = (init: Iterable<Tag>): TagCell => setCell(ALL_TAGS, init);
 
 interface TypeNode {
-  tag: SetCell<Tag>;
+  tag: TagCell;
   dom?: TypeNode;
   cod?: TypeNode;
 }
@@ -39,43 +33,18 @@ function makeTypeFactory() {
   return { make, allTypes };
 }
 
-function intersect<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): Set<T> {
-  const out = new Set<T>();
-  for (const v of a) if (b.has(v)) out.add(v);
-  return out;
-}
-
 // Constraints as propagators
 
-/** Narrow `t.tag` toward {tag}. If tag isn't in the cell, write ∅
- *  (contradiction). Self-reading propagator — fires whenever the
- *  cell changes; converges immediately to a fixed point. */
+/** Narrow `t.tag` toward `{tag}` (lattice meet with a singleton). An
+ *  empty result is a contradiction — surfaced as `⊥` by the renderer. */
 function narrowTo(t: TypeNode, tag: Tag) {
-  return propagator([t.tag], [t.tag], () => {
-    const v = t.tag.value;
-    if (v.size === 1 && v.has(tag)) return;
-    if (!v.has(tag)) {
-      if (v.size === 0) return;
-      t.tag.value = new Set();
-      return;
-    }
-    t.tag.value = new Set([tag]);
-  });
+  return restrict(t.tag, [tag]);
 }
 
-/** Symmetric unification: tags intersect both directions, and dom /
- *  cod sub-cells recursively unify when both nodes have them. */
+/** Symmetric unification: tags intersect both directions (`same`), and
+ *  dom / cod sub-cells recursively unify when both nodes have them. */
 function unify(a: TypeNode, b: TypeNode) {
-  const props = [
-    propagator([a.tag], [b.tag], () => {
-      const next = intersect(a.tag.value, b.tag.value);
-      if (!eqTagSet(next, b.tag.value)) b.tag.value = next;
-    }),
-    propagator([b.tag], [a.tag], () => {
-      const next = intersect(a.tag.value, b.tag.value);
-      if (!eqTagSet(next, a.tag.value)) a.tag.value = next;
-    }),
-  ];
+  const props = [...same(a.tag, b.tag)];
   if (a.dom && b.dom) props.push(...unify(a.dom, b.dom));
   if (a.cod && b.cod) props.push(...unify(a.cod, b.cod));
   return props;
@@ -318,7 +287,7 @@ export class MdPropTypes extends Diagram {
 
     const stages = EXPRESSIONS.map((expr, exprIdx) => {
       const inf = infer(expr);
-      const net = propagators({ manual: true }).add(...inf.props);
+      const net = solver({ manual: true }).add(...inf.props);
 
       // Layout: tree centered at view-center horizontally, top at y0.
       const layout = computeLayout(expr, 0);
@@ -430,7 +399,7 @@ export class MdPropTypes extends Diagram {
           for (let j = 0; j < stages.length; j++) stages[j]!.visible.value = j === i;
           current.value = i;
 
-          for (const t of stages[i]!.inf.allTypes) t.tag.value = ALL_TAGS;
+          for (const t of stages[i]!.inf.allTypes) t.tag.value = new Set(ALL_TAGS);
           stepCount.value = 0;
 
           yield 0.6;

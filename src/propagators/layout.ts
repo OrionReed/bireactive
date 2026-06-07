@@ -1,15 +1,9 @@
-// layout.ts — Box-relational layout combinators.
+// layout.ts — rigid Box-relational combinators.
 //
-// Every combinator operates on `Box` value-types. Reactive opts
-// (`gap`, `padding`, …) accept a number or a Num signal.
-//
-//   const c = box(0, 0, 300, 200);
-//   const items = [box(), box(), box()];
-//   p.add(hstack(c, items, { gap: 8, align: "stretch" }));
-//
-// `hstack` / `vstack` are CSS-flex-shaped (per-item grow/shrink vs
-// min/max). For rigid edge-to-edge layouts use `attach`,
-// `centerInside`, etc.
+// The bidirectional, whole-box anchoring relations (edge-to-edge,
+// centring, insets, grids). Flex lives in `flex.ts`; these are the
+// fixed structural pieces you compose around it. Reactive opts (`gap`,
+// `padding`, …) accept a number or a Num signal.
 
 import {
   type Box,
@@ -19,7 +13,7 @@ import {
   readNow,
   type Writable,
 } from "@bireactive/core";
-import { type Propagator, propagator } from "./propagator";
+import { type Propagator, propagator } from "./solver";
 
 type Num = NumClass;
 const asW = (n: Num): Writable<NumClass> => n as unknown as Writable<NumClass>;
@@ -27,206 +21,6 @@ type ValOrSig = number | Read<number>;
 
 function readDeps(...vs: ValOrSig[]): Num[] {
   return vs.filter(isCell) as Num[];
-}
-
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.min(Math.max(v, lo), hi);
-}
-
-/** Item in an `hstack` / `vstack`. Bare `Box` uses defaults (grow 1,
- *  shrink 1, no min/max); tag for per-item flex. Per-item opts are
- *  plain numbers (not reactive). */
-export type StackItem =
-  | Box
-  | {
-      box: Box;
-      grow?: number;
-      shrink?: number;
-      min?: number;
-      max?: number;
-    };
-
-interface StackItemSpec {
-  box: Box;
-  grow: number;
-  shrink: number;
-  min: number;
-  max: number;
-}
-
-function specs(items: readonly StackItem[]): StackItemSpec[] {
-  return items.map(it =>
-    "box" in it
-      ? {
-          box: it.box,
-          grow: it.grow ?? 1,
-          shrink: it.shrink ?? 1,
-          min: it.min ?? 0,
-          max: it.max ?? Number.POSITIVE_INFINITY,
-        }
-      : { box: it, grow: 1, shrink: 1, min: 0, max: Number.POSITIVE_INFINITY },
-  );
-}
-
-export interface StackOpts {
-  /** Space between adjacent items. Default 0. */
-  gap?: ValOrSig;
-  /** Padding inside container on each side. Default 0. */
-  padding?: ValOrSig;
-  /** Cross-axis alignment. Default "start". */
-  align?: "start" | "center" | "end" | "stretch";
-  /** "fit" (default): items grow/shrink to fill container.
-   *  "hug": items keep their authored size; container resizes. */
-  mode?: "fit" | "hug";
-}
-
-/** Horizontal CSS-flex stack: per-item grow/shrink/min/max along the
- *  main axis, cross-axis handled by `align`. */
-export function hstack(c: Box, items: readonly StackItem[], opts: StackOpts = {}): Propagator {
-  return _stack(c, items, opts, "horizontal");
-}
-
-/** Vertical stack — top-to-bottom version of `hstack`. */
-export function vstack(c: Box, items: readonly StackItem[], opts: StackOpts = {}): Propagator {
-  return _stack(c, items, opts, "vertical");
-}
-
-function _stack(
-  c: Box,
-  rawItems: readonly StackItem[],
-  opts: StackOpts,
-  dir: "horizontal" | "vertical",
-): Propagator {
-  const items = specs(rawItems);
-  const horizontal = dir === "horizontal";
-  const mainPos = (b: Box): Writable<NumClass> => asW(horizontal ? b.x : b.y);
-  const mainSize = (b: Box): Writable<NumClass> => asW(horizontal ? b.w : b.h);
-  const crossPos = (b: Box): Writable<NumClass> => asW(horizontal ? b.y : b.x);
-  const crossSize = (b: Box): Writable<NumClass> => asW(horizontal ? b.h : b.w);
-
-  const mode = opts.mode ?? "fit";
-  const alignKind = opts.align ?? "start";
-
-  const reads: Num[] = [
-    mainPos(c),
-    mainSize(c),
-    crossPos(c),
-    crossSize(c),
-    ...items.map(it => mainSize(it.box)),
-    ...items.map(it => crossSize(it.box)),
-    ...readDeps(opts.gap ?? 0, opts.padding ?? 0),
-  ];
-
-  const writes: Writable<NumClass>[] = [];
-  for (const it of items) {
-    writes.push(asW(mainPos(it.box)));
-    if (mode === "fit") writes.push(asW(mainSize(it.box)));
-    writes.push(asW(crossPos(it.box)));
-    if (alignKind === "stretch") writes.push(asW(crossSize(it.box)));
-  }
-
-  return propagator(reads, writes, () => {
-    const gap = readNow(opts.gap ?? 0);
-    const pad = readNow(opts.padding ?? 0);
-    const n = items.length;
-
-    let sizes: number[];
-    if (mode === "fit") {
-      // Start each item at its hypothetical size (current main-size,
-      // clamped to [min, max]).
-      sizes = new Array(n);
-      let sumW = 0;
-      for (let i = 0; i < n; i++) {
-        const it = items[i]!;
-        const w0 = clamp(mainSize(it.box).value, it.min, it.max);
-        sizes[i] = w0;
-        sumW += w0;
-      }
-      const slack = mainSize(c).value - 2 * pad - (n - 1) * gap - sumW;
-
-      if (slack > 1e-9) {
-        // Grow.
-        let remaining = slack;
-        const eligible = new Set<number>();
-        for (let i = 0; i < n; i++) {
-          if (items[i]!.grow > 0 && sizes[i]! < items[i]!.max) eligible.add(i);
-        }
-        while (remaining > 1e-9 && eligible.size > 0) {
-          let weights = 0;
-          for (const i of eligible) weights += items[i]!.grow;
-          if (weights === 0) break;
-          let absorbed = 0;
-          for (const i of [...eligible]) {
-            const share = (remaining * items[i]!.grow) / weights;
-            const newW = Math.min(sizes[i]! + share, items[i]!.max);
-            absorbed += newW - sizes[i]!;
-            sizes[i] = newW;
-            if (newW >= items[i]!.max) eligible.delete(i);
-          }
-          if (absorbed < 1e-9) break;
-          remaining -= absorbed;
-        }
-      } else if (slack < -1e-9) {
-        // Shrink.
-        let remaining = -slack;
-        const eligible = new Set<number>();
-        for (let i = 0; i < n; i++) {
-          if (items[i]!.shrink > 0 && sizes[i]! > items[i]!.min) eligible.add(i);
-        }
-        while (remaining > 1e-9 && eligible.size > 0) {
-          let weights = 0;
-          for (const i of eligible) weights += items[i]!.shrink;
-          if (weights === 0) break;
-          let absorbed = 0;
-          for (const i of [...eligible]) {
-            const share = (remaining * items[i]!.shrink) / weights;
-            const newW = Math.max(sizes[i]! - share, items[i]!.min);
-            absorbed += sizes[i]! - newW;
-            sizes[i] = newW;
-            if (newW <= items[i]!.min) eligible.delete(i);
-          }
-          if (absorbed < 1e-9) break;
-          remaining -= absorbed;
-        }
-      }
-    } else {
-      // hug: item sizes drive container.
-      sizes = items.map(it => clamp(mainSize(it.box).value, it.min, it.max));
-      let total = 2 * pad + (n - 1) * gap;
-      for (const s of sizes) total += s;
-      mainSize(c).value = total;
-    }
-
-    // Place items along main axis.
-    let cursor = mainPos(c).value + pad;
-    for (let i = 0; i < n; i++) {
-      mainPos(items[i]!.box).value = cursor;
-      if (mode === "fit") mainSize(items[i]!.box).value = sizes[i]!;
-      cursor += sizes[i]! + gap;
-    }
-
-    // Cross-axis alignment.
-    const cBase = crossPos(c).value + pad;
-    const cAvail = crossSize(c).value - 2 * pad;
-    for (const it of items) {
-      const itSize = crossSize(it.box).value;
-      switch (alignKind) {
-        case "start":
-          crossPos(it.box).value = cBase;
-          break;
-        case "center":
-          crossPos(it.box).value = cBase + (cAvail - itSize) / 2;
-          break;
-        case "end":
-          crossPos(it.box).value = cBase + cAvail - itSize;
-          break;
-        case "stretch":
-          crossPos(it.box).value = cBase;
-          crossSize(it.box).value = cAvail;
-          break;
-      }
-    }
-  });
 }
 
 export interface GridOpts {

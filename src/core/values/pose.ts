@@ -5,7 +5,7 @@
 // IK, and physics all observe the same value. Vec / Num lenses compose
 // for consumers that care only about translation or rotation.
 
-import { Cell, field, type Init, type Writable } from "../cell";
+import { Cell, fieldLens, type Init, type Writable } from "../cell";
 import type { Linear, Pack, Pivotal, TraitDict } from "../traits";
 import { Num } from "./num";
 
@@ -82,13 +82,13 @@ export class Pose extends Cell<V> {
   }
 
   get x() {
-    return field(this, "x", Num);
+    return fieldLens(this, "x", Num);
   }
   get y() {
-    return field(this, "y", Num);
+    return fieldLens(this, "y", Num);
   }
   get theta() {
-    return field(this, "theta", Num);
+    return fieldLens(this, "theta", Num);
   }
 }
 

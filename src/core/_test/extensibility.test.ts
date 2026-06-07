@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   Cell,
-  field,
+  fieldLens,
   type Linear,
   Num,
   reader,
@@ -55,13 +55,13 @@ class Hsl extends Cell<V> {
   }
 
   get h() {
-    return field(this, "h", Num);
+    return fieldLens(this, "h", Num);
   }
   get s() {
-    return field(this, "s", Num);
+    return fieldLens(this, "s", Num);
   }
   get l() {
-    return field(this, "l", Num);
+    return fieldLens(this, "l", Num);
   }
 }
 function hsl(h = 0, s = 0, l = 0): Writable<Hsl> {

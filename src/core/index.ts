@@ -6,7 +6,7 @@ export {
   cell,
   derive,
   effect,
-  field,
+  fieldLens,
   type Init,
   type Inner,
   isCell,
@@ -54,6 +54,16 @@ export { Bool, bool } from "./values/bool";
 export * as BoxMath from "./values/box";
 export { Box, box } from "./values/box";
 export { Canvas, canvas, type Raster, stamp as canvasStamp } from "./values/canvas";
+export {
+  type ColorStop,
+  Colour,
+  Field,
+  field,
+  type FieldVal,
+  type Kind as FieldKind,
+  Scalar,
+  Vector,
+} from "./values/field";
 export * as ColorMath from "./values/color";
 export { Color, rgb, rgba } from "./values/color";
 export { Flags, flags } from "./values/flags";

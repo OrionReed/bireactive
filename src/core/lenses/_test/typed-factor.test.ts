@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { approxWithin } from "../../../_test/_util";
 import type { Writable } from "../../index";
-import { field, Num, pose, Vec, vec } from "../../index";
+import { fieldLens, Num, pose, Vec, vec } from "../../index";
 import { bundle, factor, factorTuple } from "../typed-factor";
 
 const { near, vnear } = approxWithin(1e-4);
@@ -337,8 +337,8 @@ describe("§9 Composition: factor-of-factor & composed-lens inputs", () => {
 
   it("inputs that are themselves field lenses still work", () => {
     const p = pose({ x: 3, y: 7, theta: 1.0 });
-    const px = field(p, "x", Num);
-    const py = field(p, "y", Num);
+    const px = fieldLens(p, "x", Num);
+    const py = fieldLens(p, "y", Num);
     const { sum } = factor(
       [px, py] as never,
       {

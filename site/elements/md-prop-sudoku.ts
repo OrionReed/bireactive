@@ -6,9 +6,10 @@ import {
   box,
   grid,
   inset,
-  propagate,
-  propagators,
-  type SetCell,
+  type LatticeCell,
+  setCell,
+  solve,
+  solver,
 } from "@bireactive/propagators";
 
 const BASE_PUZZLE =
@@ -22,14 +23,8 @@ const BASE_PUZZLE =
   "...419..5" +
   "....8..79";
 
-const ALL_9: ReadonlySet<number> = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9]);
-const eqSet = (a: ReadonlySet<number>, b: ReadonlySet<number>): boolean => {
-  if (a.size !== b.size) return false;
-  for (const v of a) if (!b.has(v)) return false;
-  return true;
-};
-const setCell = (init: Iterable<number>): SetCell<number> =>
-  cell<ReadonlySet<number>>(new Set(init), { equals: eqSet });
+const ALL_9: readonly number[] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+type Cell9 = LatticeCell<ReadonlySet<number>>;
 
 const GIVEN = "var(--text)";
 const SOLVED = "#5b8def";
@@ -40,12 +35,12 @@ export class MdPropSudoku extends Diagram {
     const view = this.view(560, 480);
 
     // Cells + constraints
-    const cells: SetCell<number>[][] = Array.from({ length: 9 }, () =>
+    const cells: Cell9[][] = Array.from({ length: 9 }, () =>
       Array.from({ length: 9 }, () => setCell(ALL_9)),
     );
     const givenAt = cell(new Set<number>());
 
-    const p = propagators({ manual: true });
+    const p = solver({ manual: true });
     for (let r = 0; r < 9; r++) p.add(allDifferent(...cells[r]!));
     for (let c = 0; c < 9; c++) p.add(allDifferent(...cells.map(row => row[c]!)));
     for (let br = 0; br < 3; br++) {
@@ -63,7 +58,7 @@ export class MdPropSudoku extends Diagram {
     // Layout: grid(view-padded, 81 cell boxes)
     const gridArea = box();
     const cellBoxes = Array.from({ length: 81 }, () => box());
-    propagate(inset(view, gridArea, { padding: 30 }), grid(gridArea, cellBoxes, { cols: 9 }));
+    solve(inset(view, gridArea, { padding: 30 }), grid(gridArea, cellBoxes, { cols: 9 }));
 
     // Render
     for (let i = 0; i < 81; i++) {

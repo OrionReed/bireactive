@@ -9,7 +9,7 @@
 import {
   Cell,
   cachedDerive,
-  field,
+  fieldLens,
   type Init,
   type Inner,
   reader,
@@ -128,22 +128,22 @@ export class Matrix extends Cell<V> {
   }
 
   get a() {
-    return field(this, "a", Num);
+    return fieldLens(this, "a", Num);
   }
   get b() {
-    return field(this, "b", Num);
+    return fieldLens(this, "b", Num);
   }
   get c() {
-    return field(this, "c", Num);
+    return fieldLens(this, "c", Num);
   }
   get d() {
-    return field(this, "d", Num);
+    return fieldLens(this, "d", Num);
   }
   get e() {
-    return field(this, "e", Num);
+    return fieldLens(this, "e", Num);
   }
   get f() {
-    return field(this, "f", Num);
+    return fieldLens(this, "f", Num);
   }
 
   get determinant() {

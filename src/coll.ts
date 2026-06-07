@@ -26,7 +26,7 @@ import { batch, type Cell, cell, derive, type Read, type Writable } from "./core
 
 /** Accessor for an element's writable field cell. Forward reads `.value`;
  *  the backward pass writes it. */
-export type Field<E, V> = (e: E) => Writable<Cell<V>>;
+export type Accessor<E, V> = (e: E) => Writable<Cell<V>>;
 
 /** A forward test over an element's fields, optionally assertable —
  *  `assert(e)` makes the test pass by writing fields. */
@@ -44,11 +44,11 @@ export interface GroupOpts<E, K> {
   /** Fixed key order; seeds empty buckets and pins column order. */
   order?: readonly K[];
   /** Order field within each group; enables `move(e, key, index)`. */
-  sort?: Field<E, number>;
+  sort?: Accessor<E, number>;
 }
 
 /** `field === value`, assertable by writing the field. */
-export function is<E, V>(field: Field<E, V>, value: V): FieldPred<E> {
+export function is<E, V>(field: Accessor<E, V>, value: V): FieldPred<E> {
   const p = ((e: E) => field(e).value === value) as FieldPred<E>;
   p.assert = (e: E) => {
     field(e).value = value;
@@ -95,10 +95,10 @@ export class View<E> {
   filter(pred: FieldPred<E>): View<E> {
     return new FilterView(this, pred);
   }
-  sortBy(field: Field<E, number>): SortView<E> {
+  sortBy(field: Accessor<E, number>): SortView<E> {
     return new SortView(this, field);
   }
-  groupBy<K>(field: Field<E, K>, opts?: GroupOpts<E, K>): GroupView<K, E> {
+  groupBy<K>(field: Accessor<E, K>, opts?: GroupOpts<E, K>): GroupView<K, E> {
     return new GroupView(this, field, opts);
   }
   map<F>(f: (e: E) => F): Read<readonly F[]> {
@@ -154,8 +154,8 @@ class FilterView<E> extends View<E> {
 
 /** Sorted view. `move` writes the order field between the drop neighbours. */
 export class SortView<E> extends View<E> {
-  readonly #field: Field<E, number>;
-  constructor(parent: View<E>, field: Field<E, number>) {
+  readonly #field: Accessor<E, number>;
+  constructor(parent: View<E>, field: Accessor<E, number>) {
     super(
       derive(() => [...parent.items].sort((a, b) => field(a).value - field(b).value)),
       parent.key,
@@ -181,11 +181,11 @@ export class SortView<E> extends View<E> {
 export class GroupView<K, E> {
   readonly groups: Read<readonly Group<K, E>[]>;
   readonly #parent: View<E>;
-  readonly #field: Field<E, K>;
+  readonly #field: Accessor<E, K>;
   readonly #order: readonly K[];
-  readonly #sort?: Field<E, number>;
+  readonly #sort?: Accessor<E, number>;
 
-  constructor(parent: View<E>, field: Field<E, K>, opts: GroupOpts<E, K> = {}) {
+  constructor(parent: View<E>, field: Accessor<E, K>, opts: GroupOpts<E, K> = {}) {
     this.#parent = parent;
     this.#field = field;
     this.#order = opts.order ?? [];
@@ -248,7 +248,7 @@ function groupItems<K, E>(
   return [...buckets].map(([key, items]) => ({ key, items }));
 }
 
-function rankAt<E>(arr: readonly E[], field: Field<E, number>, i: number): number | undefined {
+function rankAt<E>(arr: readonly E[], field: Accessor<E, number>, i: number): number | undefined {
   return i >= 0 && i < arr.length ? field(arr[i]).value : undefined;
 }
 

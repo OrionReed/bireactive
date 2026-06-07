@@ -10,7 +10,7 @@ import { type Easing, type Tween, tween } from "../../animation";
 import {
   Cell,
   cachedDerive,
-  field,
+  fieldLens,
   type Init,
   isReadonly,
   reader,
@@ -86,11 +86,11 @@ export class Range extends Cell<V> {
 
   /** Start endpoint. Writes preserve `hi` (start-knob semantics). */
   get lo() {
-    return field(this, "lo", Num);
+    return fieldLens(this, "lo", Num);
   }
   /** End endpoint. Writes preserve `lo` (end-knob semantics). */
   get hi() {
-    return field(this, "hi", Num);
+    return fieldLens(this, "hi", Num);
   }
 
   get width() {
