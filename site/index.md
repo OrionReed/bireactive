@@ -166,6 +166,10 @@ Both build a tree from cells; a bridge runs the other way, reading a tree *out* 
 
 <md-containment-forest></md-containment-forest>
 
+Here is a fractal tree thing.
+
+<md-fractal-tree></md-fractal-tree>
+
 ## Text
 
 Everything so far rides numeric types with closed-form or numerical inverses. Unstructured domains (strings, arrays, sets) need a different mechanism, because the discarded detail can't be recovered from the result alone. Each cell carries a private complement[^lens] threaded through every write, and ordinary lens chains compose on top of it.
