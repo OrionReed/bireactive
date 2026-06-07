@@ -1,8 +1,8 @@
 # bi-reactive
 
-Reactive programming where edges can go both ways. Write to an input and
-everything derived from it updates; write the *derived* value and the input
-adjusts to match. Forward and backward propagation are handled by the engine, with the same set of caveats as regular reactive programming.
+[npm](https://www.npmjs.com/package/bireactive) · [GitHub](https://github.com/OrionReed/bireactive) · [site](https://orionreed.github.io/bireactive/)
+
+A signals-like bidirectional reactive programming system where edges can go both ways. Forward and backward propagation are handled by the engine, with the same set of caveats as regular reactive programming.
 
 ## Install
 
