@@ -298,6 +298,19 @@ p.add(mid(C, A, Mca));
 
 <md-prop-geom></md-prop-geom>
 
+But a propagator isn't *required* here. The dependency graph is a fan-in DAG rooted at the three vertices: `G` and each midpoint are pure functions of `A`, `B`, `C` — no cycle, no cell co-owned by two relations. That's exactly the lens-expressible subset, so the same construction drops the network entirely. Each derived point IS a value (`mean`), and its backward direction is the drag policy — centroid and midpoint collapse into the *same* primitive:
+
+```ts
+const G = mean([A, B, C]);
+const Mab = mean([A, B]);
+const Mbc = mean([B, C]);
+const Mca = mean([C, A]);
+```
+
+<md-lens-geom></md-lens-geom>
+
+Drag the two demos side by side: behaviourally identical. The split is one of role, not capability — the lens *defines* the value ("`G` is the centroid"), the propagator *solves* a relation ("these should satisfy `a+b=c`"). Lenses win whenever the relation is a one-directional derivation: total, ~8× cheaper per drag, never inconsistent. Propagators earn their network the moment you need a *cycle*, a cell *co-owned* by two relations, or a *peer* constraint where both endpoints stay independently draggable (`keepDistance`, `onLine`, the sudoku below) — none of which a single lens can own.
+
 Layout is one large propagator: `hstack(container, items, opts)` reads the container, gap, and widths and writes positions in a single pass:
 
 <md-prop-flex></md-prop-flex>
