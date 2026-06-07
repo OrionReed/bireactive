@@ -60,7 +60,11 @@ const watt   = joule.div(second);                        // power
 
 <md-units></md-units>
 
-The same one-canonical-cell pattern covers a change of basis. A waveform and its spectrum are one signal in two coordinate systems, and `samples = coeffs.lens(synthesize, analyze)` is a unitary bijection: drag a harmonic to resynthesise the wave, or pick a waveform to analyse it back into harmonics (the square wave's overshoot is Gibbs ringing from the truncated series):
+We can apply a similar idea as above to coordinate spaces. Here each space (euclidean, oblique, polar, log-polar, toroidal) is a `world.lens(fwd, bwd)`.
+
+<md-coordinate-spaces></md-coordinate-spaces>
+
+Or apply similar ideas to fourier/waveforms:
 
 <md-fourier></md-fourier>
 
