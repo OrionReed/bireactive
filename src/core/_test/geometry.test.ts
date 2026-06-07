@@ -3,45 +3,45 @@
 import { describe, expect, it } from "vitest";
 import { cell, num, vec } from "../index";
 import {
-  angleLens,
+  angle,
   bezier2,
   bezier3,
   clampedMean,
-  diffLens,
-  distanceLens,
+  diff,
+  distance,
   pulleySum,
-  reflectionLens,
+  reflection,
   vecLerp,
 } from "../lenses/geometry";
 
-describe("distanceLens", () => {
+describe("distance", () => {
   it("computes Euclidean distance", () => {
     const a = vec(0, 0);
     const b = vec(3, 4);
-    const d = distanceLens(a, b);
+    const d = distance(a, b);
     expect(d.value).toBe(5);
     a.value = { x: 1, y: 1 };
     expect(d.value).toBeCloseTo(Math.hypot(2, 3));
   });
 });
 
-describe("angleLens", () => {
+describe("angle", () => {
   it("computes atan2 between two points", () => {
     const a = vec(0, 0);
     const b = vec(1, 0);
-    const ang = angleLens(a, b);
+    const ang = angle(a, b);
     expect(ang.value).toBe(0);
     b.value = { x: 0, y: 1 };
     expect(ang.value).toBeCloseTo(Math.PI / 2);
   });
 });
 
-describe("reflectionLens", () => {
+describe("reflection", () => {
   it("reflects a point across a horizontal axis", () => {
     const p = vec(2, 5);
     const a = vec(0, 0);
     const b = vec(10, 0); // horizontal x-axis
-    const r = reflectionLens(p, a, b);
+    const r = reflection(p, a, b);
     expect(r.value).toEqual({ x: 2, y: -5 });
   });
 
@@ -49,7 +49,7 @@ describe("reflectionLens", () => {
     const p = vec(2, 5);
     const a = vec(0, 0);
     const b = vec(10, 0);
-    const r = reflectionLens(p, a, b);
+    const r = reflection(p, a, b);
     expect(r.value).toEqual({ x: 2, y: -5 });
     // Drag the reflected point: write back through the (involutive)
     // bwd. Original point updates; axis untouched.
@@ -99,11 +99,11 @@ describe("pulleySum", () => {
   });
 });
 
-describe("diffLens", () => {
+describe("diff", () => {
   it("a - b with anti-symmetric writeback", () => {
     const a = num(10);
     const b = num(3);
-    const d = diffLens(a, b);
+    const d = diff(a, b);
     expect(d.value).toBe(7);
     d.value = 11; // delta = +4, a += 2, b -= 2
     expect(a.value).toBe(12);

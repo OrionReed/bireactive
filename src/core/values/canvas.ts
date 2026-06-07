@@ -21,7 +21,7 @@
 // writes a result that becomes its value, so it uses `scratch2` (a feedback-
 // safe pair) to avoid reading and writing the same texture.
 
-import { cachedDerive, Cell, reader, type Val, type Writable } from "../cell";
+import { Cell, cachedDerive, reader, type Val, type Writable } from "../cell";
 import type { TraitDict } from "../traits";
 import { Bool } from "./bool";
 import { Color } from "./color";

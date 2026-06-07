@@ -1,44 +1,27 @@
-// Exact group-action lens probes (building blocks, Procrustes parity, best-fit
-// line/circle, PCA, total/partition, perf).
+// Exact group-action lens probes: building blocks, best-fit line/circle,
+// PCA, total/partition.
 
 import { describe, expect, it } from "vitest";
 import { approxWithin, lcg as rng } from "../../../_test/_util";
 import type { Num, Writable } from "../../index";
-import { centroidLens, num, type Pose, pose, type Vec, vec } from "../../index";
+import { num, type Pose, pose, type Vec, vec } from "../../index";
 import {
-  bestFitCircleLens,
-  bestFitLineLens,
-  pcaLens,
-  procrustesViaBuildingBlocks,
+  bestFitCircle,
+  bestFitLine,
+  pca,
   rigidTranslate,
   rotateAbout,
   scaleAbout,
   scaleAboutXY,
-  totalLens,
+  total,
 } from "../closed-form-policies";
-import { procrustesLens } from "../factor-lens";
-import { factor } from "../typed-factor";
 
 const { near, vnear } = approxWithin(1e-9);
 
 const mkPoints = (...pts: [number, number][]): Writable<Vec>[] => pts.map(([x, y]) => vec(x, y));
 
-function timed(label: string, iters: number, fn: () => void): number {
-  fn();
-  fn();
-  const t0 = performance.now();
-  fn();
-  const t1 = performance.now();
-  const ms = t1 - t0;
-  // eslint-disable-next-line no-console
-  console.info(
-    `  ${label.padEnd(60)}  ${ms.toFixed(2).padStart(7)}ms  (${((ms * 1000) / iters).toFixed(2)}µs/op)`,
-  );
-  return ms;
-}
-
 describe("§1 Building blocks", () => {
-  it("rigidTranslate = centroidLens (aliased)", () => {
+  it("rigidTranslate translates the whole cluster by the centroid delta", () => {
     const pts = mkPoints([0, 0], [10, 0], [5, 6]);
     const t = rigidTranslate(pts);
     expect(t.value).toEqual({ x: 5, y: 2 });
@@ -65,7 +48,7 @@ describe("§1 Building blocks", () => {
 
   it("rotateAbout with reactive pivot (centroid): cluster rotates about its centroid", () => {
     const pts = mkPoints([10, 0], [0, 10], [-10, 0], [0, -10]);
-    const c = centroidLens(pts as never);
+    const c = rigidTranslate(pts);
     const angle = rotateAbout(pts, c);
     const c0 = c.value;
     angle.value = Math.PI;
@@ -154,75 +137,10 @@ describe("§1 Building blocks", () => {
   });
 });
 
-describe("§2 Procrustes via building blocks: parity", () => {
-  it("single centroid write: parity with monolithic procrustesLens", () => {
-    const ptsA = mkPoints([5, 0], [3, 4], [-2, 1]);
-    const ptsB = mkPoints([5, 0], [3, 4], [-2, 1]);
-    const a = procrustesLens(ptsA);
-    const b = procrustesViaBuildingBlocks(ptsB);
-    a.centroid.value = { x: 100, y: 50 };
-    b.centroid.value = { x: 100, y: 50 };
-    for (let i = 0; i < 3; i++) {
-      expect(vnear(ptsA[i]!.value, ptsB[i]!.value, 1e-12)).toBe(true);
-    }
-  });
-
-  it("single rotation write: parity", () => {
-    const ptsA = mkPoints([5, 0], [3, 4], [-2, 1]);
-    const ptsB = mkPoints([5, 0], [3, 4], [-2, 1]);
-    const a = procrustesLens(ptsA);
-    const b = procrustesViaBuildingBlocks(ptsB);
-    a.rotation.value = 1.234;
-    b.rotation.value = 1.234;
-    for (let i = 0; i < 3; i++) {
-      expect(vnear(ptsA[i]!.value, ptsB[i]!.value, 1e-12)).toBe(true);
-    }
-  });
-
-  it("single scale write: parity", () => {
-    const ptsA = mkPoints([5, 0], [3, 4], [-2, 1]);
-    const ptsB = mkPoints([5, 0], [3, 4], [-2, 1]);
-    const a = procrustesLens(ptsA);
-    const b = procrustesViaBuildingBlocks(ptsB);
-    a.scale.value = 17;
-    b.scale.value = 17;
-    for (let i = 0; i < 3; i++) {
-      expect(vnear(ptsA[i]!.value, ptsB[i]!.value, 1e-12)).toBe(true);
-    }
-  });
-
-  it("1000 random interleaved writes: parity holds", () => {
-    const ptsA = mkPoints([5, 0], [3, 4], [-2, 1]);
-    const ptsB = mkPoints([5, 0], [3, 4], [-2, 1]);
-    const a = procrustesLens(ptsA);
-    const b = procrustesViaBuildingBlocks(ptsB);
-    const r = rng(42);
-    for (let i = 0; i < 1000; i++) {
-      const k = Math.floor(r() * 3);
-      if (k === 0) {
-        const tgt = { x: (r() - 0.5) * 100, y: (r() - 0.5) * 100 };
-        a.centroid.value = tgt;
-        b.centroid.value = tgt;
-      } else if (k === 1) {
-        const tgt = (r() - 0.5) * Math.PI * 2;
-        a.rotation.value = tgt;
-        b.rotation.value = tgt;
-      } else {
-        const tgt = 1 + r() * 30;
-        a.scale.value = tgt;
-        b.scale.value = tgt;
-      }
-    }
-    for (let i = 0; i < 3; i++) {
-      expect(vnear(ptsA[i]!.value, ptsB[i]!.value, 1e-9)).toBe(true);
-    }
-  });
-});
-
-describe("§3 bestFitLineLens", () => {
+describe("§2 bestFitLine", () => {
   it("forward: principal axis of a horizontal cloud is 0°", () => {
     const pts = mkPoints([-10, 0], [-5, 0], [0, 0], [5, 0], [10, 0]);
-    const { point, direction } = bestFitLineLens(pts);
+    const { point, direction } = bestFitLine(pts);
     expect(point.value).toEqual({ x: 0, y: 0 });
     expect(near(direction.value, 0)).toBe(true);
   });
@@ -230,13 +148,13 @@ describe("§3 bestFitLineLens", () => {
   it("forward: principal axis of a 45°-tilted cloud is π/4", () => {
     // Points along y = x: (-2,-2), (-1,-1), (0,0), (1,1), (2,2)
     const pts = mkPoints([-2, -2], [-1, -1], [0, 0], [1, 1], [2, 2]);
-    const { direction } = bestFitLineLens(pts);
+    const { direction } = bestFitLine(pts);
     expect(near(Math.abs(direction.value), Math.PI / 4, 1e-9)).toBe(true);
   });
 
   it("write point: translates cluster, principal axis preserved", () => {
     const pts = mkPoints([-10, 0], [-5, 0], [0, 0], [5, 0], [10, 0]);
-    const { point, direction } = bestFitLineLens(pts);
+    const { point, direction } = bestFitLine(pts);
     const dir0 = direction.value;
     point.value = { x: 100, y: 50 };
     expect(direction.value).toBeCloseTo(dir0, 9);
@@ -245,7 +163,7 @@ describe("§3 bestFitLineLens", () => {
 
   it("write direction: rotates cluster about centroid", () => {
     const pts = mkPoints([-10, 0], [-5, 0], [0, 0], [5, 0], [10, 0]);
-    const { point, direction } = bestFitLineLens(pts);
+    const { point, direction } = bestFitLine(pts);
     const c0 = point.value;
     direction.value = Math.PI / 2; // make line vertical
     expect(vnear(point.value, c0, 1e-9)).toBe(true); // centroid unchanged (machine-eps)
@@ -256,7 +174,7 @@ describe("§3 bestFitLineLens", () => {
   });
 });
 
-describe("§4 bestFitCircleLens", () => {
+describe("§3 bestFitCircle", () => {
   it("forward: circle of K points around origin reads exact center+radius", () => {
     const K = 8;
     const R = 5;
@@ -264,7 +182,7 @@ describe("§4 bestFitCircleLens", () => {
     for (let i = 0; i < K; i++) {
       pts.push(vec(R * Math.cos((2 * Math.PI * i) / K), R * Math.sin((2 * Math.PI * i) / K)));
     }
-    const { center, radius } = bestFitCircleLens(pts);
+    const { center, radius } = bestFitCircle(pts);
     expect(vnear(center.value, { x: 0, y: 0 }, 1e-9)).toBe(true);
     expect(near(radius.value, R, 1e-9)).toBe(true);
   });
@@ -276,7 +194,7 @@ describe("§4 bestFitCircleLens", () => {
     for (let i = 0; i < K; i++) {
       pts.push(vec(R * Math.cos((2 * Math.PI * i) / K), R * Math.sin((2 * Math.PI * i) / K)));
     }
-    const { center, radius } = bestFitCircleLens(pts);
+    const { center, radius } = bestFitCircle(pts);
     const r0 = radius.value;
     center.value = { x: 100, y: 50 };
     expect(radius.value).toBeCloseTo(r0, 9);
@@ -289,7 +207,7 @@ describe("§4 bestFitCircleLens", () => {
     for (let i = 0; i < K; i++) {
       pts.push(vec(R * Math.cos((2 * Math.PI * i) / K), R * Math.sin((2 * Math.PI * i) / K)));
     }
-    const { center, radius } = bestFitCircleLens(pts);
+    const { center, radius } = bestFitCircle(pts);
     const c0 = center.value;
     radius.value = 10;
     expect(vnear(center.value, c0, 1e-9)).toBe(true);
@@ -300,7 +218,7 @@ describe("§4 bestFitCircleLens", () => {
   });
 });
 
-describe("§5 pcaLens (affine similarity)", () => {
+describe("§4 pca (affine similarity)", () => {
   it("forward: aligned axis-aligned ellipse cloud reads (mean, 0, semi-major, semi-minor)", () => {
     // Generate points on an axis-aligned ellipse with a=5, b=2.
     const K = 12;
@@ -311,8 +229,8 @@ describe("§5 pcaLens (affine similarity)", () => {
       const θ = (2 * Math.PI * i) / K;
       pts.push(vec(a * Math.cos(θ), b * Math.sin(θ)));
     }
-    const { mean, rotation, majorLength, minorLength } = pcaLens(pts);
-    expect(vnear(mean.value, { x: 0, y: 0 }, 1e-9)).toBe(true);
+    const { mean: m, rotation, majorLength, minorLength } = pca(pts);
+    expect(vnear(m.value, { x: 0, y: 0 }, 1e-9)).toBe(true);
     expect(near(rotation.value, 0, 1e-9)).toBe(true);
     // Std-dev of ellipse along major axis ~ a/√2; along minor ~ b/√2
     expect(near(majorLength.value, a / Math.SQRT2, 1e-9)).toBe(true);
@@ -327,11 +245,11 @@ describe("§5 pcaLens (affine similarity)", () => {
       const θ = (2 * Math.PI * i) / 12;
       pts.push(vec(a * Math.cos(θ), b * Math.sin(θ)));
     }
-    const { mean, rotation, majorLength, minorLength } = pcaLens(pts);
+    const { mean: m, rotation, majorLength, minorLength } = pca(pts);
     const r0 = rotation.value;
     const ma0 = majorLength.value;
     const mi0 = minorLength.value;
-    mean.value = { x: 100, y: 50 };
+    m.value = { x: 100, y: 50 };
     expect(near(rotation.value, r0, 1e-9)).toBe(true);
     expect(near(majorLength.value, ma0, 1e-9)).toBe(true);
     expect(near(minorLength.value, mi0, 1e-9)).toBe(true);
@@ -345,12 +263,12 @@ describe("§5 pcaLens (affine similarity)", () => {
       const θ = (2 * Math.PI * i) / 12;
       pts.push(vec(a * Math.cos(θ), b * Math.sin(θ)));
     }
-    const { mean, rotation, majorLength, minorLength } = pcaLens(pts);
-    const c0 = mean.value;
+    const { mean: m, rotation, majorLength, minorLength } = pca(pts);
+    const c0 = m.value;
     const ma0 = majorLength.value;
     const mi0 = minorLength.value;
     rotation.value = Math.PI / 4;
-    expect(vnear(mean.value, c0, 1e-9)).toBe(true);
+    expect(vnear(m.value, c0, 1e-9)).toBe(true);
     expect(near(majorLength.value, ma0, 1e-9)).toBe(true);
     expect(near(minorLength.value, mi0, 1e-9)).toBe(true);
     expect(near(rotation.value, Math.PI / 4, 1e-9)).toBe(true);
@@ -364,20 +282,20 @@ describe("§5 pcaLens (affine similarity)", () => {
       const θ = (2 * Math.PI * i) / 12;
       pts.push(vec(a * Math.cos(θ), b * Math.sin(θ)));
     }
-    const { mean, rotation, majorLength, minorLength } = pcaLens(pts);
-    const c0 = mean.value;
+    const { mean: m, rotation, majorLength, minorLength } = pca(pts);
+    const c0 = m.value;
     const r0 = rotation.value;
     const mi0 = minorLength.value;
     const newMajor = majorLength.value * 2;
     majorLength.value = newMajor;
-    expect(vnear(mean.value, c0, 1e-9)).toBe(true);
+    expect(vnear(m.value, c0, 1e-9)).toBe(true);
     expect(near(rotation.value, r0, 1e-9)).toBe(true);
     expect(near(minorLength.value, mi0, 1e-9)).toBe(true);
     expect(near(majorLength.value, newMajor, 1e-9)).toBe(true);
   });
 
   it("write minorLength: scales along minor axis (while minor < major)", () => {
-    // FINDING: pcaLens has a degeneracy when minorLength approaches
+    // FINDING: pca has a degeneracy when minorLength approaches
     // majorLength — the principal axis ordering flips, causing the
     // "rotation" channel to jump by π/2. This isn't a bug per se;
     // it's intrinsic to PCA (the axes are defined as "the larger
@@ -389,20 +307,20 @@ describe("§5 pcaLens (affine similarity)", () => {
       const θ = (2 * Math.PI * i) / 12;
       pts.push(vec(a * Math.cos(θ), b * Math.sin(θ)));
     }
-    const { mean, rotation, majorLength, minorLength } = pcaLens(pts);
-    const c0 = mean.value;
+    const { mean: m, rotation, majorLength, minorLength } = pca(pts);
+    const c0 = m.value;
     const r0 = rotation.value;
     const ma0 = majorLength.value;
     // 1.5× minor → still < major (1.5 * 2/√2 ≈ 2.12 < 5/√2 ≈ 3.54)
     const newMinor = minorLength.value * 1.5;
     minorLength.value = newMinor;
-    expect(vnear(mean.value, c0, 1e-9)).toBe(true);
+    expect(vnear(m.value, c0, 1e-9)).toBe(true);
     expect(near(rotation.value, r0, 1e-9)).toBe(true);
     expect(near(majorLength.value, ma0, 1e-9)).toBe(true);
     expect(near(minorLength.value, newMinor, 1e-9)).toBe(true);
   });
 
-  it("pcaLens degeneracy: minor > major causes axis-swap (rotation flips by π/2)", () => {
+  it("pca degeneracy: minor > major causes axis-swap (rotation flips by π/2)", () => {
     // Explicit documentation of the degeneracy: when the user writes
     // minorLength to a value > majorLength, the PCA decomposition
     // reorders. Caller's responsibility to avoid this regime if they
@@ -412,7 +330,7 @@ describe("§5 pcaLens (affine similarity)", () => {
       const θ = (2 * Math.PI * i) / 12;
       pts.push(vec(5 * Math.cos(θ), 2 * Math.sin(θ)));
     }
-    const { rotation, majorLength, minorLength } = pcaLens(pts);
+    const { rotation, majorLength, minorLength } = pca(pts);
     const r0 = rotation.value; // 0
     const ma0 = majorLength.value;
     minorLength.value = ma0 * 1.5; // make minor > major
@@ -427,11 +345,11 @@ describe("§5 pcaLens (affine similarity)", () => {
       const θ = (2 * Math.PI * i) / 12;
       pts.push(vec(5 * Math.cos(θ), 2 * Math.sin(θ)));
     }
-    const { mean, rotation, majorLength, minorLength } = pcaLens(pts);
+    const { mean: m, rotation, majorLength, minorLength } = pca(pts);
     const r = rng(7);
     for (let i = 0; i < 500; i++) {
       const k = Math.floor(r() * 4);
-      if (k === 0) mean.value = { x: (r() - 0.5) * 100, y: (r() - 0.5) * 100 };
+      if (k === 0) m.value = { x: (r() - 0.5) * 100, y: (r() - 0.5) * 100 };
       else if (k === 1) rotation.value = (r() - 0.5) * Math.PI;
       else if (k === 2) majorLength.value = 0.5 + r() * 10;
       else minorLength.value = 0.1 + r() * 3;
@@ -442,21 +360,21 @@ describe("§5 pcaLens (affine similarity)", () => {
     }
     // Last writes should still land:
     const tgt = { x: 42, y: -17 };
-    mean.value = tgt;
-    expect(vnear(mean.value, tgt, 1e-9)).toBe(true);
+    m.value = tgt;
+    expect(vnear(m.value, tgt, 1e-9)).toBe(true);
   });
 });
 
-describe("§6 totalLens (conservation)", () => {
+describe("§5 total (conservation)", () => {
   it("forward: total = sum of parts", () => {
     const parts = [num(1), num(2), num(3), num(4)] as Writable<Num>[];
-    const t = totalLens(parts);
+    const t = total(parts);
     expect(t.value).toBe(10);
   });
 
   it("write total: scales parts proportionally, ratios preserved", () => {
     const parts = [num(1), num(2), num(3), num(4)] as Writable<Num>[];
-    const t = totalLens(parts);
+    const t = total(parts);
     const ratios0 = parts.map(p => p.value / 10);
     t.value = 100;
     const ratios1 = parts.map(p => p.value / 100);
@@ -466,138 +384,8 @@ describe("§6 totalLens (conservation)", () => {
 
   it("collapsed parts (all 0): even distribution as fallback", () => {
     const parts = [num(0), num(0), num(0)] as Writable<Num>[];
-    const t = totalLens(parts);
+    const t = total(parts);
     t.value = 9;
     expect(parts.map(p => p.value)).toEqual([3, 3, 3]);
-  });
-});
-
-describe("§7 Performance: closed-form policies vs alternatives", () => {
-  const ITERS = 2000;
-
-  it("Procrustes write throughput (K=3): monolith vs decomposed vs factor", () => {
-    const ptsM = mkPoints([5, 0], [3, 4], [-2, 1]);
-    const ptsD = mkPoints([5, 0], [3, 4], [-2, 1]);
-    const m = procrustesLens(ptsM);
-    const d = procrustesViaBuildingBlocks(ptsD);
-    // eslint-disable-next-line no-console
-    console.info("  Procrustes (K=3) per-channel write throughput:");
-    timed("monolith: centroid", ITERS, () => {
-      for (let i = 0; i < ITERS; i++) m.centroid.value = { x: i & 31, y: i & 31 };
-    });
-    timed("decomposed: centroid", ITERS, () => {
-      for (let i = 0; i < ITERS; i++) d.centroid.value = { x: i & 31, y: i & 31 };
-    });
-    timed("monolith: rotation", ITERS, () => {
-      for (let i = 0; i < ITERS; i++) m.rotation.value = (i & 31) * 0.1;
-    });
-    timed("decomposed: rotation", ITERS, () => {
-      for (let i = 0; i < ITERS; i++) d.rotation.value = (i & 31) * 0.1;
-    });
-    timed("monolith: scale", ITERS, () => {
-      for (let i = 0; i < ITERS; i++) m.scale.value = 1 + (i & 31);
-    });
-    timed("decomposed: scale", ITERS, () => {
-      for (let i = 0; i < ITERS; i++) d.scale.value = 1 + (i & 31);
-    });
-  });
-
-  it("bestFitLineLens + bestFitCircleLens write throughput (K=10)", () => {
-    const K = 10;
-    const ptsLine: Writable<Vec>[] = [];
-    const ptsCircle: Writable<Vec>[] = [];
-    for (let i = 0; i < K; i++) {
-      ptsLine.push(vec(i, i * 0.1));
-      const θ = (2 * Math.PI * i) / K;
-      ptsCircle.push(vec(5 * Math.cos(θ), 5 * Math.sin(θ)));
-    }
-    const line = bestFitLineLens(ptsLine);
-    const circle = bestFitCircleLens(ptsCircle);
-    // eslint-disable-next-line no-console
-    console.info("  Best-fit-line / circle (K=10) write throughput:");
-    timed("bestFitLineLens: point", ITERS, () => {
-      for (let i = 0; i < ITERS; i++) line.point.value = { x: i & 31, y: i & 31 };
-    });
-    timed("bestFitLineLens: direction", ITERS, () => {
-      for (let i = 0; i < ITERS; i++) line.direction.value = (i & 31) * 0.05;
-    });
-    timed("bestFitCircleLens: center", ITERS, () => {
-      for (let i = 0; i < ITERS; i++) circle.center.value = { x: i & 31, y: i & 31 };
-    });
-    timed("bestFitCircleLens: radius", ITERS, () => {
-      for (let i = 0; i < ITERS; i++) circle.radius.value = 1 + (i & 31);
-    });
-  });
-
-  it("PCA write throughput (K=12)", () => {
-    const pts: Writable<Vec>[] = [];
-    for (let i = 0; i < 12; i++) {
-      const θ = (2 * Math.PI * i) / 12;
-      pts.push(vec(5 * Math.cos(θ), 2 * Math.sin(θ)));
-    }
-    const { mean, rotation, majorLength, minorLength } = pcaLens(pts);
-    // eslint-disable-next-line no-console
-    console.info("  pcaLens (K=12) per-channel write throughput:");
-    timed("pca: mean", ITERS, () => {
-      for (let i = 0; i < ITERS; i++) mean.value = { x: i & 31, y: i & 31 };
-    });
-    timed("pca: rotation", ITERS, () => {
-      for (let i = 0; i < ITERS; i++) rotation.value = (i & 31) * 0.05;
-    });
-    timed("pca: majorLength", ITERS, () => {
-      for (let i = 0; i < ITERS; i++) majorLength.value = 1 + (i & 31);
-    });
-    timed("pca: minorLength", ITERS, () => {
-      for (let i = 0; i < ITERS; i++) minorLength.value = 1 + (i & 31);
-    });
-  });
-
-  it("totalLens vs factor-based equivalent (N=10)", () => {
-    const N = 10;
-    const partsA = Array.from({ length: N }, (_, i) => num(i + 1)) as Writable<Num>[];
-    const partsB = Array.from({ length: N }, (_, i) => num(i + 1)) as Writable<Num>[];
-    const tA = totalLens(partsA);
-    const ones = new Array<number>(N).fill(1);
-    const { total: tB } = factor(
-      partsB,
-      {
-        total: {
-          Cls: partsA[0]!.constructor as unknown as new (...args: never[]) => Num,
-          fwd: (xs: readonly number[]) => xs.reduce((s, x) => s + x, 0),
-          jacobian: () => [ones],
-        },
-      },
-      { damping: 0 },
-    );
-    // CAREFUL: totalLens scales proportionally; factor with min-norm
-    // gives DIFFERENT semantics (each input shifts by Δ/N additively).
-    // Test that they DIFFER (verify the framing).
-    // eslint-disable-next-line no-console
-    console.info("  totalLens (proportional) vs factor sum (LSQ min-norm) at N=10:");
-    timed("totalLens (closed-form)", ITERS, () => {
-      for (let i = 0; i < ITERS; i++) tA.value = 100 + (i & 31);
-    });
-    timed("factor sum (analytical J)", ITERS, () => {
-      for (let i = 0; i < ITERS; i++) tB.value = 100 + (i & 31);
-    });
-    // Reset to known state and check semantic difference:
-    for (let i = 0; i < N; i++) {
-      partsA[i]!.value = i + 1;
-      partsB[i]!.value = i + 1;
-    }
-    const total0 = tA.value; // = 55
-    tA.value = 110;
-    tB.value = 110;
-    // totalLens scales: each part doubled → 2, 4, 6, ...
-    expect(partsA[0]!.value).toBeCloseTo(2, 9);
-    expect(partsA[9]!.value).toBeCloseTo(20, 9);
-    // factor LSQ: each part shifts by (110-55)/10 = 5.5 → 6.5, 7.5, ...
-    expect(partsB[0]!.value).toBeCloseTo(1 + 5.5, 9);
-    expect(partsB[9]!.value).toBeCloseTo(10 + 5.5, 9);
-    // eslint-disable-next-line no-console
-    console.info(
-      `  After total=110: totalLens parts[0]=${partsA[0]!.value.toFixed(2)}, factor parts[0]=${partsB[0]!.value.toFixed(2)} (different semantics!)`,
-    );
-    void total0;
   });
 });

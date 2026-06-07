@@ -1,4 +1,4 @@
-// Same `paletteLens(inputs) → {mean, spread}` across Vec, Color, and Pose domains, wired into one master.
+// Same `meanSpread(inputs) → {mean, spread}` across Vec, Color, and Pose domains, wired into one master.
 
 import {
   type Cell,
@@ -8,9 +8,9 @@ import {
   label,
   line,
   type Mount,
-  meanOf,
+  mean,
+  meanSpread,
   Num,
-  paletteLens,
   pose,
   rect,
   rgba,
@@ -36,7 +36,7 @@ export class MdTraitsCrossDomain extends Diagram {
       vec(VX + 3 * VSP, 80),
       vec(VX + 4 * VSP, 68),
     ];
-    const { mean: vecMean, spread: vecSpread } = paletteLens(vecs as never) as unknown as {
+    const { mean: vecMean, spread: vecSpread } = meanSpread(vecs as never) as unknown as {
       mean: Writable<Vec>;
       spread: Writable<Num>;
     };
@@ -49,7 +49,7 @@ export class MdTraitsCrossDomain extends Diagram {
       rgba(0.9, 0.7, 0.2, 1),
       rgba(0.5, 0.2, 0.8, 1),
     ];
-    const { mean: colorMean, spread: colorSpread } = paletteLens(colors as never) as unknown as {
+    const { mean: colorMean, spread: colorSpread } = meanSpread(colors as never) as unknown as {
       mean: Writable<Color>;
       spread: Writable<Num>;
     };
@@ -63,7 +63,7 @@ export class MdTraitsCrossDomain extends Diagram {
       pose({ x: VX + 3 * VSP, y: PY - 10, theta: 0.25 }),
       pose({ x: VX + 4 * VSP, y: PY, theta: 0.5 }),
     ];
-    const { mean: poseMean, spread: poseSpread } = paletteLens(poses as never) as unknown as {
+    const { mean: poseMean, spread: poseSpread } = meanSpread(poses as never) as unknown as {
       mean: Writable<Cell<PoseV>>;
       spread: Writable<Num>;
     };
@@ -88,7 +88,7 @@ export class MdTraitsCrossDomain extends Diagram {
       ([sv]) => sv / p0,
       t => [t * p0] as never,
     );
-    const master = meanOf([vecRel, colorRel, poseRel] as never);
+    const master = mean([vecRel, colorRel, poseRel] as never);
 
     // Slider layout
     const SX = 440;
@@ -187,14 +187,14 @@ export class MdTraitsCrossDomain extends Diagram {
       label(vec(SX, 72), "vec spread", { size: 11, opacity: 0.7 }),
       label(vec(SX, 192), "color spread", { size: 11, opacity: 0.7 }),
       label(vec(SX, 342), "pose spread", { size: 11, opacity: 0.7 }),
-      label(vec(SX, 432), "MASTER = meanOf(spreads)", { size: 11, opacity: 0.9 }),
+      label(vec(SX, 432), "MASTER = mean(spreads)", { size: 11, opacity: 0.9 }),
       label(
         view.top.down(18),
         "drag any spread slider — the master tracks the mean; drag master, all three follow",
       ),
       label(
         view.bottom.up(14),
-        "paletteLens · trait-dispatched Linear + Metric · works the same on Vec, Color, Pose",
+        "meanSpread · trait-dispatched Linear + Metric · works the same on Vec, Color, Pose",
         { size: 10 },
       ),
     );

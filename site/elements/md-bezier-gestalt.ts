@@ -1,9 +1,9 @@
 // Gestalt handles vs raw control points on a cubic Bezier:
-// `bezierGestaltLens` projects the four controls into start/end/tangent
+// `bezierGestalt` projects the four controls into start/end/tangent
 // handles that preserve curve-shape invariants.
 
 import {
-  bezierGestaltLens,
+  bezierGestalt,
   Diagram,
   derive,
   handle,
@@ -26,7 +26,7 @@ export class MdBezierGestalt extends Diagram {
     const p2 = vec(cx + 100, cy + 150);
     const p3 = vec(cx + 220, cy - 30);
 
-    const { start, end, startTangent, endTangent } = bezierGestaltLens(p0, p1, p2, p3);
+    const { start, end, startTangent, endTangent } = bezierGestalt(p0, p1, p2, p3);
 
     const startTanHandle = Vec.lens(
       [start, startTangent] as const,
@@ -66,7 +66,7 @@ export class MdBezierGestalt extends Diagram {
       ),
       label(
         view.bottom.up(16),
-        "grey dots are raw control points · orange/green are the bezierGestaltLens",
+        "grey dots are raw control points · orange/green are the bezierGestalt",
         { size: 10 },
       ),
     );

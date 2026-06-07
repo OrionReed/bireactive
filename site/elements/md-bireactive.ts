@@ -15,7 +15,7 @@ import {
   label,
   line,
   type Mount,
-  midpointLens,
+  mean,
   Num,
   num,
   path,
@@ -202,7 +202,7 @@ export class MdBireactive extends Diagram {
 
     const A = vec(90, 150);
     const B = vec(290, 150);
-    const M = midpointLens(A, B);
+    const M = mean([A, B]);
     // `Num.pin` absorbs y-writes so the knob drag is axis-locked; x clamps to
     // the track range and `height = knob.x − SLIDER_OFFSET` feeds `M.down`.
     const hKnob = vec(num(SLIDER_OFFSET + H_INIT).clamp(TRACK_LO, TRACK_HI), Num.pin(SLIDER_Y));

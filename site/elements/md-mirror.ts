@@ -4,7 +4,7 @@ import {
   label,
   line,
   type Mount,
-  reflectionLens,
+  reflection,
   type Vec,
   vec,
   type Writable,
@@ -19,7 +19,7 @@ export class MdMirror extends Diagram {
 
     // Reflection is an involution: writes apply the same formula; only `src`
     // updates (the axis stays put).
-    const mirrorOf = (src: Writable<Vec>): Writable<Vec> => reflectionLens(src, mA, mB);
+    const mirrorOf = (src: Writable<Vec>): Writable<Vec> => reflection(src, mA, mB);
 
     const stemTop = vec(200, 90);
     const stemBot = vec(200, 270);
@@ -68,7 +68,7 @@ export class MdMirror extends Diagram {
       label(view.top.down(20), "drag any handle — original, reflected, or the mirror itself"),
       label(
         view.bottom.up(16),
-        "reflectionLens(p, mA, mB)  ·  one involutive formula, both directions",
+        "reflection(p, mA, mB)  ·  one involutive formula, both directions",
         { size: 10 },
       ),
     );

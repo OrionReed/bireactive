@@ -1,106 +1,14 @@
-// aggregates.ts — N→1 aggregate lens primitives over `Cls.lens` /
-// `Cls.derive`.
+// aggregates.ts — numerical N→1 / N→M argmin lens primitives over
+// `Cls.lens`. For the closed-form equal-weight `mean` and `spread`
+// aggregates see `domain-aggregates.ts`.
 //
 // All route through the engine's N-input lens path. Stateless-bwd
 // (`(target) => updates`) skips the peek loop on the hot path;
 // stateful-bwd (`(target, vals) => updates`) reads the scratch.
 
-import type { Cell, Writable } from "../cell";
-import type { Linear } from "../traits";
+import type { Writable } from "../cell";
 import { Num } from "../values/num";
 import { Vec } from "../values/vec";
-
-type V = { x: number; y: number };
-
-/** Equal-weight mean of N Linear values; writes distribute the delta evenly. */
-// biome-ignore lint/suspicious/noExplicitAny: variance escape, mirrors Cls.lens
-export function meanLens<T, C extends new (...args: never[]) => Cell<any>>(
-  Cls: C,
-  parents: readonly Cell<T>[],
-): Writable<InstanceType<C>> {
-  const lin = ((Cls as unknown as { traits?: { linear?: Linear<T> } }).traits?.linear ??
-    (() => {
-      throw new Error("meanLens: value class has no 'linear' trait");
-    })()) as Linear<T>;
-  const n = parents.length;
-  const inv = 1 / n;
-
-  // biome-ignore lint/suspicious/noExplicitAny: variance escape on Cls.lens
-  return (Cls as any).lens(
-    parents as never,
-    // biome-ignore lint/suspicious/noExplicitAny: tuple-vs-array variance
-    (vals: any) => {
-      let acc = vals[0] as T;
-      for (let i = 1; i < n; i++) acc = lin.add(acc, vals[i]);
-      return lin.scale(acc, inv);
-    },
-    // biome-ignore lint/suspicious/noExplicitAny: tuple-vs-array variance
-    (target: any, vals: any) => {
-      let cur = vals[0] as T;
-      for (let i = 1; i < n; i++) cur = lin.add(cur, vals[i]);
-      cur = lin.scale(cur, inv);
-      const delta = lin.sub(target as T, cur);
-      const out = new Array<T>(n);
-      for (let i = 0; i < n; i++) out[i] = lin.add(vals[i], delta);
-      return out as never;
-    },
-  );
-}
-
-/** Midpoint of two writable Vecs. Drag-translates both endpoints. */
-export function midpointLens(a: Cell<V>, b: Cell<V>): Writable<Vec> {
-  return Vec.lens(
-    [a, b] as const,
-    vals => {
-      const [av, bv] = vals;
-      return { x: (av.x + bv.x) / 2, y: (av.y + bv.y) / 2 };
-    },
-    (target, vals) => {
-      const [av, bv] = vals;
-      const dx = target.x - (av.x + bv.x) / 2;
-      const dy = target.y - (av.y + bv.y) / 2;
-      return [
-        { x: av.x + dx, y: av.y + dy },
-        { x: bv.x + dx, y: bv.y + dy },
-      ];
-    },
-  );
-}
-
-/** Centroid of N writable Vecs. Drag-translates all members. */
-export function centroidLens(parents: readonly Cell<V>[]): Writable<Vec> {
-  const n = parents.length;
-  const inv = 1 / n;
-  return Vec.lens(
-    parents as never,
-    vals => {
-      const arr = vals as readonly V[];
-      let sx = 0,
-        sy = 0;
-      for (let i = 0; i < n; i++) {
-        sx += arr[i]!.x;
-        sy += arr[i]!.y;
-      }
-      return { x: sx * inv, y: sy * inv };
-    },
-    (target, vals) => {
-      const arr = vals as readonly V[];
-      let sx = 0,
-        sy = 0;
-      for (let i = 0; i < n; i++) {
-        sx += arr[i]!.x;
-        sy += arr[i]!.y;
-      }
-      const dx = target.x - sx * inv;
-      const dy = target.y - sy * inv;
-      const out = new Array(n) as V[];
-      for (let i = 0; i < n; i++) {
-        out[i] = { x: arr[i]!.x + dx, y: arr[i]!.y + dy };
-      }
-      return out as never;
-    },
-  );
-}
 
 // Argmin via the lens primitive (numerical pseudoinverse).
 //

@@ -6,14 +6,14 @@
 // line/circle, and PCA decompose into combinations of them.
 //
 // Layout: building-block actions (rigidTranslate, rotateAbout,
-// scaleAbout, scaleAboutXY), Procrustes re-expressed via them, then
-// closed-form decompositions (bestFitLine, bestFitCircle, pcaLens,
-// totalLens). All exact, idempotent, cross-channel invariant by
-// construction, on the same `Cls.lens` machinery — no engine changes.
+// scaleAbout, scaleAboutXY), then closed-form decompositions
+// (bestFitLine, bestFitCircle, pca, total). All exact, idempotent,
+// cross-channel invariant by construction, on the same `Cls.lens`
+// machinery — no engine changes.
 
 import {
   type Cell,
-  centroidLens,
+  mean,
   Num,
   type Pivotal,
   type Read,
@@ -39,9 +39,9 @@ function pivotalOf<T>(input: Writable<any>): Pivotal<T> {
 }
 
 /** Writable centroid; on write, translates every point by the delta.
- *  Alias of `centroidLens` under the "policy" naming. */
+ *  The Vec-specific group-action reading of `mean`. */
 export function rigidTranslate(points: readonly Writable<Vec>[]): Writable<Vec> {
-  return centroidLens(points as never);
+  return mean(points as never) as Writable<Vec>;
 }
 
 /** Writable angle from `pivot` to `points[0]`; write rotates every input
@@ -50,7 +50,7 @@ export function rigidTranslate(points: readonly Writable<Vec>[]): Writable<Vec> 
  *  Trait-generic: Vec rotates position; Pose rotates position AND
  *  orientation. Rotation-about-pivot fixes the pivot and preserves radial
  *  distances, so scale-about-pivot reads unchanged. `pivot` is reactive
- *  (re-read per write); pass `centroidLens(points)` for rotation about
+ *  (re-read per write); pass `rigidTranslate(points)` for rotation about
  *  the cluster's own centroid. */
 export function rotateAbout<T extends { x: number; y: number }>(
   points: readonly Writable<Traits<T, "pivotal"> & Cell<T>>[],
@@ -188,20 +188,6 @@ export function scaleAboutXY(points: readonly Writable<Vec>[], pivot: Read<V>): 
   });
 }
 
-/** Same semantics as `factor-lens.ts`'s `procrustesLens`, decomposed
- *  into three building-block lenses sharing a centroid. */
-export function procrustesViaBuildingBlocks(points: readonly Writable<Vec>[]): {
-  centroid: Writable<Vec>;
-  rotation: Writable<Num>;
-  scale: Writable<Num>;
-} {
-  if (points.length < 2) throw new Error("procrustes: need ≥ 2 points");
-  const centroid = rigidTranslate(points);
-  const rotation = rotateAbout(points, centroid);
-  const scale = scaleAbout(points, centroid);
-  return { centroid, rotation, scale };
-}
-
 // Best-fit line.
 //
 // K points → {point: centroid, direction: principal-axis angle}.
@@ -234,7 +220,7 @@ function covariance(
   return { cxx: cxx / K, cxy: cxy / K, cyy: cyy / K };
 }
 
-export function bestFitLineLens(points: readonly Writable<Vec>[]): {
+export function bestFitLine(points: readonly Writable<Vec>[]): {
   point: Writable<Vec>;
   direction: Writable<Num>;
 } {
@@ -297,7 +283,7 @@ export function bestFitLineLens(points: readonly Writable<Vec>[]): {
 // Simplest closed-form fit (mean center). Invariance: translation
 // preserves radii; uniform scale-about-center preserves the center.
 
-export function bestFitCircleLens(points: readonly Writable<Vec>[]): {
+export function bestFitCircle(points: readonly Writable<Vec>[]): {
   center: Writable<Vec>;
   radius: Writable<Num>;
 } {
@@ -342,14 +328,14 @@ export function bestFitCircleLens(points: readonly Writable<Vec>[]): {
 // Each write is a single group action; cross-channel invariance holds
 // for all pairs.
 
-export function pcaLens(points: readonly Writable<Vec>[]): {
+export function pca(points: readonly Writable<Vec>[]): {
   mean: Writable<Vec>;
   rotation: Writable<Num>;
   majorLength: Writable<Num>;
   minorLength: Writable<Num>;
 } {
   const K = points.length;
-  if (K < 2) throw new Error("pcaLens: need ≥ 2 points");
+  if (K < 2) throw new Error("pca: need ≥ 2 points");
 
   const mean = rigidTranslate(points);
 
@@ -536,9 +522,9 @@ export function pcaLens(points: readonly Writable<Vec>[]): {
  *  preserving their ratios. A `remember` anchored at zero with a signed
  *  sum feature: a collapse to zero reinflates the stored ratios, seeded
  *  uniform so an all-zero start splits evenly. */
-export function totalLens(parts: readonly Writable<Num>[]): Writable<Num> {
+export function total(parts: readonly Writable<Num>[]): Writable<Num> {
   const K = parts.length;
-  if (K < 1) throw new Error("totalLens: need ≥ 1 part");
+  if (K < 1) throw new Error("total: need ≥ 1 part");
   return remember(parts, {
     anchor: () => 0,
     feature: (vals: readonly number[]) => {

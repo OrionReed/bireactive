@@ -1,10 +1,10 @@
-// Best-fit line and circle over one point cloud: `bestFitLineLens` and
-// `bestFitCircleLens` share the centroid, with centroid/rotation/radius
+// Best-fit line and circle over one point cloud: `bestFitLine` and
+// `bestFitCircle` share the centroid, with centroid/rotation/radius
 // handles that translate, rotate, and scale the cluster.
 
 import {
-  bestFitCircleLens,
-  bestFitLineLens,
+  bestFitCircle,
+  bestFitLine,
   Diagram,
   ellipse,
   handle,
@@ -31,8 +31,8 @@ export class MdBestFit extends Diagram {
       vec(cx + 30, cy - 10),
     ];
 
-    const { point, direction } = bestFitLineLens(pts);
-    const { center, radius } = bestFitCircleLens(pts);
+    const { point, direction } = bestFitLine(pts);
+    const { center, radius } = bestFitCircle(pts);
 
     const LEN = 250;
     const lineA = Vec.derive([point, direction] as const, ([p, θ]) => ({
@@ -79,7 +79,7 @@ export class MdBestFit extends Diagram {
       ),
       label(
         view.bottom.up(16),
-        "bestFitLineLens + bestFitCircleLens · two decompositions, same centroid, exact",
+        "bestFitLine + bestFitCircle · two decompositions, same centroid, exact",
         { size: 10 },
       ),
     );

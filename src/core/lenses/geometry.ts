@@ -7,16 +7,15 @@ import { Vec } from "../values/vec";
 
 type V = { x: number; y: number };
 
-/** Distance between two Vecs. RO — the inverse isn't unique. For a
- *  writable variant see `radialLens`. */
-export function distanceLens(a: Cell<V>, b: Cell<V>): Num {
+/** Distance between two Vecs. RO — the inverse isn't unique. */
+export function distance(a: Cell<V>, b: Cell<V>): Num {
   return Num.derive([a, b] as const, vals =>
     Math.hypot(vals[0].x - vals[1].x, vals[0].y - vals[1].y),
   );
 }
 
 /** Angle from `a` to `b`, in radians. RO. */
-export function angleLens(a: Cell<V>, b: Cell<V>): Num {
+export function angle(a: Cell<V>, b: Cell<V>): Num {
   return Num.derive([a, b] as const, vals =>
     Math.atan2(vals[1].y - vals[0].y, vals[1].x - vals[0].x),
   );
@@ -25,11 +24,7 @@ export function angleLens(a: Cell<V>, b: Cell<V>): Num {
 /** Reflect `point` across the line through `axisStart`/`axisEnd`. Writes
  *  the reflected position back to `point` (axis unchanged); reflection is
  *  involutive, so the same formula reads and writes. */
-export function reflectionLens(
-  point: Cell<V>,
-  axisStart: Cell<V>,
-  axisEnd: Cell<V>,
-): Writable<Vec> {
+export function reflection(point: Cell<V>, axisStart: Cell<V>, axisEnd: Cell<V>): Writable<Vec> {
   const reflect = (p: V, a: V, b: V): V => {
     const dx = b.x - a.x;
     const dy = b.y - a.y;
@@ -82,7 +77,7 @@ export function pulleySum(a: Num, b: Num): Writable<Num> {
 
 /** Difference of two nums: `a - b`. Writing the difference shifts
  *  both inputs symmetrically by ±half-delta. */
-export function diffLens(a: Num, b: Num): Writable<Num> {
+export function diff(a: Num, b: Num): Writable<Num> {
   return Num.lens(
     [a, b] as const,
     vals => vals[0] - vals[1],

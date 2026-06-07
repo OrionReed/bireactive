@@ -3,8 +3,7 @@
 import {
   type Cell,
   cell,
-  centroidLens,
-  midpointLens,
+  mean,
   polar as polarLens,
   type Val,
   Vec,
@@ -66,12 +65,12 @@ const anchor = (
  *  all shapes rigidly. Reads the centroid of visible positions (cf. `centroid`
  *  in `shape.ts`, which works on translate deltas). */
 const centroidHandle = (...shapes: (AnyShape & Has<"translate">)[]): Handle =>
-  handleFn(centroidLens(shapes.map(s => s.center)));
+  handleFn(mean(shapes.map(s => s.center)));
 
 /** Drag handle at the midpoint of two writable Points — drags both
  *  along with it. */
 const midpoint = (a: Writable<Vec>, b: Writable<Vec>, opts?: HandleOpts): Handle =>
-  handleFn(midpointLens(a, b), opts);
+  handleFn(mean([a, b]), opts);
 
 /** Rotation knob orbiting the shape's center at `radius`; drag to write
  *  `shape.rotate`. */

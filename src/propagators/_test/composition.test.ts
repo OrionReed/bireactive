@@ -3,7 +3,7 @@
 // without modification.
 
 import { describe, expect, it } from "vitest";
-import { centroidLens, effect, Num, num, Vec, vec } from "../../core";
+import { effect, mean, Num, num, Vec, vec } from "../../core";
 import { add, eq, propagator, propagators } from "..";
 
 describe("composition: non-coloring", () => {
@@ -280,7 +280,7 @@ describe("composition: lens × propagator routing", () => {
 
   it("propagator write through an N-parent centroid lens redistributes", () => {
     const verts = [vec(0, 0), vec(10, 0), vec(5, 10)];
-    const cent = centroidLens(verts);
+    const cent = mean(verts);
     const target = vec(100, 100);
 
     const p = propagators();
@@ -299,7 +299,7 @@ describe("composition: lens × propagator routing", () => {
 
   it("two propagators writing one lens: the later-listed one wins per fire", () => {
     const verts = [vec(0, 0), vec(0, 0), vec(0, 0)];
-    const cent = centroidLens(verts);
+    const cent = mean(verts);
     const target1 = vec(10, 0);
     const target2 = vec(0, 20);
 

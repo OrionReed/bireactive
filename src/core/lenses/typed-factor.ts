@@ -1,10 +1,10 @@
-// typed-factor.ts — heterogeneous-output factor lens.
+// typed-factor.ts — generic heterogeneous-output factor lens.
 //
-// Generalises `factorLens` (scalar-only) to typed inputs/outputs via the
-// `Pack` trait. Inputs and outputs are flat-packed; the Jacobian is the
-// full M×N matrix; writing one channel sends a sparse δy through the LSQ
+// The numerical N→M escape hatch: typed inputs/outputs via the `Pack`
+// trait. Inputs and outputs are flat-packed; the Jacobian is the full
+// M×N matrix; writing one channel sends a sparse δy through the LSQ
 // pseudoinverse. Invariance is approximate (the Jacobian path) — use
-// closed-form lenses like `procrustesLens` for exactness.
+// closed-form lenses like `procrustes` when an exact one exists.
 //
 //   const { centroid, rotation, scale } = factor([v1, v2, v3] as const, {
 //     centroid: { Cls: Vec, fwd: pts => … },
@@ -15,16 +15,7 @@
 //
 // `bundle()` is the 1→M case: `factor()` over a single typed source.
 
-import {
-  type Cell,
-  type Inner,
-  Num,
-  type Pack,
-  type Read,
-  type Traits,
-  Vec,
-  type Writable,
-} from "../index";
+import type { Cell, Inner, Pack, Read, Traits, Writable } from "../index";
 import { solveSPD } from "../linalg";
 
 /** Input cell: writable cell whose value class declares the `pack`
@@ -376,61 +367,3 @@ export function bundle<
 
 // For field-style bundles, `field()` already covers the independent case;
 // use `bundle()` when you want coupled writes through the Jacobian solve.
-
-// Sugar: closed-form Procrustes via factor() typed API.
-//
-// Procrustes with typed outputs (centroid is a real Vec) but a
-// Jacobian-LSQ bwd — a showcase for the typed ergonomics. The
-// closed-form `procrustesLens` is faster and exact.
-
-export function procrustesTyped(points: readonly PackedInput<Inner<Vec>>[]): {
-  centroid: Writable<Vec>;
-  rotation: Writable<Num>;
-  scale: Writable<Num>;
-} {
-  const K = points.length;
-  return factor(
-    points,
-    {
-      centroid: {
-        Cls: Vec,
-        fwd: (pts: readonly Inner<Vec>[]) => {
-          let sx = 0;
-          let sy = 0;
-          for (let i = 0; i < K; i++) {
-            sx += pts[i]!.x;
-            sy += pts[i]!.y;
-          }
-          return { x: sx / K, y: sy / K };
-        },
-      },
-      rotation: {
-        Cls: Num,
-        fwd: (pts: readonly Inner<Vec>[]) => {
-          let sx = 0;
-          let sy = 0;
-          for (let i = 0; i < K; i++) {
-            sx += pts[i]!.x;
-            sy += pts[i]!.y;
-          }
-          return Math.atan2(pts[0]!.y - sy / K, pts[0]!.x - sx / K);
-        },
-      },
-      scale: {
-        Cls: Num,
-        fwd: (pts: readonly Inner<Vec>[]) => {
-          let sx = 0;
-          let sy = 0;
-          for (let i = 0; i < K; i++) {
-            sx += pts[i]!.x;
-            sy += pts[i]!.y;
-          }
-          return Math.hypot(pts[0]!.x - sx / K, pts[0]!.y - sy / K);
-        },
-      },
-      // Damping bumped up — atan2/hypot are non-linear; without damping the
-      // first-Newton-step error compounds at the boundary of well-conditioned.
-    },
-    { damping: 1e-3 },
-  );
-}

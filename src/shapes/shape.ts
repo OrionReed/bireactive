@@ -4,14 +4,13 @@ import {
   BoxMath,
   Cell,
   cell,
-  centroidLens,
   compose,
   derive,
   effect,
   type Inner,
   lazy,
   type Matrix,
-  meanLens,
+  mean,
   Num,
   readNow,
   toMatrixString,
@@ -415,23 +414,17 @@ export class Shape<O extends ShapeOpts = ShapeOpts> {
 
 /** Writable centroid of shapes' translates. */
 export function centroid(...shapes: { translate: Writable<Vec> }[]): Writable<Vec> {
-  return centroidLens(shapes.map(s => s.translate));
+  return mean(shapes.map(s => s.translate));
 }
 
 /** Writable mean rotation. */
 export function meanRotation(...shapes: { rotate: Writable<Num> }[]): Writable<Num> {
-  return meanLens(
-    Num,
-    shapes.map(s => s.rotate),
-  );
+  return mean(shapes.map(s => s.rotate));
 }
 
 /** Writable mean scale. */
 export function meanScale(...shapes: { scale: Writable<Vec> }[]): Writable<Vec> {
-  return meanLens(
-    Vec,
-    shapes.map(s => s.scale),
-  );
+  return mean(shapes.map(s => s.scale));
 }
 
 /** Lift a `Val<T>` to a `Writable<Cls<T>>` for Shape's animatable surface.

@@ -3,9 +3,9 @@
 // continuity).
 
 import { describe, expect, it } from "vitest";
-import { bestFitCircleLens, bestFitLineLens, scaleAbout } from "../lenses/closed-form-policies";
-import { spreadOf } from "../lenses/domain-aggregates";
-import { bboxLens } from "../lenses/factor-lens";
+import { bestFitCircle, bestFitLine, scaleAbout } from "../lenses/closed-form-policies";
+import { bbox } from "../lenses/decompositions";
+import { spread as spreadView } from "../lenses/domain-aggregates";
 import { Num } from "../values/num";
 import { Vec, vec } from "../values/vec";
 import {
@@ -55,7 +55,7 @@ const approxVecArr = (eps: number) => (a: V[], b: V[]) => {
 };
 const approxVecArr05 = approxVecArr(1e-5);
 
-describe("symmetric spreadOf — lens laws", () => {
+describe("symmetric spreadView — lens laws", () => {
   const PTS = [
     { x: 0, y: 3 },
     { x: 0, y: -3 },
@@ -64,7 +64,7 @@ describe("symmetric spreadOf — lens laws", () => {
   ];
   const make = (): SourceAndLens<V[], number> => {
     const { cells, source } = vecCluster(PTS);
-    return { source, lens: spreadOf(cells as never) };
+    return { source, lens: spreadView(cells as never) };
   };
 
   it("GetPut: writing back the read is a no-op", () => {
@@ -131,7 +131,7 @@ describe("symmetric spreadOf — lens laws", () => {
       { x: 0, y: -2 }, // |dev| = 2
     ];
     const { cells, source } = vecCluster(NONSYM);
-    const spread = spreadOf(cells as never);
+    const spread = spreadView(cells as never);
     spread.peek(); // realize complement
     // current centroid = (1, -0.25), |devs| ≈ [4.013, 1.6, 2.01, 2.06],
     // mean ≈ 2.42. Write spread = 2*mean = 4.84 should DOUBLE each
@@ -159,7 +159,7 @@ describe("symmetric spreadOf — lens laws", () => {
 
   it("recovery is stable across cycles: 0→7→0→3 all land correctly", () => {
     const { cells, source } = vecCluster(PTS);
-    const spread = spreadOf(cells as never);
+    const spread = spreadView(cells as never);
     spread.peek(); // realize complement
     const expectShape = (radius: number) => [
       { x: 0, y: radius },
@@ -227,7 +227,7 @@ describe("symmetric scaleAbout — lens laws", () => {
   });
 });
 
-describe("symmetric bestFitCircleLens.radius — lens laws", () => {
+describe("symmetric bestFitCircle.radius — lens laws", () => {
   const PTS = [
     { x: 5, y: 0 },
     { x: 0, y: 5 },
@@ -236,7 +236,7 @@ describe("symmetric bestFitCircleLens.radius — lens laws", () => {
   ];
   const make = (): SourceAndLens<V[], number> => {
     const { cells, source } = vecCluster(PTS);
-    const { radius } = bestFitCircleLens(cells as never);
+    const { radius } = bestFitCircle(cells as never);
     return { source, lens: radius };
   };
 
@@ -287,7 +287,7 @@ describe("symmetric bestFitCircleLens.radius — lens laws", () => {
       { x: 0, y: -4 }, // dist = 4
     ];
     const { cells, source } = vecCluster(NONSYM);
-    const { radius } = bestFitCircleLens(cells as never);
+    const { radius } = bestFitCircle(cells as never);
     radius.peek();
     const ctrBefore = { x: 0.5, y: 1 };
     const meanBefore =
@@ -311,7 +311,7 @@ describe("symmetric bestFitCircleLens.radius — lens laws", () => {
   });
 });
 
-describe("symmetric bestFitLineLens.direction — lens laws", () => {
+describe("symmetric bestFitLine.direction — lens laws", () => {
   // A clearly-elongated cluster along the x-axis.
   const PTS = [
     { x: -3, y: 0 },
@@ -321,7 +321,7 @@ describe("symmetric bestFitLineLens.direction — lens laws", () => {
   ];
   const make = (): SourceAndLens<V[], number> => {
     const { cells, source } = vecCluster(PTS);
-    const { direction } = bestFitLineLens(cells as never);
+    const { direction } = bestFitLine(cells as never);
     return { source, lens: direction };
   };
 
@@ -365,7 +365,7 @@ describe("symmetric bestFitLineLens.direction — lens laws", () => {
     // the direction angle should monotonically change, never jumping
     // by ~π (which is what the old eigenvector-sign flip produced).
     const { cells, source } = vecCluster(PTS);
-    const { direction } = bestFitLineLens(cells as never);
+    const { direction } = bestFitLine(cells as never);
     direction.peek();
 
     let prev = direction.peek();
@@ -391,7 +391,7 @@ describe("symmetric bestFitLineLens.direction — lens laws", () => {
 
   it("continuity through small noise: tiny perturbations → tiny changes", () => {
     const { cells, source } = vecCluster(PTS);
-    const { direction } = bestFitLineLens(cells as never);
+    const { direction } = bestFitLine(cells as never);
     direction.peek();
 
     verifyContinuity(
@@ -412,7 +412,7 @@ describe("symmetric bestFitLineLens.direction — lens laws", () => {
   });
 });
 
-describe("symmetric bboxLens.size — lens laws", () => {
+describe("symmetric bbox.size — lens laws", () => {
   const PTS = [
     { x: -2, y: -1 },
     { x: 2, y: 1 },
@@ -421,7 +421,7 @@ describe("symmetric bboxLens.size — lens laws", () => {
   ];
   const make = (): SourceAndLens<V[], V> => {
     const { cells, source } = vecCluster(PTS);
-    const { size } = bboxLens(cells as never);
+    const { size } = bbox(cells as never);
     return { source, lens: size };
   };
 
@@ -478,7 +478,7 @@ describe("symmetric bboxLens.size — lens laws", () => {
     // and stored y-fractions survive. Then write size = (4, 8): y's
     // come back proportional to their stored fractions × 4.
     const { cells, source } = vecCluster(PTS);
-    const { size } = bboxLens(cells as never);
+    const { size } = bbox(cells as never);
     size.peek();
     size.value = { x: 4, y: 0 };
     size.value = { x: 4, y: 8 };
@@ -501,7 +501,7 @@ describe("symmetric × plain .scale composition: no eps amplification", () => {
       { x: 0, y: 3 },
       { x: 0, y: -3 },
     ]);
-    const spread = spreadOf(cells as never);
+    const spread = spreadView(cells as never);
     const big = spread.scale(1000);
     spread.peek();
     spread.value = 0;
@@ -513,7 +513,7 @@ describe("symmetric × plain .scale composition: no eps amplification", () => {
       { x: 5, y: 0 },
       { x: 0, y: 5 },
     ]);
-    const { radius } = bestFitCircleLens(cells as never);
+    const { radius } = bestFitCircle(cells as never);
     const big = radius.scale(1000);
     radius.peek();
     radius.value = 0;

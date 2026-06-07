@@ -88,7 +88,7 @@ Two decompositions can share a centroid — a best-fit line as `{point, directio
 
 <md-best-fit></md-best-fit>
 
-The decomposition is dispatched by trait, so `paletteLens(inputs) ⇌ {mean, spread}` works for any type that is linear with a metric. Vectors, colours, and poses all run through the one primitive:
+The decomposition is dispatched by trait, so `meanSpread(inputs) ⇌ {mean, spread}` works for any type that is linear with a metric. Vectors, colours, and poses all run through the one primitive:
 
 <md-traits-cross-domain></md-traits-cross-domain>
 

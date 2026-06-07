@@ -1,11 +1,10 @@
 // domain-aggregates.ts — closed-form lenses beyond point clouds.
 //
 // The group-action patterns from `closed-form-policies.ts`, applied to:
-//   (1) Generic Linear/Metric-trait aggregates — `meanOf`, `spreadOf`,
-//       `paletteLens` work for colors, poses, ranges, boxes for free.
-//   (2) Color aggregates — `meanColor`.
-//   (3) Bezier gestalt handles ({start, end, startTangent, endTangent}).
-//   (4) Time-series ({mean, slope}) over (i, value) samples.
+//   (1) Generic Linear/Metric-trait aggregates — `mean`, `spread`,
+//       `palette` work for colors, poses, ranges, boxes for free.
+//   (2) Bezier gestalt handles ({start, end, startTangent, endTangent}).
+//   (3) Time-series ({mean, slope}) over (i, value) samples.
 // All exact, idempotent, cross-channel invariant by construction.
 
 import {
@@ -24,22 +23,20 @@ import { remember } from "./memory";
 
 // Generic Linear-trait aggregates.
 //
-// Ergonomic entry points over `meanLens` / `scaleAbout` that infer the
-// value class from the first input (`meanOf(colors)` vs
-// `meanLens(Color, colors)`). Same engine, no new infrastructure.
+// Ergonomic entry points that infer the value class from the first input
+// (`mean(colors)` works for any `linear` class). Same engine, no new
+// infrastructure.
 
-/** Class-inferring mean (writable of `inputs[0]`'s class). Needs `linear`. */
+/** Equal-weight mean (writable of `inputs[0]`'s class); writes distribute
+ *  the delta evenly. Class inferred from the first input; needs `linear`. */
 // biome-ignore lint/suspicious/noExplicitAny: variance escape
-export function meanOf<S extends Traits<any, "linear">>(
-  inputs: readonly Writable<S>[],
-): Writable<S> {
-  if (inputs.length === 0) throw new Error("meanOf: need ≥ 1 input");
+export function mean<S extends Traits<any, "linear">>(inputs: readonly Writable<S>[]): Writable<S> {
+  if (inputs.length === 0) throw new Error("mean: need ≥ 1 input");
   // biome-ignore lint/suspicious/noExplicitAny: dynamic class lookup
   const Cls = (inputs[0] as any).constructor as new (...args: never[]) => Cell<any>;
   // biome-ignore lint/suspicious/noExplicitAny: dynamic trait lookup
   const lin = (Cls as any).traits?.linear as Linear<any> | undefined;
-  if (!lin)
-    throw new Error(`meanOf: ${(Cls as { name?: string }).name ?? "?"} has no traits.linear`);
+  if (!lin) throw new Error(`mean: ${(Cls as { name?: string }).name ?? "?"} has no traits.linear`);
   const n = inputs.length;
   const inv = 1 / n;
   // biome-ignore lint/suspicious/noExplicitAny: variance escape on Cls.lens
@@ -64,18 +61,9 @@ export function meanOf<S extends Traits<any, "linear">>(
   );
 }
 
-/** Rigid-translate aggregate over any Linear type. Alias of `meanOf`,
- *  named for the geometric intent. */
-// biome-ignore lint/suspicious/noExplicitAny: variance escape
-export function rigidTranslateOf<S extends Traits<any, "linear">>(
-  inputs: readonly Writable<S>[],
-): Writable<S> {
-  return meanOf(inputs);
-}
-
 // Weighted blend (the mix simplex).
 //
-// `mix` is `meanOf` with the uniform-weight assumption lifted: the read
+// `mix` is `mean` with the uniform-weight assumption lifted: the read
 // is the normalized weighted sum `Σ wᵢ·aᵢ`, the write is the minimum-norm
 // delta `daᵢ = wᵢ·δ / Σwⱼ²` (the pseudoinverse of `wᵀ·da = δ`), so a
 // zero-weight branch is left untouched. Weights are read-only controls —
@@ -84,7 +72,7 @@ export function rigidTranslateOf<S extends Traits<any, "linear">>(
 //
 // The control lives on the K-simplex: a one-hot vertex is `select`
 // (the live branch absorbs everything), a `(1−t, t)` edge is `crossfade`,
-// uniform weights recover `meanOf`. Reactive weights are dynamically
+// uniform weights recover `mean`. Reactive weights are dynamically
 // tracked (read via `.value` inside fwd), so flipping a Bool or sliding a
 // Num re-reads with no extra wiring.
 
@@ -167,16 +155,6 @@ export function crossfade<S extends Traits<any, "linear">>(
   return mix([Num.derive(() => 1 - t.value), Num.derive(() => t.value)], [a, b]);
 }
 
-type ColorV = { r: number; g: number; b: number; a: number };
-
-/** Mean color of a palette; write shifts every color by the delta
- *  (rigid translate in RGBA). Via `meanOf`. */
-export function meanColor(
-  colors: readonly Writable<Traits<ColorV, "linear">>[],
-): Writable<Traits<ColorV, "linear">> {
-  return meanOf(colors);
-}
-
 /** Mean radial distance from the centroid; write scales the cluster's
  *  deviations so the new mean matches the target. Trait-driven via
  *  `Linear` + `Metric`, so it works for any class declaring both (Vec,
@@ -187,12 +165,12 @@ export function meanColor(
  *  and a collapse (spread → 0) reinflates the original SHAPE. Centroid is
  *  recomputed every read/write, so an intervening mean translate is not
  *  stale. */
-export function spreadOf<
+export function spread<
   T extends NonNullable<unknown>,
   S extends Cell<T> & Traits<T, "linear" | "metric">,
 >(inputs: readonly Writable<S>[]): Writable<Num> {
   const K = inputs.length;
-  if (K < 1) throw new Error("spreadOf: need ≥ 1 input");
+  if (K < 1) throw new Error("spread: need ≥ 1 input");
   // biome-ignore lint/suspicious/noExplicitAny: dynamic class lookup
   const Cls = (inputs[0] as any).constructor as {
     traits?: { linear?: Linear<T>; metric?: Metric<T> };
@@ -200,7 +178,7 @@ export function spreadOf<
   const lin = Cls.traits?.linear;
   const met = Cls.traits?.metric;
   if (!lin || !met) {
-    throw new Error(`spreadOf: ${(Cls as { name?: string }).name ?? "?"} needs Linear + Metric`);
+    throw new Error(`spread: ${(Cls as { name?: string }).name ?? "?"} needs Linear + Metric`);
   }
   const inv = 1 / K;
 
@@ -224,16 +202,16 @@ export function spreadOf<
   });
 }
 
-/** Palette decomposition: K values → {mean, spread}, i.e. centroid +
- *  uniform scale about it. `meanOf` ∘ `spreadOf`; works for any
- *  Linear + Metric class. */
-export function paletteLens<
+/** Mean/spread decomposition: K values → {mean, spread}, i.e. centroid +
+ *  uniform scale about it. `mean` ∘ `spread`; works for any
+ *  Linear + Metric class (palettes, point clouds, poses, …). */
+export function meanSpread<
   T extends NonNullable<unknown>,
   S extends Cell<T> & Traits<T, "linear" | "metric">,
 >(colors: readonly Writable<S>[]): { mean: Writable<S>; spread: Writable<Num> } {
   return {
-    mean: meanOf(colors as never) as Writable<S>,
-    spread: spreadOf(colors as never),
+    mean: mean(colors as never) as Writable<S>,
+    spread: spread(colors as never),
   };
 }
 
@@ -251,7 +229,7 @@ export function paletteLens<
 
 type V = { x: number; y: number };
 
-export function bezierGestaltLens(
+export function bezierGestalt(
   p0: Writable<Vec>,
   p1: Writable<Vec>,
   p2: Writable<Vec>,
@@ -308,7 +286,7 @@ export function bezierGestaltLens(
 // slope; tilting about the mean preserves the mean).
 
 /** Time-series scalar aggregate over Num values as (i, value_i) samples. */
-export function timeSeriesLens(values: readonly Writable<Num>[]): {
+export function timeSeries(values: readonly Writable<Num>[]): {
   mean: Writable<Num>;
   slope: Writable<Num>;
 } {
@@ -361,7 +339,3 @@ export function timeSeriesLens(values: readonly Writable<Num>[]): {
 
   return { mean, slope };
 }
-
-// `meanOf` / `rigidTranslateOf` / `spreadOf` are fully trait-driven
-// (Linear, Metric); `bezierGestalt` and `timeSeries` stay value-specific
-// (Vec / Num) since their operations don't benefit from the trait layer.

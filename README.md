@@ -1,4 +1,4 @@
-# bireactive
+# bi-reactive
 
 Reactive programming where edges can go both ways. Write to an input and
 everything derived from it updates; write the *derived* value and the input
@@ -36,12 +36,12 @@ Values also come as small classes (`Num`, `Vec`, `Box`, `Color`, ...) with field
 lenses and bidirectional operators.
 
 ```ts
-import { vec, box, midpointLens } from "bireactive";
+import { vec, box, mean } from "bireactive";
 
-// Free-function lens: the midpoint of two points, writable.
+// Free-function lens: the mean (midpoint) of two points, writable.
 const a = vec(0, 0);
 const b = vec(10, 0);
-const mid = midpointLens(a, b);
+const mid = mean([a, b]);
 mid.value = { x: 5, y: 10 }; // drag it up…
 a.value; // { x: 0, y: 10 } — both ends translate to keep it the midpoint
 

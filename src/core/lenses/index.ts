@@ -1,12 +1,15 @@
-// core/lenses/index.ts — N→M and 1→M bidirectional lens primitives.
+// core/lenses/index.ts — N→1, N→M and 1→M bidirectional lens primitives.
 //
-// Three layers:
-//   1. NUMERICAL — `factor`, `factorTuple`, `bundle`: generic
-//      Jacobian-LSQ, the escape hatch when no closed-form policy fits.
-//   2. CLOSED-FORM POLICIES — `rigidTranslate`, `rotateAbout`,
+// Layers:
+//   1. CLOSED-FORM POLICIES — `rigidTranslate`, `rotateAbout`,
 //      `scaleAbout`, `scaleAboutXY`: exact group-action primitives.
-//   3. DECOMPOSITIONS — `procrustesLens`, `bboxLens`, `bestFitLine`,
-//      etc.: composed M-output views over the policies and aggregates.
+//   2. AGGREGATES — `mean`, `spread`, `palette`, `total`, `bezierGestalt`,
+//      `timeSeries`, `mix`/`select`/`crossfade`: closed-form N→1 views.
+//   3. DECOMPOSITIONS — `procrustes`, `bbox`, `meanDiff`, `bestFitLine`,
+//      `bestFitCircle`, `pca`: exact M-output views over the policies.
+//   4. NUMERICAL — `factor`, `factorTuple`, `bundle`, `argminNum`,
+//      `argminVec`: generic Jacobian-LSQ, the escape hatch when no
+//      closed form fits.
 //
 // See BIDIRECTIONAL-LENSES.md for the engine substrate.
 
@@ -15,52 +18,38 @@ export {
   type ArgminVecOpts,
   argminNum,
   argminVec,
-  centroidLens,
   clampToDisc,
-  meanLens,
-  midpointLens,
 } from "./aggregates";
 export {
-  bestFitCircleLens,
-  bestFitLineLens,
-  pcaLens,
-  procrustesViaBuildingBlocks,
+  bestFitCircle,
+  bestFitLine,
+  pca,
   rigidTranslate,
   rotateAbout,
   scaleAbout,
   scaleAboutXY,
-  totalLens,
+  total,
 } from "./closed-form-policies";
+export { bbox, meanDiff, procrustes } from "./decompositions";
 export {
-  bezierGestaltLens,
+  bezierGestalt,
   crossfade,
-  meanColor,
-  meanOf,
+  mean,
+  meanSpread,
   mix,
-  paletteLens,
-  rigidTranslateOf,
   select,
-  spreadOf,
-  timeSeriesLens,
+  spread,
+  timeSeries,
 } from "./domain-aggregates";
 export {
-  bboxLens,
-  bundleLens,
-  type FactorLensOpts,
-  factorLens,
-  meanDiffLens,
-  procrustesJacobianLens,
-  procrustesLens,
-} from "./factor-lens";
-export {
-  angleLens,
+  angle,
   bezier2,
   bezier3,
   clampedMean,
-  diffLens,
-  distanceLens,
+  diff,
+  distance,
   pulleySum,
-  reflectionLens,
+  reflection,
   vecLerp,
 } from "./geometry";
 export {
@@ -77,5 +66,4 @@ export {
   factorTuple,
   type OutputSpec,
   type PackedInput,
-  procrustesTyped,
 } from "./typed-factor";

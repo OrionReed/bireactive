@@ -19,7 +19,7 @@ import {
   label,
   loop,
   type Mount,
-  meanLens,
+  mean,
   meanRotation,
   meanScale,
   Num,
@@ -803,12 +803,12 @@ const TESTS: TestCase[] = [
     },
   },
   {
-    name: "meanLens(Num, ...): read avg, write distributes (delta-even)",
+    name: "mean(Num, ...): read avg, write distributes (delta-even)",
     run: assert => {
       const a = num(0);
       const b = num(10);
       const c = num(20);
-      const m = meanLens(Num, [a, b, c]);
+      const m = mean([a, b, c]);
       assert(m.value === 10, `initial mean: ${m.value}`);
       m.value = 13; // delta = 3 → each += 3
       assert(a.peek() === 3, `a after: ${a.peek()}`);
@@ -818,12 +818,12 @@ const TESTS: TestCase[] = [
     },
   },
   {
-    name: "meanLens(Vec, ...): drop-in centroid for raw Vec signals",
+    name: "mean(Vec, ...): drop-in centroid for raw Vec signals",
     run: assert => {
       const a = vec(0, 0);
       const b = vec(100, 50);
-      const m = meanLens(Vec, [a, b]);
-      assert(m instanceof Vec, `meanLens of Vecs should return a writable Vec`);
+      const m = mean([a, b]);
+      assert(m instanceof Vec, `mean of Vecs should return a writable Vec`);
       assert(m.value.x === 50 && m.value.y === 25, `initial mean off`);
       m.value = { x: 60, y: 35 }; // delta (10, 10)
       assert(a.peek().x === 10 && a.peek().y === 10, `a not shifted: ${JSON.stringify(a.peek())}`);

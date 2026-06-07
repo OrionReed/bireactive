@@ -1,7 +1,7 @@
-// Resize a cluster by dragging its bounding box: a closed-form `bboxLens`
+// Resize a cluster by dragging its bounding box: a closed-form `bbox`
 // over five points, with derived center and corner handles.
 
-import { bboxLens, Diagram, derive, handle, label, type Mount, rect, Vec, vec } from "@bireactive";
+import { bbox, Diagram, derive, handle, label, type Mount, rect, Vec, vec } from "@bireactive";
 
 const PT = "#5b8def";
 const CTR = "#f5a623";
@@ -21,7 +21,7 @@ export class MdBboxHandles extends Diagram {
       vec(cx + 20, cy - 30),
     ];
 
-    const { center, size } = bboxLens(pts);
+    const { center, size } = bbox(pts);
 
     // Bottom-right corner: writes back to size, keeping center put.
     const corner = Vec.lens(
@@ -50,7 +50,7 @@ export class MdBboxHandles extends Diagram {
       ),
       label(
         view.bottom.up(16),
-        "bboxLens(points) → {center, size} · closed-form, exact cross-channel invariance",
+        "bbox(points) → {center, size} · closed-form, exact cross-channel invariance",
         { size: 10 },
       ),
     );

@@ -4,9 +4,9 @@
 
 import { describe, expect, it } from "vitest";
 import { effect, network, untracked } from "../cell";
-import { bestFitCircleLens, bestFitLineLens, scaleAbout } from "../lenses/closed-form-policies";
-import { spreadOf } from "../lenses/domain-aggregates";
-import { bboxLens } from "../lenses/factor-lens";
+import { bestFitCircle, bestFitLine, scaleAbout } from "../lenses/closed-form-policies";
+import { bbox } from "../lenses/decompositions";
+import { spread as spreadView } from "../lenses/domain-aggregates";
 import { num } from "../values/num";
 import { vec } from "../values/vec";
 
@@ -28,7 +28,7 @@ describe("feedback loops", () => {
       { x: 2, y: 0 },
       { x: -2, y: 0 },
     ]);
-    const spread = spreadOf(cells as never);
+    const spread = spreadView(cells as never);
     let fires = 0;
     const dispose = effect(() => {
       fires += 1;
@@ -51,8 +51,8 @@ describe("feedback loops", () => {
       { x: 3, y: 0 },
       { x: -3, y: 0 },
     ]);
-    const spread = spreadOf(cells as never);
-    const { radius } = bestFitCircleLens(cells as never);
+    const spread = spreadView(cells as never);
+    const { radius } = bestFitCircle(cells as never);
     let firesA = 0;
     let firesB = 0;
     const a = effect(() => {
@@ -79,7 +79,7 @@ describe("multiple concurrent readers", () => {
       { x: -5, y: 0 },
       { x: 0, y: -5 },
     ]);
-    const spread = spreadOf(cells as never);
+    const spread = spreadView(cells as never);
     const readings: number[] = [0, 0, 0];
     const disposers = readings.map((_, i) =>
       effect(() => {
@@ -100,7 +100,7 @@ describe("multiple concurrent readers", () => {
       { x: 2, y: 0 },
       { x: -2, y: 0 },
     ]);
-    const spread = spreadOf(cells as never);
+    const spread = spreadView(cells as never);
     const fires = [0, 0, 0, 0, 0];
     const ds = fires.map((_, i) =>
       effect(() => {
@@ -121,7 +121,7 @@ describe("untracked reads", () => {
       { x: 0, y: 2 },
       { x: 0, y: -2 },
     ]);
-    const spread = spreadOf(cells as never);
+    const spread = spreadView(cells as never);
     let fires = 0;
     const dispose = effect(() => {
       fires += 1;
@@ -141,7 +141,7 @@ describe("untracked reads", () => {
       { x: 0, y: 3 },
       { x: 0, y: -3 },
     ]);
-    const spread = spreadOf(cells as never);
+    const spread = spreadView(cells as never);
     let fires = 0;
     const dispose = effect(() => {
       fires += 1;
@@ -154,7 +154,7 @@ describe("untracked reads", () => {
 });
 
 describe("lens-of-lens stacking", () => {
-  it("symmetric on top of symmetric: spreadOf(scaled cluster)", () => {
+  it("symmetric on top of symmetric: spreadView(scaled cluster)", () => {
     // Stack: cluster → scaleAbout → (we read its component) → spread of cells.
     // We test that two symmetric lenses sharing parents both behave
     // correctly when each is read and written.
@@ -166,7 +166,7 @@ describe("lens-of-lens stacking", () => {
     ]);
     const pivot = vec(0, 0);
     const s = scaleAbout(cells as never, pivot);
-    const spread = spreadOf(cells as never);
+    const spread = spreadView(cells as never);
     spread.peek();
     s.peek();
     // Drive scaleAbout to 0, then to 5; spread should now report
@@ -181,7 +181,7 @@ describe("lens-of-lens stacking", () => {
       { x: 0, y: 2 },
       { x: 0, y: -2 },
     ]);
-    const spread = spreadOf(cells as never);
+    const spread = spreadView(cells as never);
     const shifted = spread.add(100);
     expect(shifted.value).toBeCloseTo(102, 9);
     spread.value = 5;
@@ -197,7 +197,7 @@ describe("lens-of-lens stacking", () => {
       { x: 0, y: 4 },
       { x: 0, y: -4 },
     ]);
-    const spread = spreadOf(cells as never);
+    const spread = spreadView(cells as never);
     const ten = spread.scale(10);
     spread.peek();
     spread.value = 0;
@@ -213,8 +213,8 @@ describe("multiple lenses sharing parents", () => {
       { x: 0, y: 3 },
       { x: 0, y: -3 },
     ]);
-    const spreadA = spreadOf(cells as never);
-    const spreadB = spreadOf(cells as never);
+    const spreadA = spreadView(cells as never);
+    const spreadB = spreadView(cells as never);
     spreadA.peek();
     spreadB.peek();
     spreadA.value = 0;
@@ -231,8 +231,8 @@ describe("multiple lenses sharing parents", () => {
       { x: -3, y: 0 },
       { x: 0, y: -3 },
     ]);
-    const { center } = bboxLens(cells as never);
-    const spread = spreadOf(cells as never);
+    const { center } = bbox(cells as never);
+    const spread = spreadView(cells as never);
     spread.peek();
     center.value = { x: 100, y: 100 };
     // Spread should be unchanged (rigid translate preserves spread).
@@ -249,7 +249,7 @@ describe("network() integration", () => {
       { x: 0, y: 2 },
       { x: 0, y: -2 },
     ]);
-    const spread = spreadOf(cells as never);
+    const spread = spreadView(cells as never);
     const target = num(5);
     let runs = 0;
     const handle = network([target], () => {
@@ -268,7 +268,7 @@ describe("network() integration", () => {
 });
 
 describe("long random walk", () => {
-  it("spreadOf survives 200 random reads/writes without losing finiteness", () => {
+  it("spreadView survives 200 random reads/writes without losing finiteness", () => {
     const cells = mkCluster([
       { x: 0, y: 5 },
       { x: 0, y: -5 },
@@ -276,7 +276,7 @@ describe("long random walk", () => {
       { x: -5, y: 0 },
       { x: 3, y: 3 },
     ]);
-    const spread = spreadOf(cells as never);
+    const spread = spreadView(cells as never);
     for (let i = 0; i < 200; i++) {
       const op = Math.random();
       if (op < 0.4) {
@@ -301,14 +301,14 @@ describe("long random walk", () => {
     expect(Number.isFinite(spread.value)).toBe(true);
   });
 
-  it("bestFitLineLens.direction stays continuous through 1000 small rotations", () => {
+  it("bestFitLine.direction stays continuous through 1000 small rotations", () => {
     const cells = mkCluster([
       { x: -3, y: 0 },
       { x: -1, y: 0.1 },
       { x: 1, y: -0.1 },
       { x: 3, y: 0 },
     ]);
-    const { direction } = bestFitLineLens(cells as never);
+    const { direction } = bestFitLine(cells as never);
     let prev = direction.value;
     let totalRotation = 0;
     let maxJump = 0;
@@ -346,7 +346,7 @@ describe("pathological inputs", () => {
       { x: 0, y: 2 },
       { x: 0, y: -2 },
     ]);
-    const spread = spreadOf(cells as never);
+    const spread = spreadView(cells as never);
     spread.peek();
     spread.value = Number.NaN;
     // Cells are now NaN — this is the shared limitation.
