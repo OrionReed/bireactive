@@ -17,6 +17,10 @@ Here is a solar system whose bodies are each positioned from one `time` value.
 
 Each body's position chains polar coordinates off `time`. The chain is invertible, so moving any body runs it backward to a new `time`, and the rest of the system follows from there. This includes the moon's orbit (if you can catch it with your mouse).
 
+The same construction is something everyone already owns. A clock is a polar chain off one scalar: each hand angle is `time.affine(τ/period, −π/2)`, each tip a `circular` polar point. Dragging any hand scrubs `time` — and because the hour hand is the same scalar at 1/720 the rate, turning the minute hand drags it along, exactly like the gears of a real movement. A second timezone is one more affine, `time.affine(1, 9h)`, a whole linked face for free, and the digital read-out is the same scalar formatted:
+
+<md-clock></md-clock>
+
 [^edge]: A write is a single bounded walk up the edge it came down — no global solver, no fixpoint, and the graph stays acyclic. That is what separates it from a constraint system, where relations are bidirectional but global and have to converge to a fixpoint (the subject of a later section).
 
 ## Reversible edges
