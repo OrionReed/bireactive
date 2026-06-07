@@ -19,7 +19,7 @@ import { blit } from "./canvas-demo-util";
 
 const W = 220;
 const H = 220;
-const STEPS = 10; // PDE substeps per displayed frame.
+const STEPS = 6; // PDE substeps per displayed frame.
 
 // Gray–Scott: U in .r, V in .g. 9-point Laplacian, Euler step, clamped.
 const RD = `#version 300 es
@@ -64,14 +64,16 @@ interface Preset {
   kill: number;
 }
 const PRESETS: Preset[] = [
-  { name: "worms", feed: 0.054, kill: 0.062 },
-  { name: "spots", feed: 0.035, kill: 0.065 },
+  { name: "worms", feed: 0.058, kill: 0.065 },
+  { name: "spots", feed: 0.0367, kill: 0.0649 },
   { name: "maze", feed: 0.029, kill: 0.057 },
   { name: "coral", feed: 0.0545, kill: 0.062 },
-  { name: "waves", feed: 0.014, kill: 0.045 },
+  { name: "waves", feed: 0.018, kill: 0.051 },
 ];
 
-const PARAMS = { du: 0.16, dv: 0.08, dt: 1.0 };
+// Canonical Gray–Scott: U diffuses twice as fast as V; dt = 1 with the
+// folded-Laplacian kernel is the maximal stable explicit step.
+const PARAMS = { du: 1.0, dv: 0.5, dt: 1.0 };
 
 export class MdReactionDiffusion extends HTMLElement {
   static get tagName(): string {
@@ -133,7 +135,7 @@ export class MdReactionDiffusion extends HTMLElement {
     });
     const density = f.regionMean(dataBox) as Read<{ x: number; y: number }>;
     const densityV = derive(() => density.value.y);
-    const threshold = cell(0.22);
+    const threshold = cell(0.12);
     const hot = derive(() => densityV.value >= threshold.value);
 
     // ── DOM ────────────────────────────────────────────────────────────
