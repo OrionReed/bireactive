@@ -95,6 +95,21 @@ Coordinate spaces, similarly: each is a `world.lens(fwd, bwd)` — euclidean, ob
 
 <md-coordinate-spaces></md-coordinate-spaces>
 
+Colour has charts too. Three `Num` cells hold hue/saturation/value and `Color.lens` derives RGB forward, inverting it backward — the `r/g/b` field-lenses and the `h/s/v` cells edit one value. HSV is degenerate where RGB is grey (hue) or black (saturation), so the backward returns `undefined` there, which tells the multiparent lens to leave that channel alone: the stored hue survives a trip through grey instead of snapping to red.
+
+```ts
+const color = Color.lens(
+  [h, s, v],
+  ([h, s, v]) => hsvToRgb(h, s, v),
+  ({ r, g, b }) => {
+    const c = rgbToHsv(r, g, b);
+    return [c.s === 0 ? undefined : c.h, c.v === 0 ? undefined : c.s, c.v];
+  },
+);
+```
+
+<md-color-hsv></md-color-hsv>
+
 Or a waveform and its spectrum:
 
 <md-fourier></md-fourier>

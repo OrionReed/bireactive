@@ -6,8 +6,7 @@
 //   3. structural invariants: linear-extension ordinals, locality bounds.
 
 import { describe, expect, it } from "vitest";
-import { DynCondensation } from "../incremental";
-import { condense, tarjan } from "../scc";
+import { condense, DynCondensation, tarjan } from "../condense";
 import { isLinearExtension, mulberry32, oraclePartition, sig } from "./_scc-util";
 
 const S = (n: number): string => String(n);
@@ -296,5 +295,40 @@ describe("DynCondensation — locality and overhead", () => {
     dc.addEdge(N, 0); // closes the giant cycle → one SCC
     expect(dc.lastTouched).toBe(N + 1);
     expect(dc.membersOf(0).length).toBe(N + 1);
+  });
+
+  it("a split (decremental) is LOCAL — distant components keep their ordinals", () => {
+    // Long acyclic chain with one small cycle {a, a+1} embedded. Splitting it
+    // must not renumber the far-away remainder (the old global topo pass did).
+    const dc = new DynCondensation<number>();
+    const N = 400;
+    for (let i = 0; i < N; i++) dc.addEdge(i, i + 1);
+    const a = 200;
+    dc.addEdge(a + 1, a); // close 2-cycle {a, a+1}
+    expect(dc.membersOf(a).sort((x, y) => x - y)).toEqual([a, a + 1]);
+
+    const peek = dc as unknown as { node: Map<number, { parent: number; ord: number }> };
+    const ordOf = (n: number) => peek.node.get(n)!.ord;
+    const farLo = ordOf(5);
+    const farHi = ordOf(395);
+
+    dc.removeEdge(a + 1, a); // split {a, a+1} back into singletons
+    expect(dc.sameComponent(a, a + 1)).toBe(false);
+    expect(dc.lastTouched).toBe(2); // only the split component recomputed
+
+    // Distant ordinals untouched → the renumber was local, not global.
+    expect(ordOf(5)).toBe(farLo);
+    expect(ordOf(395)).toBe(farHi);
+
+    // And the partition + order remain correct everywhere.
+    const edges: Array<[number, number]> = [];
+    for (let i = 0; i < N; i++) edges.push([i, i + 1]);
+    expect(isLinearExtension(dc.order(), edges)).toBe(true);
+    expect(sig(dc.order(), S)).toBe(
+      oracleSig(
+        Array.from({ length: N + 1 }, (_, i) => i),
+        edges,
+      ),
+    );
   });
 });

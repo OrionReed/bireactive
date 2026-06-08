@@ -8,8 +8,7 @@
 // "transient" = garbage produced per op (GC pressure). Forward edges should
 // show ~0 transient; recondense/split scale with the touched region.
 
-import { DynCondensation } from "./incremental";
-import { condense } from "./scc";
+import { condense, DynCondensation } from "./condense";
 
 const gc: () => void = (globalThis as { gc?: () => void }).gc ?? (() => {});
 const heap = (): number => {

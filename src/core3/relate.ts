@@ -32,13 +32,13 @@
 import {
   becomeMember,
   type Cell,
-  cell,
+  captureBase,
   disposeInternalComputed,
   internalComputed,
   type Lattice,
   resignMember,
 } from "./cell";
-import { DynCondensation } from "./incremental";
+import { DynCondensation } from "./condense";
 
 // biome-ignore lint/suspicious/noExplicitAny: heterogeneous relation graph
 type AnyCell = Cell<any>;
@@ -132,10 +132,11 @@ export function constrain(
 ): () => void {
   const rule: Rule = { reads, writes, body };
   for (const w of writes) {
-    // Capture the standing assertion the first time `w` becomes a member —
-    // while it is still a plain source (peek = its asserted value, not a
-    // solved projection).
-    if (latticeOf(w) !== undefined && !baseOf.has(w)) baseOf.set(w, cell(w.peek()));
+    // Capture the standing-assertion channel the first time `w` becomes a
+    // member — while it still holds its original identity. For a source that's
+    // a value snapshot; for a lens it's a clone of the lens (so upstream flows
+    // in and writes flow back through it). See `captureBase`.
+    if (latticeOf(w) !== undefined && !baseOf.has(w)) baseOf.set(w, captureBase(w));
     const rs = rulesByMember.get(w);
     if (rs === undefined) rulesByMember.set(w, [rule]);
     else rs.push(rule);
@@ -197,7 +198,7 @@ function recompile(writes: readonly AnyCell[]): void {
   for (const m of orphans) {
     if (!owner.has(m)) {
       const b = baseOf.get(m);
-      if (b !== undefined) resignMember(m, b.peek());
+      if (b !== undefined) resignMember(m, b);
     }
   }
 }
@@ -215,8 +216,25 @@ function buildGroup(rep: AnyCell): void {
   // The solver's output, filled on each pull and read by member projections.
   const solved = new Map<AnyCell, unknown>();
   let version = 0;
+  // A member's assertion (a lens's `base`) may read a FELLOW member of this
+  // same component — relating `p.shift(k)` to `p`, say. That re-enters this
+  // very solver mid-fixpoint, which the engine reports as "read its own
+  // value". The propagator fold can't see the lens transfer-function to solve
+  // such a region, so we surface a CLEAR domain error instead of the engine's
+  // internal one. (Any self-read DURING a solve is precisely this case.)
   const g = internalComputed<number>(() => {
-    solveInto(solved, members, memberSet, compRules);
+    try {
+      solveInto(solved, members, memberSet, compRules);
+    } catch (e) {
+      if (e instanceof RangeError)
+        throw new Error(
+          "relate: relation cycle through a lens — a member's assertion " +
+            "depends on a fellow member it derives from. A lens and a cell it " +
+            "reads cannot both be members of the same relation; relate their " +
+            "shared source instead.",
+        );
+      throw e;
+    }
     return ++version;
   });
 

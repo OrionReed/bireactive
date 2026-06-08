@@ -1522,17 +1522,39 @@ export function disposeInternalComputed<T>(c: Cell<T>): void {
   c.flags = F.None;
 }
 
-/** Turn `m` into a writable projection of its group: forward reads run
- *  `project` (which pulls the solver), backward writes flow to `base`. Marks
- *  `m` dirty and notifies existing subscribers so derived views re-pull, then
- *  schedules them (a topology edit isn't a source write, so nothing else
- *  would). A member is a single-parent lens, so the `set` path never peeks
- *  its solved view — writes stage straight to `base`. */
-export function becomeMember<T>(m: Cell<T>, project: () => T, base: Cell<T>): void {
-  m.getter = project as () => never;
+/** Capture `m`'s current writable identity as a durable BASE channel — the
+ *  assertion the solver reads and that member writes flow to. A SOURCE yields
+ *  a snapshot source (its value IS its assertion, no upstream to track). A
+ *  LENS yields a clone carrying the same derivation + inverse, so the solver
+ *  reads the LIVE upstream-derived value as the assertion (upstream changes
+ *  re-invalidate the solve) and member writes route back THROUGH the lens to
+ *  its real parents. Called once, before `m` first joins a relation, while it
+ *  still holds its original identity. The base is durable across re-joins, so
+ *  writes are never lost between leaving and rejoining. */
+export function captureBase<T>(m: Cell<T>): Cell<T> {
+  const base = new Cell<T>(m.peek());
+  base._equals = m._equals; // match change detection (value-class equality)
+  if (m.getter !== undefined) {
+    base.getter = m.getter; // closures capture the PARENTS, not `m` — safe to share
+    base._bwd = m._bwd;
+    base.flags = F.Mutable | F.Dirty; // re-derive + re-link to parents on first pull
+  }
+  return base;
+}
+
+/** Make `m` a writable projection over its `base` channel: forward reads run
+ *  `getter`, backward writes flow (identity) to `base`. Severs `m`'s prior
+ *  wiring (its identity now lives on `base`), marks it dirty, and notifies +
+ *  schedules existing subscribers (a topology edit isn't a source write, so
+ *  nothing else would). `m` is a single-parent lens, so the `set` path never
+ *  peeks its projected view — writes stage straight to `base`, which itself
+ *  prunes no-ops (and, if a lens, propagates to its parents). */
+function projectOver<T>(m: Cell<T>, getter: () => T, base: Cell<T>): void {
+  disposeAllDepsInReverse(m);
+  m.getter = getter as () => never;
   const b = (m._bwd = new BwdSpec());
   b.parent = base as Cell<unknown>;
-  b.put = (t: unknown): unknown => t; // write-through to the assertion
+  b.put = (t: unknown): unknown => t;
   m.flags = F.Mutable | F.Dirty;
   if (m.subs !== undefined) {
     propagate(m.subs, false);
@@ -1540,21 +1562,16 @@ export function becomeMember<T>(m: Cell<T>, project: () => T, base: Cell<T>): vo
   }
 }
 
-/** Restore `m` to a plain source holding `value` (it left every relation).
- *  Drops the projection deps, then stages `value` as a normal pending source
- *  write (Dirty) — NOT a direct `currentValue` poke. The member's cached
- *  `currentValue` still holds the last SOLVED projection, so going through
- *  the Dirty/`_update` protocol is what lets `checkDirty` see a real change
- *  and refire subscribers (an effect validates its deps before re-running;
- *  a direct poke would report "unchanged" and the effect would skip). */
-export function resignMember<T>(m: Cell<T>, value: T): void {
-  m.getter = undefined;
-  m._bwd = undefined;
-  disposeAllDepsInReverse(m);
-  m.pendingValue = value;
-  m.flags = F.Mutable | F.Dirty;
-  if (m.subs !== undefined) {
-    propagate(m.subs, false);
-    if (!flushing) flush();
-  }
+/** `m` joins a group: project from the solver (reading it pulls the lazy,
+ *  glitch-free fixpoint in dependency order). */
+export function becomeMember<T>(m: Cell<T>, project: () => T, base: Cell<T>): void {
+  projectOver(m, project, base);
+}
+
+/** `m` left every relation: relax to a passthrough of its base channel —
+ *  reads mirror `base` (a snapshot source, or the live lens), writes route to
+ *  it. Going through the Dirty/`_update` protocol (not a direct poke) is what
+ *  lets `checkDirty` see a real change and refire subscribers. */
+export function resignMember<T>(m: Cell<T>, base: Cell<T>): void {
+  projectOver(m, () => base.value, base);
 }

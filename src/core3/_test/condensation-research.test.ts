@@ -17,20 +17,25 @@
 //   • genericity over non-numeric node identities (object keys).
 
 import { describe, expect, it } from "vitest";
-import { DynCondensation } from "../incremental";
-import { condense } from "../scc";
+import { condense, DynCondensation } from "../condense";
 import { isLinearExtension, mulberry32, oraclePartition, sig } from "./_scc-util";
 
 const S = (n: number): string => String(n);
 
 // ── white-box internals (for structural invariant checks) ───────────
+//
+// One record per node: `parent` (union-find), `ord` (valid when root),
+// lazy `out`/`inc`, and `members` (root-only; absent ⇒ singleton {self}).
 
+interface Rec {
+  parent: number;
+  ord: number;
+  out?: Set<number>;
+  inc?: Set<number>;
+  members?: Set<number>;
+}
 interface Internals {
-  out: Map<number, Set<number>>;
-  inc: Map<number, Set<number>>;
-  uf: Map<number, number>;
-  members: Map<number, Set<number>>;
-  ord: Map<number, number>;
+  node: Map<number, Rec>;
 }
 const peek = (dc: DynCondensation<number>): Internals => dc as unknown as Internals;
 
@@ -47,25 +52,26 @@ function checkInvariants(
   const assigned = new Set<number>();
   for (const n of nodes) {
     const rep = dc.component(n);
-    expect(g.members.has(rep)).toBe(true);
-    expect(g.members.get(rep)!.has(n)).toBe(true);
+    expect(g.node.get(rep)!.parent).toBe(rep); // rep is a union-find root
+    expect(dc.membersOf(n).includes(n)).toBe(true);
     expect(assigned.has(n)).toBe(false); // exactly one component
     assigned.add(n);
   }
   expect(assigned.size).toBe(nodes.length);
 
-  // Every members key is a union-find ROOT, and ordinals are distinct.
+  // Every root has a distinct ordinal.
   const ords = new Set<number>();
-  for (const rep of g.members.keys()) {
-    expect(g.uf.get(rep)).toBe(rep);
-    const o = g.ord.get(rep)!;
-    expect(ords.has(o)).toBe(false);
-    ords.add(o);
+  for (const [n, rec] of g.node) {
+    if (rec.parent !== n) continue; // roots only
+    expect(ords.has(rec.ord)).toBe(false);
+    ords.add(rec.ord);
   }
 
   // inc is the exact transpose of out.
-  for (const [u, outs] of g.out) for (const v of outs) expect(g.inc.get(v)!.has(u)).toBe(true);
-  for (const [v, ins] of g.inc) for (const u of ins) expect(g.out.get(u)!.has(v)).toBe(true);
+  for (const [u, rec] of g.node)
+    for (const v of rec.out ?? []) expect(g.node.get(v)!.inc?.has(u) ?? false).toBe(true);
+  for (const [v, rec] of g.node)
+    for (const u of rec.inc ?? []) expect(g.node.get(u)!.out?.has(v) ?? false).toBe(true);
 
   // order() sorted by ordinal → valid linear extension; partition == oracle.
   const order = dc.order();
