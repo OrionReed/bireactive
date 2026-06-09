@@ -33,12 +33,12 @@ import {
   Cell,
   type CompiledRule,
   Component,
-  captureBase,
   isLens,
   K,
   type Lattice,
   type RelationBody,
-  relaxToBase,
+  relax,
+  untracked,
 } from "./cell";
 import { DynCondensation } from "./condense";
 import { interval } from "./lattice";
@@ -101,9 +101,8 @@ const rulesByMember = new WeakMap<AnyCell, Rule[]>();
  *  Walks the whole lens chain (parent → child for each link), added as a
  *  permanent edge in `cond` (refcounted, never removed — the lens structure is
  *  fixed for the cell's life; rule edges come and go on top of it). Anonymous
- *  intermediate lenses become condensation nodes but never solve (no base;
- *  `buildComponent` filters them out). Must run while `m` still holds its
- *  original identity (before it is re-wired). */
+ *  intermediate lenses become condensation nodes but never solve (unmarked;
+ *  `buildComponent` filters them out). */
 function registerLensParents(m: AnyCell): void {
   const seen = new Set<AnyCell>();
   const visit = (child: AnyCell): void => {
@@ -115,12 +114,12 @@ function registerLensParents(m: AnyCell): void {
       const pc = p as AnyCell;
       cond.addNode(pc);
       cond.addEdge(pc, child); // p → child: child reads p (permanent lens edge)
-      // Give every cell in the chain a base, so an INTERMEDIATE lens that
+      // Mark every cell in the chain a member, so an INTERMEDIATE lens that
       // lands inside an SCC solves as a real member (the chain folds in
       // K-space via constraint transformers) instead of being skipped and
-      // re-entering the solve through a live `.value` read. Capture now, while
-      // the chain still holds its original identity. A cell that never enters
-      // a cycle keeps its base unused (it solves nothing — a plain channel).
+      // re-entering the solve through a live `.value` read. A cell that never
+      // enters a cycle keeps the mark unused (it solves nothing — a plain
+      // channel).
       if (latticeOf(pc) !== undefined) memberCells.add(pc);
       visit(pc);
     }
@@ -135,10 +134,11 @@ function registerLensParents(m: AnyCell): void {
 const owner = new WeakMap<AnyCell, Component>();
 
 /** Cells that are relation members (write-targets, plus lens-chain cells folded
- *  in for SCC detection). A pure membership MARKER: the standing-assertion
- *  channel itself lives on the member's own transfer (`_rel.base`, set when it
- *  attaches), not in a side table. Used to tell a real member apart from a
- *  read-only external that merely shares the condensation graph. */
+ *  in for SCC detection). A pure membership MARKER: the standing assertion
+ *  itself lives natively on the member (its `pendingValue`, or — for a lens
+ *  member — its retained `_rel` + intrinsic forward getter), not in a side
+ *  table. Used to tell a real member apart from a read-only external that merely
+ *  shares the condensation graph. */
 const memberCells = new WeakSet<AnyCell>();
 
 /** Cells declared FREE variables (`free`): they carry no standing fact, so a
@@ -157,14 +157,13 @@ export function free<T>(c: Cell<T>): void {
   freeVars.add(c as AnyCell);
 }
 
-/** Re-assert a knowledge cell's standing value. While the cell is a member
- *  this writes its base (re-invalidating its region); otherwise it writes
- *  the cell directly. Plain `cell.value = …` does the same — `assert` is
- *  just the explicit spelling. */
+/** Re-assert a knowledge cell's standing value. While the cell is a member this
+ *  re-seeds its standing and re-invalidates its region (a source member) or
+ *  routes upstream through its lens (a lens member); otherwise it writes the
+ *  cell directly. Plain `cell.value = …` does the same — `assert` is just the
+ *  explicit spelling. */
 export function assert<T>(c: Cell<T>, value: T): void {
-  const b = (c as AnyCell)._rel?.base;
-  if (b !== undefined) (b as Cell<T>)._writeSource(value);
-  else (c as Cell<T>)._writeSource(value);
+  (c as { value: T }).value = value;
 }
 
 /** Declare a relationship. Registers the rule + its dataflow edges and
@@ -176,9 +175,8 @@ export function constrain(
 ): () => void {
   const rule: Rule = { reads, writes, body };
   for (const w of writes) {
-    // Mark `w` a member the first time it joins a relation. Its standing-
-    // assertion channel is captured lazily at build time (while it still holds
-    // its original identity) and then lives on its own transfer. Also fold the
+    // Mark `w` a member the first time it joins a relation. Its standing
+    // assertion lives natively on the cell (see `memberCells`). Also fold the
     // lens's structural read-edges into the condensation so lens-coupled
     // regions condense into one SCC instead of oscillating across components.
     if (latticeOf(w) !== undefined && !memberCells.has(w)) {
@@ -242,12 +240,9 @@ function recompile(writes: readonly AnyCell[]): void {
   for (const rep of reps) buildComponent(rep);
 
   // A cell that lost its last rule (no longer owned by any Component) relaxes
-  // back to its standing assertion as a plain source.
+  // back to its standing assertion as a plain source (or its original lens).
   for (const m of orphans) {
-    if (!owner.has(m)) {
-      const b = m._rel?.base;
-      if (b !== undefined) relaxToBase(m, b);
-    }
+    if (!owner.has(m)) relax(m);
   }
 }
 
@@ -314,40 +309,40 @@ function buildComponent(rep: AnyCell): void {
   for (const m of members) for (const r of rulesByMember.get(m) ?? []) ruleSet.add(r);
   if (ruleSet.size === 0) return; // no rules → nothing to solve; relax as orphan
 
-  // Reuse the member's existing channel (re-join / relaxed: it lives on `_rel`),
-  // else capture it now while the cell still holds its original identity. The
-  // channel is durable thereafter — `attachMember` stows it back on `_rel.base`.
-  const bases = members.map(m => m._rel?.base ?? captureBase(m));
   const lattices = members.map(m => latticeOf(m)!);
   const rules: CompiledRule[] = [...ruleSet].map(r => ({ body: r.body, reads: r.reads }));
   const derived = members.map(() => false);
   const isFree = members.map(m => freeVars.has(m));
   const fallbacks = new Array<unknown>(members.length);
 
-  // A lens member whose PARENT is a fellow member is a constraint lens (the
-  // "both sides in the component" case): its base reads the parent, so seeding
-  // or falling back through it would re-enter the solve. Mark it DERIVED — seed
-  // ⊤, fall back to its frozen value — and (for a single-parent invertible
-  // lens) lift the lens into forward/backward knowledge transformers so the
-  // relationship is honoured inside the cycle. A lens whose parent is OUTSIDE
-  // stays a plain channel (today's behaviour); a lens by itself isn't a
-  // constraint. See `unified-relations.md` §4–5.
+  // A LENS member whose PARENT is a fellow member is a constraint lens (the
+  // "both sides in the component" case): re-evaluating its forward would re-enter
+  // the solve through the parent. Mark it DERIVED — seed ⊤, fall back to its
+  // frozen value — and (for a single-parent invertible lens) lift the lens into
+  // forward/backward knowledge transformers so the relationship is honoured
+  // inside the cycle. A lens whose parent is OUTSIDE stays a plain channel
+  // (today's behaviour); a lens by itself isn't a constraint. See §4–5.
+  //
+  // A member's INTRINSIC identity is never clobbered by membership (only
+  // `_region` is set), so even one already governed by a now-disposed component
+  // still has its real `_rel` and its original forward getter — read those.
   members.forEach((m, i) => {
-    const base = bases[i];
-    if (!isLens(base)) return;
-    const rel = base._rel!;
+    if (!isLens(m)) return; // source member — no lens to lift
+    const rel = m._rel!;
     const parent = rel.parents;
     const singleMemberParent = parent instanceof Cell && memberSet.has(parent);
     const multiMemberParent = Array.isArray(parent) && parent.some(p => memberSet.has(p));
     if (!singleMemberParent && !multiMemberParent) return; // channel: parent external
 
     derived[i] = true;
-    // Frozen fallback = the lens's current forward value, read through its own
-    // base (the live clone over the ORIGINAL parent). If that read can't be
-    // evaluated mid-rewire (a parent in flux), fall back to the member's last
-    // cached value — always a well-formed `T`.
+    // Frozen fallback = the lens's current forward value via its intrinsic getter
+    // (untracked: this is a snapshot, not a dep). If that read can't be evaluated
+    // mid-recompile (a parent in flux), fall back to the member's last cached
+    // value — always a well-formed `T`.
+    const origGetter = m.getter!;
     try {
-      fallbacks[i] = base.peek();
+      // The forward getter reads `this._rel`, so run it with `this === m`.
+      fallbacks[i] = untracked(() => origGetter.call(m));
     } catch {
       fallbacks[i] = m.peek();
     }
@@ -358,8 +353,9 @@ function buildComponent(rep: AnyCell): void {
     }
   });
 
-  // The Component constructor projects each member onto its solved slot.
-  const comp = new Component(members, bases, lattices, rules, derived, fallbacks, isFree);
+  // The Component constructor marks each member governed (reads now project its
+  // solved slot).
+  const comp = new Component(members, lattices, rules, derived, fallbacks, isFree);
   for (const m of members) owner.set(m, comp);
 }
 

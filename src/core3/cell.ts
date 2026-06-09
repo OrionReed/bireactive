@@ -369,14 +369,6 @@ class Transfer {
   scratch: unknown[] | undefined = undefined;
   /** Lens only: lazy inverse memo. */
   memo: InverseMemo | undefined = undefined;
-  /** Relation member only: the cell's durable standing-assertion channel — the
-   *  cell the solver reads (a source snapshot, or a lens clone over the live
-   *  upstream) and that member writes flow to. Lives HERE on the member's own
-   *  transfer (not a side WeakMap): set once `captureBase` runs, carried across
-   *  every re-compile (dispose never touches a member's `_rel`) and through a
-   *  relax, so a member literally holds its own assertion. `undefined` ⇒ the
-   *  cell has never joined a relation. */
-  base: Cell<unknown> | undefined = undefined;
   /** Index in `bwdQueue` of this cell's latest push; the drain skips stale
    *  entries so each cell propagates backward once per flush, last-write. */
   queueIdx = -1;
@@ -528,6 +520,15 @@ export class Cell<T = unknown> implements ReactiveNode {
    *  is exactly `_rel !== undefined`. See `Transfer`. */
   _rel: Transfer | undefined;
 
+  /** Owning SCC solver while this cell is a relation member, else `undefined`
+   *  — presence IS the member discriminant. The cell keeps its INTRINSIC
+   *  definition (a source's `undefined` getter, a lens's forward getter); a
+   *  governed read projects `_region`'s solved slot instead, and `solve`
+   *  recovers the seed from that same intrinsic definition (a source member's
+   *  standing in its own `pendingValue`, a lens member's in its retained
+   *  `_rel`). Nothing is stowed, so `relax` has nothing to restore. */
+  _region: Component | undefined;
+
   constructor(initial: T, opts?: CellOptions<T>) {
     this.currentValue = initial;
     this.pendingValue = initial;
@@ -541,6 +542,7 @@ export class Cell<T = unknown> implements ReactiveNode {
     this._watched = undefined;
     this._unwatchedHook = undefined;
     this._rel = undefined;
+    this._region = undefined;
     if (opts !== undefined) {
       if (opts.equals !== undefined) this._equals = opts.equals;
       if (opts.watched !== undefined) this._watched = opts.watched;
@@ -575,6 +577,29 @@ export class Cell<T = unknown> implements ReactiveNode {
   }
 
   _update(): boolean {
+    const region = this._region;
+    if (region !== undefined) {
+      // Governed member: recompute its published value by pulling the solver
+      // (tracked ⇒ `_region` becomes this member's sole dep) and reading its
+      // solved slot. Same protocol as a computed, but a fixed body — the
+      // intrinsic getter stays put (it's the seed and the `relax` target).
+      this.depsTail = undefined;
+      this.flags = F.Mutable | F.RecursedCheck;
+      const prev = activeSub;
+      activeSub = this;
+      let threw = true;
+      try {
+        ++cycle;
+        const old = this.currentValue;
+        const next = (this.currentValue = region._project(this as Cell<unknown>) as T);
+        threw = false;
+        return !this._equals(old, next);
+      } finally {
+        activeSub = prev;
+        this.flags = threw ? F.Mutable | F.Dirty : this.flags & ~F.RecursedCheck;
+        purgeDeps(this);
+      }
+    }
     if (this.getter !== undefined) {
       // Computed/lens: re-run the forward derivation.
       this.depsTail = undefined;
@@ -1025,6 +1050,29 @@ function dispatchLens(ctor: CellCtor<Cell<any>>, args: any[]): unknown {
 Object.defineProperty(Cell.prototype, "value", {
   get(this: Cell<unknown>): unknown {
     const flags = this.flags;
+    if (this._region !== undefined) {
+      // Governed member: value is the component's solved projection, NOT the
+      // intrinsic forward/standing. Same read protocol as a computed (validate,
+      // `_update`, link), but `_update` projects the solver instead of running
+      // the getter — which is left intact for the seed / `relax`.
+      if (flags & F.RecursedCheck) {
+        throw new RangeError(
+          `Cyclic member: ${(this.constructor as { name?: string }).name ?? "?"} read its own value`,
+        );
+      }
+      if (
+        flags & F.Dirty ||
+        (flags & F.Pending &&
+          (checkDirty(this.deps!, this) || ((this.flags = flags & ~F.Pending), false)))
+      ) {
+        if (this._update()) {
+          const subs = this.subs;
+          if (subs !== undefined) shallowPropagate(subs);
+        }
+      }
+      if (activeSub !== undefined) link(this, activeSub, cycle);
+      return this.currentValue;
+    }
     if (this.getter !== undefined) {
       if (flags & F.RecursedCheck) {
         throw new RangeError(
@@ -1071,8 +1119,11 @@ Object.defineProperty(Cell.prototype, "value", {
     return this.currentValue;
   },
   set(this: Cell<unknown>, next: unknown): void {
+    // Source-shaped target (plain source OR a governed source member, which has
+    // no getter either): `commitStanding` commits + forward-propagates a plain
+    // source, or re-seeds a member's standing and re-solves its region.
     if (this.getter === undefined) {
-      this._writeSource(next);
+      commitStanding(this, next);
       return;
     }
     // Backward write — uniformly staged + enqueued, no eager path. The
@@ -1135,6 +1186,23 @@ function settled(cell: Cell<unknown>): unknown {
     : cell.peek();
 }
 
+/** Commit a value into a SOURCE-shaped leaf (`getter === undefined`). A governed
+ *  source member re-seeds its standing (`pendingValue`) and re-solves its region
+ *  — there's no member→component dep edge to carry the write (that would cycle),
+ *  so the invalidate IS the propagation. A plain source commits and forward-
+ *  propagates. Both no-op on an unchanged value. The single leaf-write path,
+ *  shared by the setter, the backward pass, and split/stateful forks. */
+function commitStanding(target: Cell<unknown>, v: unknown): void {
+  const region = target._region;
+  if (region !== undefined) {
+    if (target._equals(v, target.pendingValue)) return;
+    target.pendingValue = v;
+    region.invalidate();
+    return;
+  }
+  target._writeSource(v);
+}
+
 function propagateBwd(start: Cell<unknown>, target: unknown): void {
   let cell = start;
   let v = target;
@@ -1175,14 +1243,18 @@ function propagateBwd(start: Cell<unknown>, target: unknown): void {
     // the current source from `bwd`. `settled` reads a staged source's
     // pending value WITHOUT committing it, so a net-zero revert leaves the
     // source unchanged and downstream un-fired.
-    if (parent._equals(push, settled(parent))) return;
-
     if (parent.getter === undefined) {
-      // Source: commit + forward-propagate (the forward write).
-      parent._writeSource(push);
+      // Leaf source-shaped parent. A PLAIN source takes the `settled` no-op stop
+      // (reads a staged pending WITHOUT committing — net-zero revert safety); a
+      // governed source member compares against its standing inside
+      // `commitStanding` (its `pendingValue` IS the standing, not the projection
+      // `settled`/`peek` would return).
+      if (parent._region === undefined && parent._equals(push, settled(parent))) return;
+      commitStanding(parent, push);
       return;
     }
-    // Parent is a lens: keep walking, carrying its new view value.
+    // Parent is a lens (governed or not): no-op stop, else keep walking.
+    if (parent._equals(push, settled(parent))) return;
     cell = parent;
     v = push;
   }
@@ -1248,7 +1320,7 @@ function forkInto(parents: Cell<unknown>[], updates: ReadonlyArray<unknown>, n: 
     const u = updates[i];
     if (u === undefined) continue;
     const parent = parents[i]!;
-    if (parent.getter === undefined) parent._writeSource(u);
+    if (parent.getter === undefined) commitStanding(parent, u);
     else propagateBwd(parent, u);
   }
 }
@@ -1593,7 +1665,6 @@ const latticeOf = (c: Cell<unknown>): Lattice<unknown, unknown> | undefined =>
 
 export class Component extends Cell<number> {
   readonly members: readonly Cell<unknown>[];
-  private readonly bases: readonly Cell<unknown>[];
   private readonly lattices: readonly Lattice<unknown, unknown>[];
   private readonly rules: readonly CompiledRule[];
   /** Reverse freshness index: `readers[i]` lists the rule indices that READ
@@ -1604,27 +1675,26 @@ export class Component extends Cell<number> {
   /** Per slot: true ⇒ a fully-DERIVED member (a lens whose parent is a fellow
    *  member). It carries no standing assertion — seed ⊤ and let its forward
    *  transformer determine it — and on publish falls back to `fallbacks[i]`
-   *  (its frozen value) rather than reading its base (which would re-enter the
-   *  solve through the parent). A source/channel member is `false`: seed its
-   *  base, fall back to its base's live value. */
+   *  (its frozen value) rather than re-evaluating its seed (which would re-enter
+   *  the solve through the parent). A source/channel member is `false`: seed
+   *  from its standing/upstream, fall back to that live value. */
   private readonly derived: readonly boolean[];
   /** Per slot: true ⇒ a FREE variable (declared via `free`). It carries no
    *  standing FACT — seed ⊤ so inequality/arithmetic contractors actually
-   *  narrow it — but its base value is the SOFT fallback on publish (its
-   *  preferred value when underdetermined). Read live each solve, so a write to
-   *  the base is a dependency that re-solves. The difference from `derived`: a
+   *  narrow it — but its seed value is the SOFT fallback on publish (its
+   *  preferred value when underdetermined). The difference from `derived`: a
    *  derived member has a forward transformer and a frozen fallback; a free
-   *  member is a plain source with no fact and a live fallback. */
+   *  member has no fact and a live fallback. */
   private readonly free: readonly boolean[];
   private readonly fallbacks: readonly unknown[];
   private readonly index = new Map<Cell<unknown>, number>();
-  /** Published concrete value per member slot; read by member projections. */
+  /** Published concrete value per member slot; read by `_project` when a
+   *  governed member recomputes. */
   readonly solved: unknown[];
   private version = 0;
 
   constructor(
     members: readonly Cell<unknown>[],
-    bases: readonly Cell<unknown>[],
     lattices: readonly Lattice<unknown, unknown>[],
     rules: readonly CompiledRule[],
     derived: readonly boolean[],
@@ -1633,13 +1703,12 @@ export class Component extends Cell<number> {
   ) {
     super(0);
     this.members = members;
-    this.bases = bases;
     this.lattices = lattices;
     this.rules = rules;
     this.derived = derived;
     this.fallbacks = fallbacks;
     this.free = free;
-    // Seed each slot with the member's current value so a projection reads a
+    // Seed each slot with the member's current value so `_project` reads a
     // well-formed `T` even before the first solve (and if this component is
     // disposed without ever solving) — never `undefined`.
     this.solved = members.map(m => m.currentValue);
@@ -1654,11 +1723,53 @@ export class Component extends Cell<number> {
     this.readers = readers;
     this.getter = () => this.solve();
     this.flags = F.Mutable | F.Dirty;
-    members.forEach((m, i) => attachMember(m, this, i, bases[i]!));
+    // Mark each member governed: an OVERLAY, not a rewrite. The cell keeps its
+    // intrinsic definition (a source's `undefined` getter, a lens's forward +
+    // `_rel`); only `_region` is set, redirecting reads to this component's
+    // solved slot (`_project`, via the governed branch of the value getter /
+    // `_update`). The component becomes the member's sole dep lazily on first
+    // read; `solve` reads the intact getter straight back for the seed, so
+    // nothing is stowed and `relax` has nothing to restore. Drop the member's
+    // standalone upstream deps and notify existing subscribers (a topology edit
+    // isn't a value write, so nothing else would).
+    for (const m of members) {
+      disposeAllDepsInReverse(m);
+      m._region = this;
+      m.flags = F.Mutable | F.Dirty;
+      if (m.subs !== undefined) {
+        propagate(m.subs, false);
+        if (!flushing) flush();
+      }
+    }
+  }
+
+  /** Pull the fixpoint (glitch-free, in dependency order) and return `m`'s
+   *  solved projection. The pull tracks against the calling member, making the
+   *  component its sole dependency. Called only from a governed member's
+   *  `_update`. */
+  _project(m: Cell<unknown>): unknown {
+    void this.value;
+    return this.solved[this.index.get(m)!];
+  }
+
+  /** Re-solve trigger for a SOURCE member's standing write. The component reads
+   *  standings as plain fields (untracked, so there's no member→component dep
+   *  to cycle), so a standing write can't propagate through the dep graph on its
+   *  own: this marks the component dirty and notifies its subscribers (members
+   *  and watchers) directly (the dual of `_writeSource` for a node with no
+   *  upstream dep). */
+  invalidate(): void {
+    if (this.flags & F.Dirty) return;
+    this.flags = F.Mutable | F.Dirty;
+    const subs = this.subs;
+    if (subs !== undefined) {
+      propagate(subs, runDepth > 0);
+      if (!flushing) flush();
+    }
   }
 
   /** Fold the component to a lattice fixpoint and publish per member. Runs as
-   *  the node's getter (tracked), so every base/external read becomes a dep —
+   *  the node's getter (tracked), so every seed/external read becomes a dep —
    *  any of them changing re-invalidates the whole component.
    *
    *  Semi-naive, wave-based (mirrors `src/propagators/solver.ts`): the first
@@ -1673,8 +1784,7 @@ export class Component extends Cell<number> {
    *  cache (each outside cell lifted once), and two reused frontier buffers so
    *  there's no per-wave array churn. */
   private solve(): number {
-    const { members, bases, lattices, rules, readers, index, solved, derived, fallbacks, free } =
-      this;
+    const { members, lattices, rules, readers, index, solved, derived, fallbacks, free } = this;
     const n = members.length;
     const R = rules.length;
     const work = new Array<unknown>(n);
@@ -1725,9 +1835,12 @@ export class Component extends Cell<number> {
     };
 
     // Seed: a DERIVED member carries no assertion (⊤; its forward transformer
-    // fills it). A source/channel member abstracts its base — but reading the
-    // base may loop back through this very solve (a lens chain re-entering a
-    // member); if so, seed ⊤ and keep the member's current value as fallback.
+    // fills it). A SOURCE member reads its standing straight off the cell
+    // (`pendingValue`, untracked — the standing-write path re-invalidates us). A
+    // LENS member re-evaluates its INTRINSIC forward getter (never overwritten,
+    // tracked ⇒ the live upstream becomes a dep). That re-evaluation may loop
+    // back through this very solve (a lens chain re-entering a member); if so,
+    // seed ⊤ and keep the member's current value as fallback.
     for (let i = 0; i < n; i++) {
       const lat = lattices[i]!;
       if (derived[i]) {
@@ -1735,16 +1848,20 @@ export class Component extends Cell<number> {
         fb[i] = fallbacks[i];
         continue;
       }
+      const m = members[i]!;
       try {
-        const sv = bases[i]!.value;
+        // The forward getter (`singleGetter`/`multiGetter`/…) reads `this._rel`,
+        // so it must run with `this === m` (the original receiver).
+        const g = m.getter;
+        const sv = g === undefined ? m.pendingValue : g.call(m);
         // Free variable: ⊤ seed (no fact, so contractors narrow it) but the
-        // base is its SOFT fallback (read live ⇒ still a re-solve dependency).
+        // seed value is its SOFT fallback (still a re-solve dependency).
         work[i] = free[i] ? lat.top : lat.abstract(sv);
         fb[i] = sv;
       } catch (e) {
         if (!(e instanceof RangeError)) throw e;
         work[i] = lat.top;
-        fb[i] = members[i]!.currentValue; // cached value, no re-entrant read
+        fb[i] = m.currentValue; // cached value, no re-entrant read
       }
     }
 
@@ -1794,81 +1911,19 @@ export class Component extends Cell<number> {
   }
 }
 
-/** Project `m` onto `comp`'s slot: forward reads pull the solver and return
- *  the slot; backward writes flow (identity) to `base`. Severs `m`'s prior
- *  wiring and notifies existing subscribers (a topology edit isn't a source
- *  write, so nothing else would). Module-private: only a `Component`
- *  constructs members, so relate never touches Cell internals. */
-function attachMember(m: Cell<unknown>, comp: Component, slot: number, base: Cell<unknown>): void {
-  rewire(
-    m,
-    () => {
-      void comp.value; // pull the lazy, glitch-free fixpoint in dependency order
-      return comp.solved[slot];
-    },
-    base,
-  );
-}
-
-/** `m` left every relation: relax it back to standalone.
- *
- *  A SOURCE member becomes a plain source again, adopting the base's value
- *  directly — no passthrough indirection. A re-join simply re-captures from `m`.
- *  A LENS member relaxes to a passthrough of its clone (reads live upstream,
- *  writes route back through the lens). */
-export function relaxToBase<T>(m: Cell<T>, base: Cell<T>): void {
-  const mu = m as Cell<unknown>;
-  const b = base as Cell<unknown>;
-  if (b.getter !== undefined) {
-    rewire(mu, () => b.value, b); // lens member: passthrough to the clone
-    return;
-  }
-  disposeAllDepsInReverse(mu);
-  mu.getter = undefined;
-  mu._rel = undefined;
-  // Stage the base value as a pending write (don't overwrite `currentValue`):
-  // `_update`/the value getter must still see the old→new transition, or a
-  // downstream reader would treat the relax as a no-op and skip re-solving.
-  mu.pendingValue = b.peek();
-  mu.flags = F.Mutable | F.Dirty;
-  if (mu.subs !== undefined) {
-    propagate(mu.subs, false);
-    if (!flushing) flush();
-  }
-}
-
-/** Repoint `m` as a single-parent lens (getter + identity write-back to
- *  `base`), going through the Dirty/`_update` protocol so `checkDirty` sees a
- *  real change and refires subscribers. */
-function rewire(m: Cell<unknown>, getter: () => unknown, base: Cell<unknown>): void {
+/** `m` left every relation: drop its component link and revert to standalone.
+ *  Its intrinsic getter was never touched, so this is just clearing `_region`
+ *  plus a Dirty recompute — a SOURCE member becomes a plain source again (its
+ *  standing in `pendingValue` recommits as the live value), a LENS member a
+ *  plain lens. The Dirty routes through `checkDirty` so the projection→standalone
+ *  transition refires subscribers. No-op on a non-member. */
+export function relax(m: Cell<unknown>): void {
+  if (m._region === undefined) return;
   disposeAllDepsInReverse(m);
-  m.getter = getter;
-  // Identity Iso onto `base`: reads mirror it, writes pass straight through.
-  const id = (v: unknown): unknown => v;
-  const r = (m._rel = new Transfer(K.Iso, id, id));
-  r.parents = base;
-  r.base = base; // durable: the member's own standing-assertion channel
+  m._region = undefined;
   m.flags = F.Mutable | F.Dirty;
   if (m.subs !== undefined) {
     propagate(m.subs, false);
     if (!flushing) flush();
   }
-}
-
-/** Capture `m`'s current writable identity as its BASE channel — the assertion
- *  the solver reads and that member writes flow to. A SOURCE yields a snapshot
- *  source; a LENS yields a clone carrying the same derivation + inverse (so the
- *  solver reads the LIVE upstream value and member writes route back through the
- *  lens). Called once, while `m` still holds its original identity; the result
- *  is stowed on the member's transfer (`_rel.base`) by `rewire`, durable across
- *  re-joins so writes are never lost. */
-export function captureBase<T>(m: Cell<T>): Cell<T> {
-  const base = new Cell<T>(m.peek());
-  base._equals = m._equals;
-  if (m.getter !== undefined) {
-    base.getter = m.getter; // closures capture the PARENTS, not `m` — safe to share
-    base._rel = m._rel; // share the transfer (same derivation + inverse)
-    base.flags = F.Mutable | F.Dirty;
-  }
-  return base;
 }

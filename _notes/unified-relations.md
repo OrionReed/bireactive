@@ -122,7 +122,7 @@ see. If it didn't, two components coupled only through a lens channel would form
 a cycle the condensation can't detect and would oscillate (invalidating each
 other across settles forever). So when a cell becomes a member, `relate.ts`
 walks its whole lens chain and registers each `parent → child` read-edge (and
-gives every chain cell a base, so an *intermediate* lens that lands in an SCC
+marks every chain cell a member, so an *intermediate* lens that lands in an SCC
 solves as a real member instead of re-entering the solve through a live `.value`
 read). With the lens edges present, a genuine cycle-through-a-lens condenses into
 **one SCC** and solves as a unit — Role A — rather than crashing or looping.
@@ -237,10 +237,10 @@ componentwise product.
 
 Two distinct mechanisms, made precise in the implementation:
 
-- **Seed (α / `abstract`).** A member's standing assertion (its `base` channel)
-  is lifted into knowledge — `abstract(base.value) → K` — and seeded into the
-  solve as a concrete *fact*, folded by `meet` alongside every rule contribution.
-  So the base is a genuine participant, not a passive default.
+- **Seed (α / `abstract`).** A member's standing assertion (held natively on the
+  cell — §12.3) is lifted into knowledge — `abstract(standing) → K` — and seeded
+  into the solve as a concrete *fact*, folded by `meet` alongside every rule
+  contribution. So the standing is a genuine participant, not a passive default.
 - **Publish (γ / `concretize`).** At the component boundary,
   `concretize(K, fallback = current value)` collapses knowledge back to a
   concrete `T`, returning the **current value** whenever the field is
@@ -253,10 +253,10 @@ With **domain-faithful** lattices (Section 6) this is **field-wise**: in a
 `Range`, an endpoint the constraints agree on is refined while a conflicting one
 independently keeps its current value — there is no whole-value collapse.
 
-A consequence worth stating plainly: because the base is itself seeded as a
-fact, a single constraint that *conflicts* with the base drives that field to ⊥
-and so the cell **keeps its base** on publish — the standing assertion dominates
-a lone contradicting constraint. Genuine over-determination between two
+A consequence worth stating plainly: because the standing is itself seeded as a
+fact, a single constraint that *conflicts* with it drives that field to ⊥ and so
+the cell **keeps its standing** on publish — the standing assertion dominates a
+lone contradicting constraint. Genuine over-determination between two
 *independent* constraints is still an honest contradiction (the "who yields"
 question, deferred — 7c); it just resolves per field to the fallback rather than
 leaking a lattice element.
@@ -534,13 +534,24 @@ What this model asks for next:
      conflicting component, a real win on sparse/clean ones — fewer body runs to
      reach the same least fixpoint). External reads are constant within a solve,
      so a rule reading only externals fires exactly once.
-   - **Member holds its own assertion, ✔ implemented.** The base channel (the
-     cell the solver reads / member writes flow to) lives on the member's own
-     transfer (`_rel.base`), set once when it joins and carried across every
-     re-compile and relax — no `baseOf` side-table. `captureBase` snapshots a
-     source (or clones a lens, so the solver reads the LIVE upstream and writes
-     route back through the lens); `relaxToBase` turns a departed source member
-     back into a plain source adopting the base value (no passthrough indirection).
+   - **Membership is an OVERLAY on intrinsic identity, ✔ implemented.** A member
+     is just a normal cell with one extra field set: `Cell._region`, the owning
+     `Component`. The cell's *intrinsic definition is never clobbered* — a source
+     member keeps its `undefined` getter, a lens member keeps its real forward
+     getter and `_rel`. Only the read is redirected: the value getter / `_update`
+     take a `_region`-gated branch that projects the component's solved slot
+     (`Component._project`), with the component established as the member's sole
+     dep lazily on first read (glitch-free pull). Because the getter is intact,
+     `solve` reads it straight back for the seed (a source member's standing from
+     its own `pendingValue`; a lens member's forward via `getter.call(m)`,
+     tracked ⇒ live upstream is a dep), and a write to a source member re-seeds
+     `pendingValue` + calls `Component.invalidate()` (no member→component dep edge
+     to carry it — that's exactly what would cycle). **Nothing is stowed**, so
+     `relax` is just `clear _region` + a Dirty recompute — there is no
+     `Member` record, no seed-stow/restore, no `base` clone, no identity-Iso
+     passthrough, no `captureBase`/`relaxToBase`/`baseOf`. The single leaf-write
+     path (`commitStanding`) routes both plain sources and governed source
+     members. The member literally *is* its own assertion.
 4. **Native interval contractors, ✔ implemented.** Alongside `equal`, `relate.ts`
    exports `bound`/`order`/`add`/`total` as two-way interval contractors over the
    `interval` lattice (Num's lattice), ported from `src/propagators/numeric.ts`,
