@@ -6,14 +6,9 @@
 
 import { group } from "mitata";
 import { bireactive } from "../adapters/bireactive";
-import { reconcile } from "../adapters/reconcile";
 import { reg } from "./runner";
 import { dragFan } from "./workloads";
 
 group("drag fan-in view (live observer): bireactive", () => {
   for (const w of [4, 16, 64]) reg(`width ${w}`, dragFan(bireactive, w));
-});
-
-group("drag fan-in view (live observer): reconcile", () => {
-  for (const w of [4, 16, 64]) reg(`width ${w}`, dragFan(reconcile, w));
 });

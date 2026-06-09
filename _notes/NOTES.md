@@ -150,6 +150,33 @@ pending (update memo); a staged complement invalidates the node's memo.
 
 ---
 
+## 8. Future engine optimizations (core3 — roads not taken)
+
+Two ideas the prototypes explored that the shipped core3 engine (`../core3/`)
+deliberately has **not** adopted. Recorded here because the `_proto/` sketches
+that motivated them are being deleted; the reasoning is worth keeping.
+
+- **Descriptor / lens fusion (O(depth) → O(1) pure chains).** `.lens()` returns
+  a composable *descriptor* (closure composition, zero allocation) and reifies a
+  node only when OBSERVED, fusing a maximal run of pure steps into ONE re-rooted
+  edge — so backward (and the value graph) is O(1) in depth, not O(D). core3
+  instead allocates a cell per hop and walks `_bwdParent` in O(depth). Boundaries
+  that can't fuse (observed/memoized/lossy/stateful steps) force a node + hop;
+  pure runs are free. Known optimization, topology-dependent constant factor.
+  (Sketched in the deleted `descriptors.ts`.)
+
+- **Lazy push-pull backward (drain-on-read coalescing).** Defer the put-chain: a
+  write PUSHES (stash target + enqueue, O(1), last-write-wins) and is PULLED when
+  an affected source is first read or at flush. k repeated writes down a depth-D
+  chain coalesce to O(k+depth) instead of O(k·depth), and net-zero reverts / PutPut
+  fall out for free. core3 made the OPPOSITE call on purpose — the value graph is
+  synchronous (drain `bwdQueue` to a fixpoint before returning, no `batch()`), and
+  it recovers most of the coalescing win via inverse memoization + last-push
+  tracking instead. Revisit only if deep-chain repeated-write workloads dominate.
+  (Sketched in the deleted `signal-pp.ts` / `push-pull-bwd.ts` / `pp.*`.)
+
+---
+
 ## 7. Pointers
 
 - Production engine + `StatefulCore` (complement-on-lens ground truth):
