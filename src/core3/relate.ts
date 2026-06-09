@@ -34,6 +34,7 @@ import {
   Component,
   captureBase,
   isLens,
+  K,
   type Lattice,
   type RelationBody,
   relaxToBase,
@@ -89,7 +90,7 @@ function registerLensParents(m: AnyCell): void {
   const visit = (child: AnyCell): void => {
     if (seen.has(child) || !isLens(child)) return;
     seen.add(child);
-    const parent = child._bwd!.parent;
+    const parent = child._rel!.parents;
     const parents = parent instanceof Cell ? [parent] : Array.isArray(parent) ? parent : [];
     for (const p of parents) {
       const pc = p as AnyCell;
@@ -216,6 +217,35 @@ function recompile(writes: readonly AnyCell[]): void {
   }
 }
 
+/** Lift a constraint lens's transfer into K-space relation bodies, reading the
+ *  SAME `Transfer` the acyclic executor uses (its maps are abstracted, never
+ *  re-authored). Forward: `m ⊒ abstract(fwd(pinned(parent)))`, once the parent's
+ *  knowledge pins a value — for every single-parent kind. Backward:
+ *  `parent ⊒ abstract(bwd(pinned(m)))` only for a source-INDEPENDENT inverse
+ *  (`Iso`: shift/scale/affine/add/not/xor — the homomorphisms). A source-reading
+ *  inverse (`Lens`: field spread-replace, clamp) abstains backward, still sound. */
+function liftToKSpace(
+  rel: NonNullable<AnyCell["_rel"]>,
+  m: AnyCell,
+  latM: Lattice<unknown, unknown>,
+  p: AnyCell,
+  latP: Lattice<unknown, unknown>,
+  bodies: RelationBody[],
+): void {
+  const fwd = rel.fwd;
+  bodies.push((get, emit) => {
+    const pv = latP.pinned(get(p));
+    if (pv !== undefined) emit(m, latM.abstract(fwd(pv)));
+  });
+  if (rel.kind === K.Iso) {
+    const bwd = rel.bwd;
+    bodies.push((get, emit) => {
+      const mv = latM.pinned(get(m));
+      if (mv !== undefined) emit(p, latP.abstract(bwd(mv)));
+    });
+  }
+}
+
 function buildComponent(rep: AnyCell): void {
   // Real members carry a base (set when they became a write-member). Lens
   // parents pulled in only as condensation nodes (for SCC detection) have a
@@ -245,8 +275,8 @@ function buildComponent(rep: AnyCell): void {
   members.forEach((m, i) => {
     const base = bases[i];
     if (!isLens(base)) return;
-    const bw = base._bwd!;
-    const parent = bw.parent;
+    const rel = base._rel!;
+    const parent = rel.parents;
     const singleMemberParent = parent instanceof Cell && memberSet.has(parent);
     const multiMemberParent = Array.isArray(parent) && parent.some(p => memberSet.has(p));
     if (!singleMemberParent && !multiMemberParent) return; // channel: parent external
@@ -262,26 +292,9 @@ function buildComponent(rep: AnyCell): void {
       fallbacks[i] = m.peek();
     }
 
-    if (singleMemberParent && bw.fwd !== undefined) {
+    if (singleMemberParent) {
       const p = parent as AnyCell;
-      const latM = lattices[i]!;
-      const latP = latticeOf(p)!;
-      const fwd = bw.fwd;
-      // forward: m ⊒ F(parent), once the parent's knowledge pins a value.
-      bodies.push((get, emit) => {
-        const pv = latP.pinned(get(p));
-        if (pv !== undefined) emit(m, latM.abstract(fwd(pv)));
-      });
-      // backward: parent ⊒ B(m) for a source-INDEPENDENT inverse (1-arg `put`:
-      // shift/scale/affine/add/not/xor — the homomorphisms). A source-reading
-      // inverse (field spread-replace, clamp) abstains backward, still sound.
-      const put = bw.put;
-      if (put !== undefined && !bw.readsSource) {
-        bodies.push((get, emit) => {
-          const mv = latM.pinned(get(m));
-          if (mv !== undefined) emit(p, latP.abstract(put(mv)));
-        });
-      }
+      liftToKSpace(rel, m, lattices[i]!, p, latticeOf(p)!, bodies);
     }
   });
 

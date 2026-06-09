@@ -1,8 +1,9 @@
 // Forward bench — the "bireactive tax". bireactive's forward path is
 // alien-signals verbatim, but every cell carries the backward machinery
-// (_put / _bwdParent / pendingValue dual-keying). The gap between bireactive
-// and raw alien/preact on identical forward graphs is the cost of being
-// bidirectional on a workload that never writes backward.
+// (pendingValue dual-keying, plus a `_rel` transfer on writable derived
+// cells). The gap between bireactive and raw alien/preact on identical
+// forward graphs is the cost of being bidirectional on a workload that never
+// writes backward.
 
 import { group } from "mitata";
 import { bireactive } from "../adapters/bireactive";

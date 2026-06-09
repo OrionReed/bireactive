@@ -105,7 +105,7 @@ const minimLensPair = perNode(() => {
 
 // Field-faithful mocks: V8 object size is a function of field count, not
 // behavior, so these pin the shapes exactly. `FatCell` is the pre-split
-// `Cell`; `LeanCell` + optional `BwdSpec` is the shipped shape.
+// `Cell`; `LeanCell` + optional `Transfer` is the shipped shape.
 
 class FatCell {
   flags = 1;
@@ -146,18 +146,22 @@ class LeanCell {
   _unwatchedHook: unknown = undefined;
   currentValue: unknown;
   pendingValue: unknown;
-  _bwd: BwdSpec | undefined = undefined;
+  _rel: Transfer | undefined = undefined;
   constructor(v: unknown) {
     this.currentValue = v;
     this.pendingValue = v;
   }
 }
 
-class BwdSpec {
-  parent: unknown = undefined;
-  put: unknown = undefined;
-  merge: unknown = undefined;
-  stateful: unknown = undefined;
+class Transfer {
+  kind = 0;
+  parents: unknown = undefined;
+  fwd: unknown = undefined;
+  bwd: unknown = undefined;
+  step: unknown = undefined;
+  state: unknown = undefined;
+  scratch: unknown = undefined;
+  memo: unknown = undefined;
   queueIdx = -1;
 }
 
@@ -165,7 +169,7 @@ const fatSource = perNode(() => new FatCell(0));
 const leanSource = perNode(() => new LeanCell(0));
 const leanLensPair = perNode(() => {
   const c = new LeanCell(0);
-  c._bwd = new BwdSpec();
+  c._rel = new Transfer();
   return c;
 });
 
@@ -180,10 +184,10 @@ for (const r of rows) {
 console.log(`\nminim source vs alien source: ${fmt(rows[0].source - rows[1].source)} bytes`);
 console.log(`bireactive source+lens pair:       ${fmt(minimLensPair)} bytes`);
 
-console.log(`\nbefore/after the BwdSpec split (field-faithful mocks):`);
+console.log(`\nbefore/after the Transfer split (field-faithful mocks):`);
 console.log(`  FatCell mock (pre-split 20 slots):  ${fmt(fatSource)} bytes   [before]`);
 console.log(`  real bireactive source (shipped lean):   ${fmt(rows[0].source)} bytes   [after]`);
-console.log(`  LeanCell mock (11 fwd + _bwd):      ${fmt(leanSource)} bytes   [matches real]`);
-console.log(`  a lens (LeanCell + BwdSpec):        ${fmt(leanLensPair)} bytes`);
+console.log(`  LeanCell mock (11 fwd + _rel):      ${fmt(leanSource)} bytes   [matches real]`);
+console.log(`  a lens (LeanCell + Transfer):        ${fmt(leanLensPair)} bytes`);
 console.log(`  source saving (before − after):     ${fmt(fatSource - rows[0].source)} bytes/node`);
 if (SINK.length === -1) console.log(SINK); // defeat DCE of the sink
