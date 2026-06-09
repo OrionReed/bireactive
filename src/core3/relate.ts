@@ -34,6 +34,7 @@ import {
   type CompiledRule,
   Component,
   isLens,
+  isReadonly,
   type Lattice,
   parentsOf,
   type RelationBody,
@@ -163,6 +164,15 @@ export function constrain(
 ): () => void {
   const rule: Rule = { reads, writes, body };
   for (const w of writes) {
+    // A READ-ONLY cell (`derive`: a getter with no backward path) is fixed by
+    // definition — it can contribute its value as an INPUT wherever a rule reads
+    // it, but it can never be narrowed or written, so it never becomes a member/
+    // governed view. Skip it as a write-target: a rule emitting to it simply
+    // no-ops (it's in no component's index), and its value still flows in
+    // through every `reads` edge. This keeps its lazy getter read-path intact
+    // rather than overriding it with a projection that only ever re-derives the
+    // same value.
+    if (isReadonly(w)) continue;
     // Mark `w` a member the first time it joins a relation. Its standing
     // assertion lives natively on the cell (see `memberCells`). Also fold the
     // lens's structural read-edges into the condensation so lens-coupled
@@ -210,7 +220,10 @@ function disposeRule(rule: Rule): void {
 
 function recompile(writes: readonly AnyCell[]): void {
   const affected = cond.drainDirty();
-  for (const w of writes) affected.add(w);
+  // Read-only write-targets are never members and may not even be condensation
+  // nodes (a pure `constrain([x], [derivedRO], …)`), so they have no component
+  // to rebuild — skip them (`representative` would throw on an unknown node).
+  for (const w of writes) if (!isReadonly(w)) affected.add(w);
 
   const reps = new Set<AnyCell>();
   const orphans = new Set<AnyCell>();

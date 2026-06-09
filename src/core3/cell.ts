@@ -538,13 +538,15 @@ export class Cell<T = unknown> implements ReactiveNode {
    *  is exactly `_rel !== undefined`. See `Transfer`. */
   _rel: Transfer | undefined;
 
-  /** Owning SCC solver while this cell is a relation member, else `undefined`
-   *  — presence IS the member discriminant. The cell keeps its INTRINSIC
-   *  definition (a source's `undefined` getter, a lens's forward getter); a
-   *  governed read projects `_region`'s solved slot instead, and `solve`
-   *  recovers the seed from that same intrinsic definition (a source member's
-   *  standing in its own `pendingValue`, a lens member's in its retained
-   *  `_rel`). Nothing is stowed, so `relax` has nothing to restore. */
+  /** The component this cell is a VIEW of while it's a relation member, else
+   *  `undefined` — presence IS the member discriminant. The cell keeps its
+   *  INTRINSIC definition (a source's `undefined` getter, a lens's forward
+   *  getter); a governed read projects `_region`'s solved slot instead, and
+   *  `solve` recovers the seed from that same intrinsic definition (a source
+   *  member's standing in its own `pendingValue`, a lens member's in its
+   *  retained `_rel`). Nothing is stowed, so `relax` has nothing to restore. As
+   *  a view its only dep is the component (a single permanent link); the
+   *  computed's dynamic dep tracking doesn't apply. */
   _region: Component | undefined;
 
   constructor(initial: T, opts?: CellOptions<T>) {
@@ -597,25 +599,23 @@ export class Cell<T = unknown> implements ReactiveNode {
   _update(): boolean {
     const region = this._region;
     if (region !== undefined) {
-      // Governed member: recompute its published value by pulling the solver
-      // (tracked ⇒ `_region` becomes this member's sole dep) and reading its
-      // solved slot. Same protocol as a computed, but a fixed body — the
-      // intrinsic getter stays put (it's the seed and the `relax` target).
-      this.depsTail = undefined;
+      // Governed member = a VIEW of its component. Its SOLE dep is the solver
+      // `G`, linked once when the component formed and never re-tracked, so the
+      // recompute is a fixed projection — no dep-set to swap-track, purge, or
+      // re-link (none of the computed's dynamic-dep bookkeeping applies to a
+      // view). Ensure `G` is solved (untracked, inside `_project`) and read this
+      // member's solved slot. The intrinsic getter stays put (it's the seed and
+      // the `relax` target); `RecursedCheck` guards a re-entrant read of THIS
+      // member mid-solve.
       this.flags = F.Mutable | F.RecursedCheck;
-      const prev = activeSub;
-      activeSub = this;
       let threw = true;
       try {
-        ++cycle;
         const old = this.currentValue;
         const next = (this.currentValue = region._project(this as Cell<unknown>) as T);
         threw = false;
         return !this._equals(old, next);
       } finally {
-        activeSub = prev;
-        this.flags = threw ? F.Mutable | F.Dirty : this.flags & ~F.RecursedCheck;
-        purgeDeps(this);
+        this.flags = threw ? F.Mutable | F.Dirty : F.Mutable;
       }
     }
     if (this.getter !== undefined) {
@@ -1070,9 +1070,10 @@ Object.defineProperty(Cell.prototype, "value", {
     const flags = this.flags;
     if (this._region !== undefined) {
       // Governed member: value is the component's solved projection, NOT the
-      // intrinsic forward/standing. Same read protocol as a computed (validate,
-      // `_update`, link), but `_update` projects the solver instead of running
-      // the getter — which is left intact for the seed / `relax`.
+      // intrinsic forward/standing. Same read protocol as a computed (validate
+      // its one fixed dep `G`, `_update`, link the reader), but `_update` just
+      // projects the solved slot instead of running a getter — the intrinsic
+      // getter is left intact for the seed / `relax`.
       if (flags & F.RecursedCheck) {
         throw new RangeError(
           `Cyclic member: ${(this.constructor as { name?: string }).name ?? "?"} read its own value`,
@@ -1827,19 +1828,22 @@ export class Component extends Cell<number> {
     this.readers = readers;
     this.getter = () => this.solve();
     this.flags = F.Mutable | F.Dirty;
-    // Mark each member governed: an OVERLAY, not a rewrite. The cell keeps its
-    // intrinsic definition (a source's `undefined` getter, a lens's forward +
-    // `_rel`); only `_region` is set, redirecting reads to this component's
+    // Turn each member into a VIEW of this component: an OVERLAY, not a rewrite.
+    // The cell keeps its intrinsic definition (a source's `undefined` getter, a
+    // lens's forward + `_rel`); `_region` redirects reads to this component's
     // solved slot (`_project`, via the governed branch of the value getter /
-    // `_update`). The component becomes the member's sole dep lazily on first
-    // read; `solve` reads the intact getter straight back for the seed, so
-    // nothing is stowed and `relax` has nothing to restore. Drop the member's
-    // standalone upstream deps and notify existing subscribers (a topology edit
-    // isn't a value write, so nothing else would).
+    // `_update`), and `solve` reads the intact getter straight back for the seed
+    // — nothing is stowed, so `relax` has nothing to restore. Drop the member's
+    // standalone upstream deps and wire its ONE permanent dep: member→G. Unlike
+    // a computed's dynamic dep set, this link is never re-tracked or purged — it
+    // exists only to carry `G`'s re-solve down to the member (and on to the
+    // member's watchers via `propagate`). Notify existing subscribers (a
+    // topology edit isn't a value write, so nothing else would).
     for (const m of members) {
       disposeAllDepsInReverse(m);
       m._region = this;
       m.flags = F.Mutable | F.Dirty;
+      link(this, m, cycle);
       if (m.subs !== undefined) {
         propagate(m.subs, false);
         if (!flushing) flush();
@@ -1847,12 +1851,14 @@ export class Component extends Cell<number> {
     }
   }
 
-  /** Pull the fixpoint (glitch-free, in dependency order) and return `m`'s
-   *  solved projection. The pull tracks against the calling member, making the
-   *  component its sole dependency. Called only from a governed member's
-   *  `_update`. */
+  /** Ensure the fixpoint is current (glitch-free, in dependency order) and
+   *  return `m`'s solved projection. The pull is UNTRACKED (`peek`): the
+   *  member→component dep is permanent — wired when the component formed — so
+   *  there's no link to re-establish here, and shielding `activeSub` keeps the
+   *  member's reader from binding directly to `G` (which would lose per-member
+   *  granularity). Called only from a governed member's `_update`. */
   _project(m: Cell<unknown>): unknown {
-    void this.value;
+    this.peek();
     return this.solved[this.index.get(m)!];
   }
 
