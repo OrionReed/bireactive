@@ -30,7 +30,7 @@ const S = (n: number): string => String(n);
 interface Rec {
   parent: number;
   ord: number;
-  out?: Set<number>;
+  out?: Map<number, number>;
   inc?: Set<number>;
   members?: Set<number>;
 }
@@ -51,7 +51,7 @@ function checkInvariants(
   // members ↔ uf agreement, total + disjoint partition.
   const assigned = new Set<number>();
   for (const n of nodes) {
-    const rep = dc.component(n);
+    const rep = dc.representative(n);
     expect(g.node.get(rep)!.parent).toBe(rep); // rep is a union-find root
     expect(dc.membersOf(n).includes(n)).toBe(true);
     expect(assigned.has(n)).toBe(false); // exactly one component
@@ -67,9 +67,9 @@ function checkInvariants(
     ords.add(rec.ord);
   }
 
-  // inc is the exact transpose of out.
+  // inc is the exact transpose of out (presence; out is a multiset).
   for (const [u, rec] of g.node)
-    for (const v of rec.out ?? []) expect(g.node.get(v)!.inc?.has(u) ?? false).toBe(true);
+    for (const v of rec.out?.keys() ?? []) expect(g.node.get(v)!.inc?.has(u) ?? false).toBe(true);
   for (const [v, rec] of g.node)
     for (const u of rec.inc ?? []) expect(g.node.get(u)!.out?.has(v) ?? false).toBe(true);
 
@@ -262,13 +262,23 @@ describe("degenerate edges", () => {
     expect(dc.isCyclic(0)).toBe(false);
   });
 
-  it("duplicate addEdge is idempotent (partition + structure)", () => {
+  it("addEdge is partition-idempotent but refcounts: N adds need N removes", () => {
     const dc = new DynCondensation<number>();
     for (const n of [0, 1]) dc.addNode(n);
     dc.addEdge(0, 1);
     dc.addEdge(0, 1);
-    dc.addEdge(0, 1);
+    dc.addEdge(0, 1); // partition unchanged (still 0→1), inducer count = 3
     checkInvariants(dc, [0, 1], [[0, 1]]);
+
+    // Observe the refcount via a cycle: 0→1 must survive until its LAST remove.
+    dc.addEdge(1, 0); // close {0,1}
+    expect(dc.sameComponent(0, 1)).toBe(true);
+    dc.removeEdge(0, 1);
+    dc.removeEdge(0, 1);
+    expect(dc.sameComponent(0, 1)).toBe(true); // 2 of 3 inducers gone, edge holds
+    dc.removeEdge(0, 1);
+    expect(dc.sameComponent(0, 1)).toBe(false); // last inducer gone → cycle breaks
+    checkInvariants(dc, [0, 1], [[1, 0]]);
   });
 
   it("batch condense ignores duplicate edges", () => {

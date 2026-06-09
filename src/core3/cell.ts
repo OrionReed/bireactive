@@ -322,10 +322,12 @@ class BwdSpec {
    *  Stateful: the spec's `bwd`. */
   // biome-ignore lint/suspicious/noExplicitAny: put fn is opaque shape
   put: ((target: any, current?: any) => any) | undefined = undefined;
-  /** The 1→1 lens FORWARD map as a pure value function (the getter applies it
-   *  to the live parent; this is the same map, callable on a candidate value).
-   *  Stored only for `buildLens1`, so the relate layer can lift a lens that
-   *  sits INSIDE a cycle into a forward knowledge transformer. */
+  /** The 1→1 lens FORWARD map as a pure value function — the CANONICAL home of
+   *  the forward derivation (set by `buildLens1`). The shared `lens1Getter`
+   *  applies it to the live parent (so there's no duplicate per-lens closure),
+   *  and the relate layer lifts the same map into a forward knowledge
+   *  transformer when the lens sits INSIDE a cycle. `undefined` for non-1→1
+   *  forms (computed/lensN/stateful keep their own getter). */
   // biome-ignore lint/suspicious/noExplicitAny: fwd fn is opaque shape
   fwd: ((v: any) => any) | undefined = undefined;
   /** Complement machinery; presence IS the stateful-mode discriminant. */
@@ -804,6 +806,17 @@ function buildDerived<C extends Cell<any>>(Cls: CellCtor<C>, getter: () => unkno
   return cell;
 }
 
+/** The forward getter shared by EVERY 1→1 lens: apply the stored forward map
+ *  to the parent's live value. `_bwd.fwd` is the single home of that map (the
+ *  getter is derived from it, not a duplicate closure), and `_bwd.parent` is a
+ *  single `Cell` for the 1→1 form. One function for all such lenses ⇒ no
+ *  per-instance getter closure. `this` is the cell (bound at the `this.getter()`
+ *  call site); reading `parent.value` tracks the dep exactly as a closure did. */
+function lens1Getter(this: Cell<unknown>): unknown {
+  const b = this._bwd!;
+  return b.fwd!((b.parent as Cell<unknown>).value);
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: variance escape
 function buildLens1<C extends Cell<any>>(
   Cls: CellCtor<C>,
@@ -814,12 +827,14 @@ function buildLens1<C extends Cell<any>>(
 ): C {
   const cell = new Cls();
   cell.flags = F.Mutable | F.Dirty;
-  cell.getter = (() => fwd(parent.value)) as () => never;
+  cell.getter = lens1Getter as () => never;
   const b = (cell._bwd = new BwdSpec());
-  // Store `bwd` raw + a `readsSource` flag instead of baking `settled(parent)`
-  // into a 1-arg closure. `propagateBwd` reads the parent once (for the memo
-  // key) and passes it in, so the parent snapshot isn't read twice and the
-  // inverse can be memoized on `(target, parentRead)`.
+  // `fwd` is canonical: the shared `lens1Getter` reads it, AND the relate layer
+  // lifts it into a forward knowledge transformer when this lens sits inside a
+  // cycle. Store `bwd` raw + a `readsSource` flag instead of baking
+  // `settled(parent)` into a 1-arg closure, so `propagateBwd` reads the parent
+  // once (for the memo key) and the inverse can be memoized on
+  // `(target, parentRead)`.
   b.put = bwd;
   b.fwd = fwd;
   b.readsSource = readsSource;

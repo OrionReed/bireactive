@@ -27,7 +27,11 @@
 //     (u already before v by ordinal) is O(1). A "back" edge can only create
 //     cycles / reordering among components whose ordinal lies in the window
 //     [ord(v), ord(u)] — so we re-condense ONLY that window. Nothing outside
-//     is touched.
+//     is touched. Edges are REFCOUNTED: the same u→v may be induced by several
+//     relation rules (and, separately, by a lens's structural edge), so an
+//     `out` entry carries a multiplicity and the edge disappears only when the
+//     last inducer removes it. This is the one edge store — callers never keep
+//     a parallel refcount.
 //
 //   • removeEdge(u→v) — deletion can SPLIT an SCC (the decremental, harder
 //     direction). Cross-component deletes are O(1). A within-component delete
@@ -156,11 +160,12 @@ export function condense<T>(nodes: Iterable<T>, edges: Iterable<readonly [T, T]>
 
 /** One record per node. `out`/`inc` are lazy; `members`/`ord` are meaningful
  *  only when the node is a union-find ROOT (`parent === self`), and `members`
- *  is `undefined` for a singleton (⇒ `{self}`). */
+ *  is `undefined` for a singleton (⇒ `{self}`). `out` is a multiset (successor
+ *  → inducer count); `inc` only needs presence (predecessors, for resplit). */
 interface Rec<T> {
   parent: T;
   ord: number;
-  out?: Set<T>;
+  out?: Map<T, number>;
   inc?: Set<T>;
   members?: Set<T>;
 }
@@ -221,13 +226,13 @@ export class DynCondensation<T> {
 
   // ── queries ───────────────────────────────────────────────────────
 
-  /** Representative of `n`'s component. */
-  component(n: T): T {
-    return this.find(n);
-  }
-
   sameComponent(a: T, b: T): boolean {
     return this.find(a) === this.find(b);
+  }
+
+  /** Representative (union-find root) of `n`'s component. */
+  representative(n: T): T {
+    return this.find(n);
   }
 
   /** Cyclic = component of size > 1, or a single node with a self-loop. */
@@ -265,8 +270,10 @@ export class DynCondensation<T> {
     this.addNode(v);
     this.lastTouched = 0;
     const urec = this.node.get(u)!;
-    if (urec.out?.has(v)) return;
-    (urec.out ??= new Set()).add(v);
+    const out = (urec.out ??= new Map());
+    const cur = out.get(v) ?? 0;
+    out.set(v, cur + 1);
+    if (cur > 0) return; // edge already present; bumped its inducer count only
     (this.node.get(v)!.inc ??= new Set()).add(u);
 
     const ru = this.find(u);
@@ -296,7 +303,7 @@ export class DynCondensation<T> {
     const succ = (n: T): T[] => {
       const r: T[] = [];
       const o = this.node.get(n)!.out;
-      if (o) for (const w of o) if (windowNodes.has(w)) r.push(w);
+      if (o) for (const w of o.keys()) if (windowNodes.has(w)) r.push(w);
       return r;
     };
     const sccs = tarjan(windowNodes, succ); // topological order
@@ -313,8 +320,13 @@ export class DynCondensation<T> {
   removeEdge(u: T, v: T): void {
     this.lastTouched = 0;
     const urec = this.node.get(u);
-    if (!urec?.out?.has(v)) return;
-    urec.out.delete(v);
+    const cur = urec?.out?.get(v) ?? 0;
+    if (cur === 0) return; // no such edge
+    if (cur > 1) {
+      urec!.out!.set(v, cur - 1); // an inducer left, but the edge remains
+      return;
+    }
+    urec!.out!.delete(v);
     this.node.get(v)!.inc!.delete(u);
 
     if (this.find(u) !== this.find(v)) return; // cross-component: DAG edge gone
@@ -333,7 +345,7 @@ export class DynCondensation<T> {
     const succ = (n: T): T[] => {
       const r: T[] = [];
       const o = this.node.get(n)!.out;
-      if (o) for (const w of o) if (comp.has(w)) r.push(w);
+      if (o) for (const w of o.keys()) if (comp.has(w)) r.push(w);
       return r;
     };
     const sccs = tarjan(comp, succ); // topological (upstream-first)

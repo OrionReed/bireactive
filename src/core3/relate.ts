@@ -63,32 +63,11 @@ interface Rule {
 // ── module scheduler state ──────────────────────────────────────────
 
 const cond = new DynCondensation<AnyCell>();
-/** Rules that WRITE each cell — the per-component rule index. */
-const rulesByMember = new Map<AnyCell, Rule[]>();
-/** Reference counts per dataflow edge r→w. The condensation holds an edge
- *  iff ≥1 rule induces it, so disposing one of several parallel rules
- *  doesn't wrongly drop the edge (and trigger a spurious split). */
-const edgeRefs = new Map<AnyCell, Map<AnyCell, number>>();
-
-function addEdgeRef(r: AnyCell, w: AnyCell): void {
-  let m = edgeRefs.get(r);
-  if (m === undefined) edgeRefs.set(r, (m = new Map()));
-  const n = m.get(w) ?? 0;
-  m.set(w, n + 1);
-  if (n === 0) cond.addEdge(r, w);
-}
-
-function removeEdgeRef(r: AnyCell, w: AnyCell): void {
-  const m = edgeRefs.get(r);
-  if (m === undefined) return;
-  const n = m.get(w) ?? 0;
-  if (n <= 1) {
-    m.delete(w);
-    cond.removeEdge(r, w);
-  } else {
-    m.set(w, n - 1);
-  }
-}
+/** Rules that WRITE each cell — the per-component rule index. The
+ *  condensation itself refcounts edges (several rules, or a rule plus a lens's
+ *  structural edge, may induce the same r→w), so there is no parallel edge
+ *  store here: `constrain`/`disposeRule` just add/remove each rule's edges. */
+const rulesByMember = new WeakMap<AnyCell, Rule[]>();
 
 /** Register the LENS-STRUCTURE edges of a member into the condensation.
  *
@@ -99,11 +78,12 @@ function removeEdgeRef(r: AnyCell, w: AnyCell): void {
  *  the lens edges in keeps the condensation a true DAG: cells genuinely cycled
  *  through lenses land in ONE SCC and solve together.
  *
- *  Walks the whole lens chain (parent → child for each link), held through the
- *  permanent `edgeRefs` count and NEVER removed — the lens structure is fixed
- *  for the cell's life. Anonymous intermediate lenses become condensation
- *  nodes but never solve (no base; `buildGroup` filters them out). Must run
- *  while `m` still holds its original identity (before it is re-wired). */
+ *  Walks the whole lens chain (parent → child for each link), added as a
+ *  permanent edge in `cond` (refcounted, never removed — the lens structure is
+ *  fixed for the cell's life; rule edges come and go on top of it). Anonymous
+ *  intermediate lenses become condensation nodes but never solve (no base;
+ *  `buildComponent` filters them out). Must run while `m` still holds its
+ *  original identity (before it is re-wired). */
 function registerLensParents(m: AnyCell): void {
   const seen = new Set<AnyCell>();
   const visit = (child: AnyCell): void => {
@@ -114,7 +94,7 @@ function registerLensParents(m: AnyCell): void {
     for (const p of parents) {
       const pc = p as AnyCell;
       cond.addNode(pc);
-      addEdgeRef(pc, child); // p → child: child reads p
+      cond.addEdge(pc, child); // p → child: child reads p (permanent lens edge)
       // Give every cell in the chain a base, so an INTERMEDIATE lens that
       // lands inside an SCC solves as a real member (the chain folds in
       // K-space via constraint transformers) instead of being skipped and
@@ -128,21 +108,18 @@ function registerLensParents(m: AnyCell): void {
   visit(m);
 }
 
-interface Group {
-  /** The first-class solver node for this SCC. */
-  readonly comp: Component;
-  readonly members: readonly AnyCell[];
-}
-/** Which live SCC group currently owns each member, so a topology change
- *  rebuilds ONLY the components it actually touched. */
-const owner = new Map<AnyCell, Group>();
+/** The live SCC solver that currently owns each member, so a topology change
+ *  rebuilds ONLY the components it actually touched. Keyed by member: across an
+ *  edit a member still points at its OLD `Component` (the NEW partition is read
+ *  from `cond`), which is how `recompile` finds what to dispose. */
+const owner = new WeakMap<AnyCell, Component>();
 
 /** A knowledge cell's standing self-assertion, held as a real source cell so
  *  the solver depends on it (a write re-invalidates) and so a member that
  *  leaves every relation can relax back to it. Created — capturing the cell's
  *  current value — the first time the cell becomes a relation member, while
  *  it is still a plain source. */
-const baseOf = new Map<AnyCell, AnyCell>();
+const baseOf = new WeakMap<AnyCell, AnyCell>();
 
 /** Re-assert a knowledge cell's standing value. While the cell is a member
  *  this writes its base (re-invalidating its region); otherwise it writes
@@ -177,7 +154,7 @@ export function constrain(
     if (rs === undefined) rulesByMember.set(w, [rule]);
     else rs.push(rule);
     cond.addNode(w);
-    for (const r of reads) addEdgeRef(r, w);
+    for (const r of reads) cond.addEdge(r, w);
   }
   recompile(writes);
   return () => disposeRule(rule);
@@ -194,7 +171,7 @@ function disposeRule(rule: Rule): void {
       if (i >= 0) rs.splice(i, 1);
       if (rs.length === 0) rulesByMember.delete(w);
     }
-    for (const r of rule.reads) removeEdgeRef(r, w);
+    for (const r of rule.reads) cond.removeEdge(r, w);
   }
   recompile(rule.writes);
 }
@@ -204,11 +181,11 @@ function disposeRule(rule: Rule): void {
 // A topology change rebuilds ONLY the components it touched. `affected` =
 // the cells the condensation re-grouped (merges via window-recondense,
 // splits via resplit) plus the cells the new/removed rule writes. Every
-// group owning an affected cell is disposed, then each distinct current
-// component over the affected region is rebuilt — so merges (N groups → 1)
-// and splits (1 group → N) both fall out correctly. The `Component` node and
-// its member projections run through the normal dep/sub graph, so any
-// watching effects are scheduled onto the microtask and coalesced.
+// `Component` owning an affected cell is disposed, then each distinct current
+// component over the affected region is rebuilt — so merges (N → 1) and splits
+// (1 → N) both fall out correctly. The `Component` node and its member
+// projections run through the normal dep/sub graph, so any watching effects
+// are scheduled onto the microtask and coalesced.
 
 function recompile(writes: readonly AnyCell[]): void {
   const affected = cond.drainDirty();
@@ -217,19 +194,19 @@ function recompile(writes: readonly AnyCell[]): void {
   const reps = new Set<AnyCell>();
   const orphans = new Set<AnyCell>();
   for (const n of affected) {
-    const g = owner.get(n);
-    if (g !== undefined) {
-      g.comp.dispose();
-      for (const m of g.members) {
+    const comp = owner.get(n);
+    if (comp !== undefined) {
+      comp.dispose();
+      for (const m of comp.members) {
         owner.delete(m);
         orphans.add(m);
       }
     }
-    reps.add(cond.component(n));
+    reps.add(cond.representative(n));
   }
-  for (const rep of reps) buildGroup(rep);
+  for (const rep of reps) buildComponent(rep);
 
-  // A cell that lost its last rule (no longer owned by any group) relaxes
+  // A cell that lost its last rule (no longer owned by any Component) relaxes
   // back to its standing assertion as a plain source.
   for (const m of orphans) {
     if (!owner.has(m)) {
@@ -239,7 +216,7 @@ function recompile(writes: readonly AnyCell[]): void {
   }
 }
 
-function buildGroup(rep: AnyCell): void {
+function buildComponent(rep: AnyCell): void {
   // Real members carry a base (set when they became a write-member). Lens
   // parents pulled in only as condensation nodes (for SCC detection) have a
   // lattice but no base — they're channels into the component, not solved.
@@ -310,8 +287,7 @@ function buildGroup(rep: AnyCell): void {
 
   // The Component constructor projects each member onto its solved slot.
   const comp = new Component(members, bases, lattices, bodies, derived, fallbacks);
-  const group: Group = { comp, members };
-  for (const m of members) owner.set(m, group);
+  for (const m of members) owner.set(m, comp);
 }
 
 // ── relation combinators (declared directly, no wrapper) ────────────

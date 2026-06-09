@@ -480,7 +480,11 @@ Section 4), the first-class **`Component`** solver node + member projection
 (`cell.ts`, replacing the old external Cell-poking hooks), domain-faithful
 `Lattice<T,K>` + `flat`/`interval`/`tuple` combinators with `pinned`/`widen`
 (`lattice.ts`), auto-lifted constraint-lens transformers, and `relate.ts`
-driving components off `condense.drainDirty()`. Coverage includes a cross-layer
+driving components off `condense.drainDirty()`. The condensation owns a single
+**refcounted** edge store (relation + lens-structure edges share it; no parallel
+edge map in `relate`), `relate`'s member-keyed maps are `WeakMap`s, and a 1→1
+lens uses ONE shared forward getter derived from `BwdSpec.fwd` (no per-lens
+closure). Coverage includes a cross-layer
 oracle fuzz and a structural robustness fuzz (cycles-through-lenses,
 self-relations, dense churn, lens-member writes) asserting no edit a user can
 make throws, leaks a lattice element, or fails to reach an idempotent fixpoint.
@@ -493,7 +497,7 @@ What this model asks for next:
    `Box` corrected to componentwise. The engine resolves the lattice only when a
    cell is actually in an SCC (no cost to the acyclic path).
 2. **Transformers auto-lifted from the existing lens (implemented).** A
-   constraint lens (Role A) needs no new authoring: `buildGroup` reuses the
+   constraint lens (Role A) needs no new authoring: `buildComponent` reuses the
    lens's *own* forward function (stored on `BwdSpec.fwd`) and inverse (`put`) to
    synthesize a forward transformer (`m ⊒ abstract(fwd(pinned(parent)))`) and,
    for a source-*independent* inverse, a backward one (`parent ⊒
@@ -525,3 +529,34 @@ What this model asks for next:
   float-finite; needs a concrete choice per continuous value class.
 - **Partial→concrete materialization** is resolved by 7a (current value), but
   watch for cases where a downstream genuinely wants "is this determined yet?".
+
+## 14. Future side-thought: cycle-once for NON-lattice SCCs
+
+Today an ordinary computed/effect cycle (no relation, no lattice) throws
+`RangeError: Cyclic computed`. The SCC machinery opens a principled alternative:
+treat a non-trivial SCC that carries **no lattice** as a **cycle-once** region —
+read the last committed value across the back-edge, evaluate each member **once**
+in a fixed (condensation-determined) order, publish, stop. No fixpoint, no
+convergence, O(component size).
+
+This unifies cleanly with the existing model: a cyclic SCC is "a generalized
+computed", and there are then two evaluation strategies — **lattice present →
+iterate to a `meet`-fixpoint** (today's `Component`); **no lattice →
+cycle-once**. The lattice is simply the upgrade from "one stale-read pass" to
+"iterate to fixpoint". Most of the machinery already exists: `Component.solve`
+*already* catches the re-entrant self-read and substitutes the cached value
+(`cell.ts`, the `RangeError` guard) — cycle-once is that same move without the
+fold.
+
+Two honest caveats before pursuing it:
+- **Order-dependent, not confluent.** The result depends on which edge is the
+  back-edge (who reads stale). The condensation makes that deterministic and
+  reproducible, but it is *not* order-independent the way a `meet` fixpoint is.
+  So: "principled and deterministic", not "confluent".
+- **Bug-masking.** Throwing on cycles catches real mistakes. Cycle-once silently
+  accepts `a = b; b = a`. Make it **opt-in** (a flag on the computed, or only
+  for SCCs explicitly marked) so the default stays loud on accidental cycles.
+
+Status: deferred, not the current focus — recorded here so the option isn't
+lost. It would make even plain computeds first-class cyclic citizens, the
+cleanest expression of "lenses and propagators are true equals".
