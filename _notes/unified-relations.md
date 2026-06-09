@@ -281,6 +281,22 @@ later: **recency-based seed retraction** (most-recent write wins; older
 conflicting seed resets to ⊥ and is re-derived) — monotone *per solve*, reactive
 *across*. Explicitly a future, incremental improvement.
 
+**Attempted and reverted (recency-only is non-confluent).** A recency TMS was
+prototyped: each work slot carried a `gen` (its base's monotone `writeGen`); a
+body folded the max `gen` of the cells it read; on a `meet` hitting ⊥ the
+higher-`gen` contribution won instead of collapsing. It *worked* on a directed
+drag, but it **breaks confluence on equality cliques** — the bread-and-butter
+topology. In a clique every member converges to the same value, but its `gen`
+ends up depending on **rule fire order** (a slot reading a fresher fellow inherits
+its `gen` even when its own value is unchanged), so a later conflict is arbitrated
+by an order-dependent `gen` and the *final values* become order-dependent. Monotone
+`meet` is associative/commutative/idempotent ⇒ its fixpoint is order-independent;
+grafting a non-monotone recency notion on top of the worklist destroys exactly
+that. Confluent recency needs the **support-set** half (each value carries the SET
+of assertions justifying it, so arbitration is over sets, not a folded scalar) —
+which is the real "later" of 7c. So the engine stays at pure monotone `meet`
+(conflict → ⊥ → 7a fallback); recency is deferred until support-sets land.
+
 ### 7d. Reactivity = re-seed + fresh solve
 
 Each tick: gather the seed layer (external writes + cross-component channel
@@ -510,11 +526,36 @@ What this model asks for next:
    fallback to current value when underdetermined — 7a) downstream. Re-entrant
    reads (a lens chain looping back into a mid-solve member) are caught and
    contribute ⊤, so a cycle through a lens never throws.
-4. **Termination by lattice, not by cap** (✔ Section 10): `MAX_WAVES` removed;
+   - **Freshness-gated worklist (semi-naive), ✔ implemented.** Each rule is a
+     `CompiledRule` = body + the member cells it READS; the `Component` builds a
+     reverse index (`readers[slot]` → rule ids). Wave 0 fires every rule; later
+     waves fire **only the readers of slots that narrowed** in the prior wave.
+     Replaces the old chaotic all-rules-every-wave sweep (parity on a fully-
+     conflicting component, a real win on sparse/clean ones — fewer body runs to
+     reach the same least fixpoint). External reads are constant within a solve,
+     so a rule reading only externals fires exactly once.
+   - **Member holds its own assertion, ✔ implemented.** The base channel (the
+     cell the solver reads / member writes flow to) lives on the member's own
+     transfer (`_rel.base`), set once when it joins and carried across every
+     re-compile and relax — no `baseOf` side-table. `captureBase` snapshots a
+     source (or clones a lens, so the solver reads the LIVE upstream and writes
+     route back through the lens); `relaxToBase` turns a departed source member
+     back into a plain source adopting the base value (no passthrough indirection).
+4. **Native interval contractors, ✔ implemented.** Alongside `equal`, `relate.ts`
+   exports `bound`/`order`/`add`/`total` as two-way interval contractors over the
+   `interval` lattice (Num's lattice), ported from `src/propagators/numeric.ts`,
+   so intervals actually narrow (e.g. `x ≥ 3` flows through `add`) instead of the
+   old pin-gated flat precision. **Free variables** (`free(c)`) seed ⊤ (no standing
+   fact) with the cell's value kept as a *soft fallback* — the preferred value when
+   constraints leave it underdetermined — so a contractor can pull `x = 0` up to a
+   `bound(x, 3, ∞)` but leaves `x = 8` alone. Monotone Iso lenses (`add`/`scale`/
+   `affine`/`exp`) are lifted as real interval transformers (the band flows
+   through), not pin-gated.
+5. **Termination by lattice, not by cap** (✔ Section 10): `MAX_WAVES` removed;
    finite/flat exact, continuous via the lattice's `widen` after `WIDEN_AFTER`
    exact waves.
-5. **Partial backward demands** (Section 8) — merge field-wise; nice on its own.
-6. Keep `latticeOf` membership **local and type-driven**; with a flat default the
+6. **Partial backward demands** (Section 8) — merge field-wise; nice on its own.
+7. Keep `latticeOf` membership **local and type-driven**; with a flat default the
    silent "scalars excluded from relations" hole disappears.
 
 ## 13. Honest open edges
@@ -524,7 +565,15 @@ What this model asks for next:
   check" (compare transformer image vs. sampled concrete image).
 - **Lattice-domain faithfulness audit** — applied for Range/Box/Vec/Num/Bool/
   Flags; other value classes still default to flat until they opt in.
-- **"Who yields"** (7c) — deferred; gates the nicest reactive-UI APIs.
+- **"Who yields"** (7c) — deferred; recency-newer-wins was prototyped and
+  reverted (non-confluent on equality cliques); needs support-sets first.
+- **Warm-start across solves** — deferred. The recency-gated "keep the prior
+  fixpoint when all seeds only narrowed, else cold-restart" plan is *partial*
+  (the fine-grained version needs support-sets), and reactive edits are usually
+  anti-monotone (a fact changes to an arbitrary new value ⇒ cold restart anyway),
+  so it buys little over the semi-naive worklist while adding hot-path state and
+  soundness corners (externals widening, rule-set changes). Revisit with
+  support-sets.
 - **Continuous-lattice narrowing operator** design — ε vs. landmarks vs.
   float-finite; needs a concrete choice per continuous value class.
 - **Partial→concrete materialization** is resolved by 7a (current value), but

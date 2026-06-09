@@ -118,13 +118,16 @@ function toEdges(rules: ReturnType<typeof normalize>): { from: number; to: numbe
 
 /** Global naive Kleene over all edges from the given live bases until
  *  quiescence, then concretize each Range field (a conflicting endpoint keeps
- *  its base) — the oracle. */
+ *  its base) — the oracle. Pure monotone meet: a `narrow`/`equal` edge folds
+ *  `to := to ⊓ from` to the greatest lower bound. Associative/commutative/
+ *  idempotent, so the fixpoint is order-independent (confluence is a checked
+ *  property). A contradiction collapses to ⊥ and `concRK` then falls back to the
+ *  base endpoint (§7c). */
 function kleene(
   classes: readonly Cls[],
   bases: readonly Value[],
   edges: { from: number; to: number }[],
 ): Value[] {
-  const n = classes.length;
   const work: (RK | number)[] = bases.map(v => (typeof v === "number" ? v : seedRK(v)));
   let moved = true;
   let waves = 0;
@@ -133,15 +136,15 @@ function kleene(
     moved = false;
     for (const { from, to } of edges) {
       if (classes[to] === "range") {
-        const nv = meetRK(work[to] as RK, work[from] as RK);
-        if (!eqRK(nv, work[to] as RK)) {
-          work[to] = nv;
+        const next = meetRK(work[to] as RK, work[from] as RK);
+        if (!eqRK(next, work[to] as RK)) {
+          work[to] = next;
           moved = true;
         }
       } else {
-        const nv = (work[to] as number) & (work[from] as number);
-        if (nv !== (work[to] as number)) {
-          work[to] = nv;
+        const next = (work[to] as number) & (work[from] as number);
+        if (next !== work[to]) {
+          work[to] = next;
           moved = true;
         }
       }
@@ -250,13 +253,22 @@ describe("relate reactive churn vs oracle (toggles + base re-asserts)", () => {
         const cells = makeCells(s);
         const liveBases: Value[] = s.classes.map((_, i) => baseOf(s, i));
         const active = new Map<number, () => void>();
+        const history: string[] = [];
 
         const checkAll = () => {
           const edges = toEdges([...active.keys()].map(k => rules[k]!));
           const want = kleene(s.classes, liveBases, edges);
           for (let i = 0; i < n; i++) {
-            if (s.classes[i] === "range") expect(read(s, cells[i], i)).toEqual(want[i]);
-            else expect(read(s, cells[i], i)).toBe(want[i]);
+            const got = read(s, cells[i], i);
+            const ok =
+              s.classes[i] === "range"
+                ? JSON.stringify(got) === JSON.stringify(want[i])
+                : got === want[i];
+            if (!ok) {
+              throw new Error(
+                `MISMATCH i=${i} cls=${s.classes[i]}\n got=${JSON.stringify(got)} want=${JSON.stringify(want[i])}\n classes=${JSON.stringify(s.classes)}\n rules=${JSON.stringify(rules)}\n active=${JSON.stringify([...active.keys()])}\n liveBases=${JSON.stringify(liveBases)}\n history=${JSON.stringify(history)}`,
+              );
+            }
           }
         };
 
@@ -267,14 +279,17 @@ describe("relate reactive churn vs oracle (toggles + base re-asserts)", () => {
             if (d !== undefined) {
               d();
               active.delete(idx);
+              history.push(`toggleOFF ${idx}`);
             } else {
               active.set(idx, applyRule(cells, rules[idx]!));
+              history.push(`toggleON ${idx}`);
             }
           } else if (o.op === "reassert") {
             const i = o.a % n;
             const nv: Value = s.classes[i] === "range" ? { lo: o.lo, hi: o.lo + o.w } : o.mask;
             assert(cells[i], nv);
             liveBases[i] = nv;
+            history.push(`reassert ${i}=${JSON.stringify(nv)}`);
           }
           settle();
           checkAll();

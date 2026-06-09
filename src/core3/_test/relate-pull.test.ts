@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import { effect, Flags, num, settle } from "../index";
-import { constrain, equal } from "../relate";
+import { assert, constrain, equal } from "../relate";
 
 const F = ["b0", "b1", "b2", "b3"] as const;
 const fl = (m: number) => new Flags([...F], m);
@@ -108,6 +108,38 @@ describe("glitch-freedom across chained SCCs", () => {
     unrelated.value = 99; // touches nothing in the component
     void a.value;
     expect(runs).toBe(settled);
+  });
+
+  it("a re-solve that leaves a member's output unchanged doesn't fire its effect", () => {
+    // Per-member OUTPUT dirtiness: the Component re-solves as a unit, but each
+    // member projection prunes on `_equals`, so a watched member whose solved
+    // slot is unchanged never notifies — even though the SCC re-ran.
+    const a = fl(0b0111);
+    const b = fl(0b0011);
+    equal(a, b); // SCC {a,b}: meet → a = b = 0b0011
+
+    let fires = 0;
+    const stop = effect(() => {
+      fires++;
+      void b.value;
+    });
+    expect(fires).toBe(1); // initial run
+    expect(b.value).toBe(0b0011);
+
+    // Re-assert `a` to a SUPERSET of b's standing mask: the meet with b's base
+    // (0b0011) is still 0b0011, so neither member's output moves.
+    assert(a, 0b1011);
+    settle();
+    expect(b.value).toBe(0b0011); // unchanged
+    expect(fires).toBe(1); // output stable → no re-fire despite the re-solve
+
+    // A re-assert that genuinely narrows the meet DOES fire.
+    assert(a, 0b0001);
+    settle();
+    expect(b.value).toBe(0b0001);
+    expect(fires).toBe(2);
+
+    stop();
   });
 });
 

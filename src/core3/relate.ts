@@ -31,6 +31,7 @@
 
 import {
   Cell,
+  type CompiledRule,
   Component,
   captureBase,
   isLens,
@@ -40,11 +41,29 @@ import {
   relaxToBase,
 } from "./cell";
 import { DynCondensation } from "./condense";
+import { interval } from "./lattice";
 
 export type { RelationBody } from "./cell";
 
 // biome-ignore lint/suspicious/noExplicitAny: heterogeneous relation graph
 type AnyCell = Cell<any>;
+
+// ── interval-knowledge helpers (shared by the lens lift and contractors) ──
+const NINF = Number.NEGATIVE_INFINITY;
+const PINF = Number.POSITIVE_INFINITY;
+interface Iv {
+  readonly min: number;
+  readonly max: number;
+}
+const iv = (k: unknown): Iv => k as Iv;
+/** Map a band through a MONOTONE scalar `f` (endpoint image, re-normalised so a
+ *  decreasing `f` still yields min ≤ max). Sound for Iso homomorphisms
+ *  (shift/scale/affine/exp) — invertible ⇒ monotone. */
+const mapBand = (k: Iv, f: (t: number) => number): Iv => {
+  const a = f(k.min);
+  const b = f(k.max);
+  return a <= b ? { min: a, max: b } : { min: b, max: a };
+};
 
 /** A cell's lattice, declared as a static on its value CLASS
  *  (`Range.lattice`, `Box.lattice`, `Flags.lattice`, …) and resolved here
@@ -102,7 +121,7 @@ function registerLensParents(m: AnyCell): void {
       // re-entering the solve through a live `.value` read. Capture now, while
       // the chain still holds its original identity. A cell that never enters
       // a cycle keeps its base unused (it solves nothing — a plain channel).
-      if (latticeOf(pc) !== undefined && !baseOf.has(pc)) baseOf.set(pc, captureBase(pc));
+      if (latticeOf(pc) !== undefined) memberCells.add(pc);
       visit(pc);
     }
   };
@@ -115,19 +134,35 @@ function registerLensParents(m: AnyCell): void {
  *  from `cond`), which is how `recompile` finds what to dispose. */
 const owner = new WeakMap<AnyCell, Component>();
 
-/** A knowledge cell's standing self-assertion, held as a real source cell so
- *  the solver depends on it (a write re-invalidates) and so a member that
- *  leaves every relation can relax back to it. Created — capturing the cell's
- *  current value — the first time the cell becomes a relation member, while
- *  it is still a plain source. */
-const baseOf = new WeakMap<AnyCell, AnyCell>();
+/** Cells that are relation members (write-targets, plus lens-chain cells folded
+ *  in for SCC detection). A pure membership MARKER: the standing-assertion
+ *  channel itself lives on the member's own transfer (`_rel.base`, set when it
+ *  attaches), not in a side table. Used to tell a real member apart from a
+ *  read-only external that merely shares the condensation graph. */
+const memberCells = new WeakSet<AnyCell>();
+
+/** Cells declared FREE variables (`free`): they carry no standing fact, so a
+ *  component seeds them ⊤ and lets the interval contractors determine them. */
+const freeVars = new WeakSet<AnyCell>();
+
+/** Declare `c` a FREE variable. Without this a cell's current value is a FACT
+ *  and an inequality that excludes it is a contradiction (notes §7a), so the
+ *  contractors only validate consistency — they never narrow. A free variable
+ *  is seeded ⊤ instead, with its value kept as the SOFT fallback (its preferred
+ *  value when the constraints leave it underdetermined): `bound(x, 3, ∞)` then
+ *  pulls `x = 0` up to `3` but leaves `x = 8` alone, and the band flows on
+ *  through `order`/`add`/`total`. Re-declarable any time; takes effect on the
+ *  next solve. The soft-constraint (preferred-value) propagator model. */
+export function free<T>(c: Cell<T>): void {
+  freeVars.add(c as AnyCell);
+}
 
 /** Re-assert a knowledge cell's standing value. While the cell is a member
  *  this writes its base (re-invalidating its region); otherwise it writes
  *  the cell directly. Plain `cell.value = …` does the same — `assert` is
  *  just the explicit spelling. */
 export function assert<T>(c: Cell<T>, value: T): void {
-  const b = baseOf.get(c);
+  const b = (c as AnyCell)._rel?.base;
   if (b !== undefined) (b as Cell<T>)._writeSource(value);
   else (c as Cell<T>)._writeSource(value);
 }
@@ -141,14 +176,13 @@ export function constrain(
 ): () => void {
   const rule: Rule = { reads, writes, body };
   for (const w of writes) {
-    // Capture the standing-assertion channel the first time `w` becomes a
-    // member — while it still holds its original identity. For a source that's
-    // a value snapshot; for a lens it's a clone of the lens (so upstream flows
-    // in and writes flow back through it). See `captureBase`. Also fold the
+    // Mark `w` a member the first time it joins a relation. Its standing-
+    // assertion channel is captured lazily at build time (while it still holds
+    // its original identity) and then lives on its own transfer. Also fold the
     // lens's structural read-edges into the condensation so lens-coupled
     // regions condense into one SCC instead of oscillating across components.
-    if (latticeOf(w) !== undefined && !baseOf.has(w)) {
-      baseOf.set(w, captureBase(w));
+    if (latticeOf(w) !== undefined && !memberCells.has(w)) {
+      memberCells.add(w);
       registerLensParents(w);
     }
     const rs = rulesByMember.get(w);
@@ -211,7 +245,7 @@ function recompile(writes: readonly AnyCell[]): void {
   // back to its standing assertion as a plain source.
   for (const m of orphans) {
     if (!owner.has(m)) {
-      const b = baseOf.get(m);
+      const b = m._rel?.base;
       if (b !== undefined) relaxToBase(m, b);
     }
   }
@@ -230,27 +264,49 @@ function liftToKSpace(
   latM: Lattice<unknown, unknown>,
   p: AnyCell,
   latP: Lattice<unknown, unknown>,
-  bodies: RelationBody[],
+  rules: CompiledRule[],
 ): void {
   const fwd = rel.fwd;
-  bodies.push((get, emit) => {
-    const pv = latP.pinned(get(p));
-    if (pv !== undefined) emit(m, latM.abstract(fwd(pv)));
+  // Iso over two scalar intervals: a monotone homomorphism, so map the WHOLE
+  // band both ways (a real two-way interval transformer). Partial knowledge — a
+  // free var bounded `≥ 3` — now flows through `.add`/`.scale`/`.affine`/`.exp`
+  // instead of waiting for the parent to pin a point.
+  if (rel.kind === K.Iso && latM === interval && latP === interval) {
+    const bwd = rel.bwd;
+    rules.push({ reads: [p], body: (get, emit) => emit(m, mapBand(iv(get(p)), fwd as F)) });
+    rules.push({ reads: [m], body: (get, emit) => emit(p, mapBand(iv(get(m)), bwd as F)) });
+    return;
+  }
+  // Pin-gated fallback (any lattice / any kind): forward once the parent's
+  // knowledge pins a value; backward only for a source-independent (Iso)
+  // inverse. A non-monotone inverse (sin/clamp/quantize — `Lens` kind) abstains
+  // backward, still sound.
+  rules.push({
+    reads: [p],
+    body: (get, emit) => {
+      const pv = latP.pinned(get(p));
+      if (pv !== undefined) emit(m, latM.abstract(fwd(pv)));
+    },
   });
   if (rel.kind === K.Iso) {
     const bwd = rel.bwd;
-    bodies.push((get, emit) => {
-      const mv = latM.pinned(get(m));
-      if (mv !== undefined) emit(p, latP.abstract(bwd(mv)));
+    rules.push({
+      reads: [m],
+      body: (get, emit) => {
+        const mv = latM.pinned(get(m));
+        if (mv !== undefined) emit(p, latP.abstract(bwd(mv)));
+      },
     });
   }
 }
 
+type F = (t: number) => number;
+
 function buildComponent(rep: AnyCell): void {
-  // Real members carry a base (set when they became a write-member). Lens
-  // parents pulled in only as condensation nodes (for SCC detection) have a
-  // lattice but no base — they're channels into the component, not solved.
-  const members = cond.membersOf(rep).filter(c => baseOf.has(c));
+  // Real members are marked in `memberCells` (write-targets + lens-chain cells).
+  // Lens parents pulled in only as condensation nodes (for SCC detection) have a
+  // lattice but no mark — they're channels into the component, not solved.
+  const members = cond.membersOf(rep).filter(c => memberCells.has(c));
   if (members.length === 0) return;
 
   const memberSet = new Set(members);
@@ -258,10 +314,14 @@ function buildComponent(rep: AnyCell): void {
   for (const m of members) for (const r of rulesByMember.get(m) ?? []) ruleSet.add(r);
   if (ruleSet.size === 0) return; // no rules → nothing to solve; relax as orphan
 
-  const bases = members.map(m => baseOf.get(m)!);
+  // Reuse the member's existing channel (re-join / relaxed: it lives on `_rel`),
+  // else capture it now while the cell still holds its original identity. The
+  // channel is durable thereafter — `attachMember` stows it back on `_rel.base`.
+  const bases = members.map(m => m._rel?.base ?? captureBase(m));
   const lattices = members.map(m => latticeOf(m)!);
-  const bodies: RelationBody[] = [...ruleSet].map(r => r.body);
+  const rules: CompiledRule[] = [...ruleSet].map(r => ({ body: r.body, reads: r.reads }));
   const derived = members.map(() => false);
+  const isFree = members.map(m => freeVars.has(m));
   const fallbacks = new Array<unknown>(members.length);
 
   // A lens member whose PARENT is a fellow member is a constraint lens (the
@@ -294,12 +354,12 @@ function buildComponent(rep: AnyCell): void {
 
     if (singleMemberParent) {
       const p = parent as AnyCell;
-      liftToKSpace(rel, m, lattices[i]!, p, latticeOf(p)!, bodies);
+      liftToKSpace(rel, m, lattices[i]!, p, latticeOf(p)!, rules);
     }
   });
 
   // The Component constructor projects each member onto its solved slot.
-  const comp = new Component(members, bases, lattices, bodies, derived, fallbacks);
+  const comp = new Component(members, bases, lattices, rules, derived, fallbacks, isFree);
   for (const m of members) owner.set(m, comp);
 }
 
@@ -316,5 +376,107 @@ export function equal<T>(a: Cell<T>, b: Cell<T>): () => void {
   return () => {
     d1();
     d2();
+  };
+}
+
+// ── interval contractors (native two-way narrowers) ─────────────────
+//
+// Ported from `src/propagators/numeric.ts` onto core3's interval knowledge K
+// (`{ min, max }`, the lattice every scalar value class — `Num` — declares).
+// Each emits a one-sided band, so it NARROWS rather than asserts: it folds
+// through the solver's `meet` and inherits termination + order-independence.
+// Like every inequality, a contractor only refines a cell that is a BAND (an
+// underdetermined/free member, seeded ⊤); a cell pinned to a concrete fact that
+// the band excludes is a contradiction, not a narrowing (notes §7a). The cells
+// must carry the interval lattice.
+
+/** `x ∈ [lo, hi]` (pins when `hi` is omitted). Self-applying, so a widening
+ *  re-seed gets re-narrowed. */
+export function bound(x: Cell<number>, lo: number, hi: number = lo): () => void {
+  const cx = x as Cell<unknown>;
+  return constrain([x], [x], (_get, emit) => emit(cx, { min: lo, max: hi }));
+}
+
+/** `a + gap ≤ b`. Narrows `a` from above and `b` from below. */
+export function order(a: Cell<number>, b: Cell<number>, gap = 0): () => void {
+  const ca = a as Cell<unknown>;
+  const cb = b as Cell<unknown>;
+  const d1 = constrain([b], [a], (get, emit) =>
+    emit(ca, { min: NINF, max: iv(get(cb)).max - gap }),
+  );
+  const d2 = constrain([a], [b], (get, emit) =>
+    emit(cb, { min: iv(get(ca)).min + gap, max: PINF }),
+  );
+  return () => {
+    d1();
+    d2();
+  };
+}
+
+/** `a + b = c`. Three narrowers; any two bound the third. */
+export function add(a: Cell<number>, b: Cell<number>, c: Cell<number>): () => void {
+  const ca = a as Cell<unknown>;
+  const cb = b as Cell<unknown>;
+  const cc = c as Cell<unknown>;
+  const d1 = constrain([a, b], [c], (get, emit) => {
+    const ia = iv(get(ca));
+    const ib = iv(get(cb));
+    emit(cc, { min: ia.min + ib.min, max: ia.max + ib.max });
+  });
+  const d2 = constrain([a, c], [b], (get, emit) => {
+    const ia = iv(get(ca));
+    const ic = iv(get(cc));
+    emit(cb, { min: ic.min - ia.max, max: ic.max - ia.min });
+  });
+  const d3 = constrain([b, c], [a], (get, emit) => {
+    const ib = iv(get(cb));
+    const ic = iv(get(cc));
+    emit(ca, { min: ic.min - ib.max, max: ic.max - ib.min });
+  });
+  return () => {
+    d1();
+    d2();
+    d3();
+  };
+}
+
+/** `Σ parts = whole`. N+1 narrowers: whole from the parts, each part from
+ *  whole minus the others. Order-independent. */
+export function total(parts: readonly Cell<number>[], whole: Cell<number>): () => void {
+  if (parts.length === 0) return () => {};
+  const cw = whole as Cell<unknown>;
+  const cparts = parts as readonly Cell<unknown>[];
+  const disposers: (() => void)[] = [];
+  disposers.push(
+    constrain(parts, [whole], (get, emit) => {
+      let min = 0;
+      let max = 0;
+      for (const p of cparts) {
+        const ip = iv(get(p));
+        min += ip.min;
+        max += ip.max;
+      }
+      emit(cw, { min, max });
+    }),
+  );
+  for (let i = 0; i < parts.length; i++) {
+    const target = cparts[i]!;
+    const others = cparts.filter((_, j) => j !== i);
+    disposers.push(
+      constrain([whole, ...others], [parts[i]!], (get, emit) => {
+        let oMin = 0;
+        let oMax = 0;
+        for (const o of others) {
+          const io = iv(get(o));
+          oMin += io.min;
+          oMax += io.max;
+        }
+        const iw = iv(get(cw));
+        emit(target, { min: iw.min - oMax, max: iw.max - oMin });
+      }),
+    );
+  }
+  return () => {
+    for (const d of disposers) d();
   };
 }

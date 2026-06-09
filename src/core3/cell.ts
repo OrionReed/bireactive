@@ -369,6 +369,14 @@ class Transfer {
   scratch: unknown[] | undefined = undefined;
   /** Lens only: lazy inverse memo. */
   memo: InverseMemo | undefined = undefined;
+  /** Relation member only: the cell's durable standing-assertion channel — the
+   *  cell the solver reads (a source snapshot, or a lens clone over the live
+   *  upstream) and that member writes flow to. Lives HERE on the member's own
+   *  transfer (not a side WeakMap): set once `captureBase` runs, carried across
+   *  every re-compile (dispose never touches a member's `_rel`) and through a
+   *  relax, so a member literally holds its own assertion. `undefined` ⇒ the
+   *  cell has never joined a relation. */
+  base: Cell<unknown> | undefined = undefined;
   /** Index in `bwdQueue` of this cell's latest push; the drain skips stale
    *  entries so each cell propagates backward once per flush, last-write. */
   queueIdx = -1;
@@ -1559,6 +1567,17 @@ export type RelationBody = (
   emit: (c: Cell<unknown>, k: unknown) => void,
 ) => void;
 
+/** A `RelationBody` paired with the cells it READS. The solver uses the reads
+ *  to gate re-firing (semi-naive): a rule only re-runs when a member it reads
+ *  has narrowed this solve. External reads are constant within a solve, so they
+ *  never gate — a rule reading only externals fires exactly once. The contract
+ *  is that `reads` covers every member the body pulls via `get`; under-declaring
+ *  would miss a re-fire and could stop short of the fixpoint. */
+export interface CompiledRule {
+  readonly body: RelationBody;
+  readonly reads: readonly Cell<unknown>[];
+}
+
 /** Waves of exact `meet` iteration before a solve starts WIDENING. Any
  *  finite-height lattice (flat, bitset, product of finite) reaches its
  *  fixpoint long before this, so widening never engages and the result is
@@ -1576,7 +1595,12 @@ export class Component extends Cell<number> {
   readonly members: readonly Cell<unknown>[];
   private readonly bases: readonly Cell<unknown>[];
   private readonly lattices: readonly Lattice<unknown, unknown>[];
-  private readonly rules: readonly RelationBody[];
+  private readonly rules: readonly CompiledRule[];
+  /** Reverse freshness index: `readers[i]` lists the rule indices that READ
+   *  member slot `i`. When a slot narrows, exactly these rules re-fire. Built
+   *  once from each rule's declared reads (externals dropped — constant within a
+   *  solve). */
+  private readonly readers: readonly number[][];
   /** Per slot: true ⇒ a fully-DERIVED member (a lens whose parent is a fellow
    *  member). It carries no standing assertion — seed ⊤ and let its forward
    *  transformer determine it — and on publish falls back to `fallbacks[i]`
@@ -1584,6 +1608,14 @@ export class Component extends Cell<number> {
    *  solve through the parent). A source/channel member is `false`: seed its
    *  base, fall back to its base's live value. */
   private readonly derived: readonly boolean[];
+  /** Per slot: true ⇒ a FREE variable (declared via `free`). It carries no
+   *  standing FACT — seed ⊤ so inequality/arithmetic contractors actually
+   *  narrow it — but its base value is the SOFT fallback on publish (its
+   *  preferred value when underdetermined). Read live each solve, so a write to
+   *  the base is a dependency that re-solves. The difference from `derived`: a
+   *  derived member has a forward transformer and a frozen fallback; a free
+   *  member is a plain source with no fact and a live fallback. */
+  private readonly free: readonly boolean[];
   private readonly fallbacks: readonly unknown[];
   private readonly index = new Map<Cell<unknown>, number>();
   /** Published concrete value per member slot; read by member projections. */
@@ -1594,9 +1626,10 @@ export class Component extends Cell<number> {
     members: readonly Cell<unknown>[],
     bases: readonly Cell<unknown>[],
     lattices: readonly Lattice<unknown, unknown>[],
-    rules: readonly RelationBody[],
+    rules: readonly CompiledRule[],
     derived: readonly boolean[],
     fallbacks: readonly unknown[],
+    free: readonly boolean[],
   ) {
     super(0);
     this.members = members;
@@ -1605,11 +1638,20 @@ export class Component extends Cell<number> {
     this.rules = rules;
     this.derived = derived;
     this.fallbacks = fallbacks;
+    this.free = free;
     // Seed each slot with the member's current value so a projection reads a
     // well-formed `T` even before the first solve (and if this component is
     // disposed without ever solving) — never `undefined`.
     this.solved = members.map(m => m.currentValue);
     members.forEach((m, i) => this.index.set(m, i));
+    const readers: number[][] = members.map(() => []);
+    rules.forEach((rule, r) => {
+      for (const c of rule.reads) {
+        const i = this.index.get(c);
+        if (i !== undefined) readers[i]!.push(r);
+      }
+    });
+    this.readers = readers;
     this.getter = () => this.solve();
     this.flags = F.Mutable | F.Dirty;
     members.forEach((m, i) => attachMember(m, this, i, bases[i]!));
@@ -1619,13 +1661,22 @@ export class Component extends Cell<number> {
    *  the node's getter (tracked), so every base/external read becomes a dep —
    *  any of them changing re-invalidates the whole component.
    *
-   *  Allocation discipline: one `work` array per solve (not per wave) and an
-   *  external snapshot cache so a rule re-reading the same outside cell across
-   *  waves lifts it once. Convergence is tracked per `emit` (a `moved` flag),
-   *  so there is no per-wave array copy. */
+   *  Semi-naive, wave-based (mirrors `src/propagators/solver.ts`): the first
+   *  wave fires every rule; each later wave fires only the rules that READ a
+   *  slot which narrowed in the previous wave (`readers` reverse index). Firing
+   *  in ascending rule index within a wave preserves the cascade order a
+   *  full-sweep got "for free", so a chain/ring converges in a few waves rather
+   *  than circulating; gating on freshness skips the rules that can't have
+   *  changed. Meet is confluent, so the fixpoint is order-independent.
+   *
+   *  Allocation discipline: one `work` array per solve, an external snapshot
+   *  cache (each outside cell lifted once), and two reused frontier buffers so
+   *  there's no per-wave array churn. */
   private solve(): number {
-    const { members, bases, lattices, rules, index, solved, derived, fallbacks } = this;
+    const { members, bases, lattices, rules, readers, index, solved, derived, fallbacks, free } =
+      this;
     const n = members.length;
+    const R = rules.length;
     const work = new Array<unknown>(n);
     const fb = new Array<unknown>(n); // concretize fallback, captured at seed time
     const extCache = new Map<Cell<unknown>, unknown>();
@@ -1648,17 +1699,28 @@ export class Component extends Cell<number> {
       extCache.set(c, k);
       return k;
     };
-    let moved = false;
+
+    // Slots that narrowed during the current wave (deduped via `slotDirty`),
+    // consumed afterwards to build the next wave's rule frontier.
+    const slotDirty = new Uint8Array(n);
+    const narrowed: number[] = [];
     let widening = false;
     const emit = (c: Cell<unknown>, k: unknown): void => {
       const i = index.get(c);
       if (i === undefined) return;
       const lat = lattices[i]!;
-      let next = lat.meet(work[i], k);
-      if (widening && lat.widen !== undefined) next = lat.widen(work[i], next);
-      if (!lat.equals(work[i], next)) {
+      const cur = work[i];
+      // Monotone meet: combine contributions by greatest-lower-bound. A genuine
+      // clash collapses to ⊥ and `concretize` then falls back (notes §7c).
+      // Associative/commutative/idempotent ⇒ the fixpoint is order-independent.
+      let next = lat.meet(cur, k);
+      if (widening && lat.widen !== undefined) next = lat.widen(cur, next);
+      if (!lat.equals(cur, next)) {
         work[i] = next;
-        moved = true;
+        if (slotDirty[i] === 0) {
+          slotDirty[i] = 1;
+          narrowed.push(i);
+        }
       }
     };
 
@@ -1675,7 +1737,9 @@ export class Component extends Cell<number> {
       }
       try {
         const sv = bases[i]!.value;
-        work[i] = lat.abstract(sv);
+        // Free variable: ⊤ seed (no fact, so contractors narrow it) but the
+        // base is its SOFT fallback (read live ⇒ still a re-solve dependency).
+        work[i] = free[i] ? lat.top : lat.abstract(sv);
         fb[i] = sv;
       } catch (e) {
         if (!(e instanceof RangeError)) throw e;
@@ -1683,12 +1747,39 @@ export class Component extends Cell<number> {
         fb[i] = members[i]!.currentValue; // cached value, no re-entrant read
       }
     }
-    let waves = 0;
-    do {
-      moved = false;
-      if (++waves > WIDEN_AFTER) widening = true;
-      for (const body of rules) body(get, emit);
-    } while (moved);
+
+    // Wave 0 fires every rule; later waves only the readers of narrowed slots.
+    // WIDEN_AFTER waves ≈ WIDEN_AFTER·R firings: only a genuinely infinite
+    // descent reaches it; finite lattices drain far sooner.
+    const widenAt = WIDEN_AFTER * (R || 1);
+    let firings = 0;
+    const ruleQueued = new Uint8Array(R);
+    let frontier: number[] = Array.from({ length: R }, (_, r) => r);
+    let next: number[] = [];
+    while (frontier.length > 0) {
+      narrowed.length = 0;
+      for (let f = 0; f < frontier.length; f++) {
+        if (++firings > widenAt) widening = true;
+        rules[frontier[f]!]!.body(get, emit);
+      }
+      next.length = 0;
+      for (let q = 0; q < narrowed.length; q++) {
+        const slot = narrowed[q]!;
+        slotDirty[slot] = 0;
+        const rs = readers[slot]!;
+        for (let j = 0; j < rs.length; j++) {
+          const r = rs[j]!;
+          if (ruleQueued[r] === 0) {
+            ruleQueued[r] = 1;
+            next.push(r);
+          }
+        }
+      }
+      for (let j = 0; j < next.length; j++) ruleQueued[next[j]!] = 0;
+      const tmp = frontier;
+      frontier = next;
+      next = tmp;
+    }
     for (let i = 0; i < n; i++) solved[i] = lattices[i]!.concretize(work[i], fb[i]);
 
     return ++this.version;
@@ -1719,11 +1810,31 @@ function attachMember(m: Cell<unknown>, comp: Component, slot: number, base: Cel
   );
 }
 
-/** `m` left every relation: relax to a passthrough of its base channel —
- *  reads mirror `base` (a snapshot source, or a live lens), writes route to
- *  it. */
+/** `m` left every relation: relax it back to standalone.
+ *
+ *  A SOURCE member becomes a plain source again, adopting the base's value
+ *  directly — no passthrough indirection. A re-join simply re-captures from `m`.
+ *  A LENS member relaxes to a passthrough of its clone (reads live upstream,
+ *  writes route back through the lens). */
 export function relaxToBase<T>(m: Cell<T>, base: Cell<T>): void {
-  rewire(m as Cell<unknown>, () => (base as Cell<unknown>).value, base as Cell<unknown>);
+  const mu = m as Cell<unknown>;
+  const b = base as Cell<unknown>;
+  if (b.getter !== undefined) {
+    rewire(mu, () => b.value, b); // lens member: passthrough to the clone
+    return;
+  }
+  disposeAllDepsInReverse(mu);
+  mu.getter = undefined;
+  mu._rel = undefined;
+  // Stage the base value as a pending write (don't overwrite `currentValue`):
+  // `_update`/the value getter must still see the old→new transition, or a
+  // downstream reader would treat the relax as a no-op and skip re-solving.
+  mu.pendingValue = b.peek();
+  mu.flags = F.Mutable | F.Dirty;
+  if (mu.subs !== undefined) {
+    propagate(mu.subs, false);
+    if (!flushing) flush();
+  }
 }
 
 /** Repoint `m` as a single-parent lens (getter + identity write-back to
@@ -1736,6 +1847,7 @@ function rewire(m: Cell<unknown>, getter: () => unknown, base: Cell<unknown>): v
   const id = (v: unknown): unknown => v;
   const r = (m._rel = new Transfer(K.Iso, id, id));
   r.parents = base;
+  r.base = base; // durable: the member's own standing-assertion channel
   m.flags = F.Mutable | F.Dirty;
   if (m.subs !== undefined) {
     propagate(m.subs, false);
@@ -1743,12 +1855,13 @@ function rewire(m: Cell<unknown>, getter: () => unknown, base: Cell<unknown>): v
   }
 }
 
-/** Capture `m`'s current writable identity as a durable BASE channel — the
- *  assertion the solver reads and that member writes flow to. A SOURCE yields
- *  a snapshot source; a LENS yields a clone carrying the same derivation +
- *  inverse (so the solver reads the LIVE upstream value and member writes
- *  route back through the lens). Captured once, while `m` still holds its
- *  original identity; durable across re-joins so writes are never lost. */
+/** Capture `m`'s current writable identity as its BASE channel — the assertion
+ *  the solver reads and that member writes flow to. A SOURCE yields a snapshot
+ *  source; a LENS yields a clone carrying the same derivation + inverse (so the
+ *  solver reads the LIVE upstream value and member writes route back through the
+ *  lens). Called once, while `m` still holds its original identity; the result
+ *  is stowed on the member's transfer (`_rel.base`) by `rewire`, durable across
+ *  re-joins so writes are never lost. */
 export function captureBase<T>(m: Cell<T>): Cell<T> {
   const base = new Cell<T>(m.peek());
   base._equals = m._equals;
