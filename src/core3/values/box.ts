@@ -11,7 +11,6 @@ import {
   type Init,
   type Inner,
   isReadonly,
-  type Lattice,
   lazy,
   type Read,
   reader,
@@ -20,6 +19,7 @@ import {
   type Writable,
   type WritableBrand,
 } from "../cell";
+import { interval, tuple } from "../lattice";
 import type { Linear, Pack, TraitDict } from "../traits";
 import { Bool } from "./bool";
 import { Num, num } from "./num";
@@ -115,11 +115,6 @@ const packImpl: Pack<V> = {
   write: (a, o) => ({ x: a[o]!, y: a[o + 1]!, w: a[o + 2]!, h: a[o + 3]! }),
 };
 
-const LAT_EPS = 1e-9;
-/** ε-equality that also treats ±∞ === ±∞ as equal (so `top` compares equal
- *  to itself despite `∞ - ∞ = NaN`). */
-const eqf = (a: number, b: number): boolean => a === b || Math.abs(a - b) <= LAT_EPS;
-
 export class Box extends Cell<V> {
   static traits = {
     linear: linearImpl,
@@ -130,28 +125,12 @@ export class Box extends Cell<V> {
   } satisfies TraitDict<V>;
   declare readonly _t: typeof Box.traits;
 
-  /** Rectangle-intersection lattice — a `Box` read as partial knowledge of
-   *  a region. `meet` is overlap (max of left/top edges, min of right/bottom),
-   *  `isBottom` is a degenerate (negative-extent) rect. `top` uses a finite
-   *  left/top with infinite extent so `left + w` never evaluates to `NaN`.
-   *  The relate layer picks this up when a `Box` joins a cyclic relation. */
-  static lattice: Lattice<V> = {
-    top: {
-      x: -Number.MAX_VALUE,
-      y: -Number.MAX_VALUE,
-      w: Number.POSITIVE_INFINITY,
-      h: Number.POSITIVE_INFINITY,
-    },
-    meet: (a, b) => {
-      const x = Math.max(a.x, b.x);
-      const y = Math.max(a.y, b.y);
-      const right = Math.min(a.x + a.w, b.x + b.w);
-      const bottom = Math.min(a.y + a.h, b.y + b.h);
-      return { x, y, w: right - x, h: bottom - y };
-    },
-    equals: (a, b) => eqf(a.x, b.x) && eqf(a.y, b.y) && eqf(a.w, b.w) && eqf(a.h, b.h),
-    isBottom: a => a.w < -LAT_EPS || a.h < -LAT_EPS,
-  };
+  /** Domain-faithful componentwise lattice: x, y, w, h each narrow as an
+   *  independent interval, so the field lenses (`.x` / `.w` / …) project as
+   *  homomorphisms. (This is the four-coordinate reading, not "the rect lies
+   *  somewhere in this region" — the latter couples x with w via right=x+w.)
+   *  The relate layer picks it up when a `Box` joins a cyclic relation. */
+  static lattice = tuple<V>({ x: interval, y: interval, w: interval, h: interval });
 
   constructor(v: V = { x: 0, y: 0, w: 0, h: 0 }) {
     super(v, { equals });

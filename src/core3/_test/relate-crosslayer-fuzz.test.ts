@@ -31,11 +31,34 @@ function mulberry32(seed: number): () => number {
 }
 
 type V = { lo: number; hi: number };
-const meet = (a: V, b: V): V => ({ lo: Math.max(a.lo, b.lo), hi: Math.min(a.hi, b.hi) });
 const shiftV = (v: V, k: number): V => ({ lo: v.lo + k, hi: v.hi + k });
 const TOP: V = { lo: Number.NEGATIVE_INFINITY, hi: Number.POSITIVE_INFINITY };
 const close = (x: number, y: number) => x === y || Math.abs(x - y) <= 1e-6;
 const eqV = (a: V, b: V) => close(a.lo, b.lo) && close(a.hi, b.hi);
+
+// Coordinate-pair Range knowledge: an interval per endpoint. `equal` unifies a
+// field only when every group member agrees; a conflicting field falls back to
+// the member's OWN assertion (no span intersection).
+type RK = { loMin: number; loMax: number; hiMin: number; hiMax: number };
+const TOPK: RK = {
+  loMin: Number.NEGATIVE_INFINITY,
+  loMax: Number.POSITIVE_INFINITY,
+  hiMin: Number.NEGATIVE_INFINITY,
+  hiMax: Number.POSITIVE_INFINITY,
+};
+const seedK = (v: V): RK => ({ loMin: v.lo, loMax: v.lo, hiMin: v.hi, hiMax: v.hi });
+const meetK = (a: RK, b: RK): RK => ({
+  loMin: Math.max(a.loMin, b.loMin),
+  loMax: Math.min(a.loMax, b.loMax),
+  hiMin: Math.max(a.hiMin, b.hiMin),
+  hiMax: Math.min(a.hiMax, b.hiMax),
+});
+const conc1 = (min: number, max: number, fb: number): number =>
+  min > max ? fb : min === max ? min : Math.max(min, Math.min(max, fb));
+const concK = (k: RK, own: V): V => ({
+  lo: conc1(k.loMin, k.loMax, own.lo),
+  hi: conc1(k.hiMin, k.hiMax, own.hi),
+});
 
 interface Node {
   kind: "source" | "shift";
@@ -80,9 +103,9 @@ function oracle(nodes: Node[], asserted: V[], edges: Array<[number, number]>): V
       if (!member[i]) {
         next[i] = assertion[i]!;
       } else {
-        let v = TOP;
-        for (const g of byRep.get(rep[i]!)!) if (member[g]) v = meet(v, assertion[g]!);
-        next[i] = v;
+        let k = TOPK;
+        for (const g of byRep.get(rep[i]!)!) if (member[g]) k = meetK(k, seedK(assertion[g]!));
+        next[i] = concK(k, assertion[i]!); // conflicting field ⇒ own assertion
       }
     }
     let changed = false;
@@ -117,11 +140,14 @@ function buildGraph(rnd: () => number) {
   return { nodes, cells, asserted };
 }
 
-/** Is the relation graph SOLVABLE by the pull model? Contract equal-groups,
+/** Is the relation graph modellable BY THIS ORACLE? Contract equal-groups,
  *  then the quotient graph of lens-parent dependencies (group(m) → group(its
  *  parent)) must be acyclic — including self-loops. A cycle there is a
- *  "relation cycle through a lens", which the engine rejects by design (the
- *  fold can't see lens transfer-functions) and which the oracle can't model. */
+ *  cycle-through-a-lens: the engine now solves these in-fold (lens edges are
+ *  folded into the condensation, so the region is one SCC with constraint
+ *  transformers — see `relate-robustness-fuzz`), but this brute-force oracle
+ *  models lenses only as channels, so it can't predict those values. We keep
+ *  the filter to compare against the cases the oracle CAN model. */
 function solvable(nodes: Node[], edges: Array<[number, number]>): boolean {
   const n = nodes.length;
   const rep = groupsOf(n, edges);

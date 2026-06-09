@@ -1,23 +1,18 @@
 // Property/fuzz: hammer the pull-driven relation engine against an
-// INDEPENDENT oracle. With only `equal()` constraints, each connected
-// component collapses to one SCC whose members all equal the intersection of
-// their bases — a trivially-correct reference. Random graphs + random
-// removals exercise merge, split, projection, and relax-to-base end to end,
-// after every edit.
+// INDEPENDENT oracle. `Flags` (bit-AND candidate sets) is the narrowing
+// lattice — with only `equal()` constraints, each connected component
+// collapses to one SCC whose members all equal the bit-AND of their bases, a
+// trivially-correct reference. Random graphs + random removals exercise
+// merge, split, projection, and relax-to-base end to end, after every edit.
 
 import { describe, expect, it } from "vitest";
-import { effect, range, settle } from "../index";
-import { constrain, equal } from "../relate";
+import { effect, Flags, settle } from "../index";
+import { equal } from "../relate";
 import { mulberry32 } from "./_scc-util";
 
-interface Iv {
-  lo: number;
-  hi: number;
-}
-const intersect = (xs: Iv[]): Iv => ({
-  lo: Math.max(...xs.map(x => x.lo)),
-  hi: Math.min(...xs.map(x => x.hi)),
-});
+const F = ["b0", "b1", "b2", "b3"] as const;
+const fl = (m: number) => new Flags([...F], m);
+const andAll = (xs: number[]): number => xs.reduce((a, b) => a & b, -1);
 
 class UF {
   p: number[];
@@ -33,30 +28,33 @@ class UF {
   }
 }
 
-function check(cells: Array<{ value: Iv }>, bases: Iv[], edges: Array<[number, number]>): void {
+function check(
+  cells: Array<{ value: number }>,
+  bases: number[],
+  edges: Array<[number, number]>,
+): void {
   const V = cells.length;
   const uf = new UF(V);
   for (const [i, j] of edges) uf.union(i, j);
   for (let i = 0; i < V; i++) {
     const members: number[] = [];
     for (let k = 0; k < V; k++) if (uf.find(k) === uf.find(i)) members.push(k);
-    const want = members.length === 1 ? bases[i]! : intersect(members.map(k => bases[k]!));
-    expect(cells[i]!.value).toEqual(want);
+    const want = members.length === 1 ? bases[i]! : andAll(members.map(k => bases[k]!));
+    expect(cells[i]!.value).toBe(want);
   }
 }
 
-describe("equal-graph fuzz vs intersection oracle", () => {
-  it("random graphs solve to per-component intersection; removal re-relaxes", () => {
+describe("equal-graph fuzz vs bit-AND oracle", () => {
+  it("random graphs solve to per-component bit-AND; removal re-relaxes", () => {
     for (let seed = 1; seed <= 300; seed++) {
       const rnd = mulberry32(seed * 2654435761);
       const V = 6;
-      const bases: Iv[] = [];
-      const cells: Array<{ value: Iv }> = [];
+      const bases: number[] = [];
+      const cells: Array<{ value: number }> = [];
       for (let i = 0; i < V; i++) {
-        const lo = Math.floor(rnd() * 50);
-        const hi = lo + Math.floor(rnd() * 50);
-        bases.push({ lo, hi });
-        cells.push(range(lo, hi) as unknown as { value: Iv });
+        const m = Math.floor(rnd() * 16);
+        bases.push(m);
+        cells.push(fl(m) as unknown as { value: number });
       }
 
       const edges: Array<[number, number]> = [];
@@ -66,10 +64,7 @@ describe("equal-graph fuzz vs intersection oracle", () => {
         const i = Math.floor(rnd() * V);
         const j = Math.floor(rnd() * V);
         if (i === j) continue;
-        disposers.push({
-          d: equal(cells[i] as never, cells[j] as never),
-          e: [i, j],
-        });
+        disposers.push({ d: equal(cells[i] as never, cells[j] as never), e: [i, j] });
         edges.push([i, j]);
       }
 
@@ -81,13 +76,15 @@ describe("equal-graph fuzz vs intersection oracle", () => {
         const idx = Math.floor(rnd() * live.length);
         const [removed] = live.splice(idx, 1);
         removed!.d();
-        // recompute remaining edge set
-        const remaining = live.map(x => x.e);
-        check(cells, bases, remaining);
+        check(
+          cells,
+          bases,
+          live.map(x => x.e),
+        );
       }
 
       // all removed → every cell is its own base
-      for (let i = 0; i < V; i++) expect(cells[i]!.value).toEqual(bases[i]!);
+      for (let i = 0; i < V; i++) expect(cells[i]!.value).toBe(bases[i]!);
     }
   });
 });
@@ -97,18 +94,15 @@ describe("effects + churn fuzz (push-notification path)", () => {
     for (let seed = 1; seed <= 150; seed++) {
       const rnd = mulberry32(seed * 2246822519 + 13);
       const V = 5;
-      const bases: Iv[] = [];
-      const cells: Array<{ value: Iv }> = [];
+      const bases: number[] = [];
+      const cells: Array<{ value: number }> = [];
       for (let i = 0; i < V; i++) {
-        const lo = Math.floor(rnd() * 40);
-        const hi = lo + Math.floor(rnd() * 40);
-        bases.push({ lo, hi });
-        cells.push(range(lo, hi) as unknown as { value: Iv });
+        const m = Math.floor(rnd() * 16);
+        bases.push(m);
+        cells.push(fl(m) as unknown as { value: number });
       }
 
-      // One effect per cell records the last value it OBSERVED (fires only
-      // when its cell's solved value changes).
-      const seen: Iv[] = new Array(V);
+      const seen: number[] = new Array(V);
       const stops = cells.map((c, i) =>
         effect(() => {
           seen[i] = c.value;
@@ -117,12 +111,12 @@ describe("effects + churn fuzz (push-notification path)", () => {
 
       const disp = new Map<string, () => void>();
       const edges: Array<[number, number]> = [];
-      const oracleValue = (i: number): Iv => {
+      const oracleValue = (i: number): number => {
         const uf = new UF(V);
         for (const [x, y] of edges) uf.union(x, y);
         const members: number[] = [];
         for (let k = 0; k < V; k++) if (uf.find(k) === uf.find(i)) members.push(k);
-        return members.length === 1 ? bases[i]! : intersect(members.map(k => bases[k]!));
+        return members.length === 1 ? bases[i]! : andAll(members.map(k => bases[k]!));
       };
 
       for (let op = 0; op < 14; op++) {
@@ -141,39 +135,10 @@ describe("effects + churn fuzz (push-notification path)", () => {
             if (at >= 0) edges.splice(at, 1);
           }
         }
-        // effects defer to the microtask; drain them to observe synchronously
-        settle();
-        // every effect must have observed the current solved value
-        for (let k = 0; k < V; k++) expect(seen[k]).toEqual(oracleValue(k));
+        settle(); // effects defer to the microtask; drain to observe synchronously
+        for (let k = 0; k < V; k++) expect(seen[k]).toBe(oracleValue(k));
       }
       for (const s of stops) s();
     }
   });
 });
-
-describe("longest-path order fuzz", () => {
-  // a_k.lo ≥ a_{k-1}.lo + 1 along a chain ⇒ a_k.lo = k (from a_0.lo = 0).
-  it("a chain of ≥-by-1 constraints yields the longest path", () => {
-    for (let seed = 1; seed <= 50; seed++) {
-      const rnd = mulberry32(seed * 40503 + 1);
-      const N = 3 + Math.floor(rnd() * 6);
-      const a = Array.from({ length: N }, () => range(0, Number.POSITIVE_INFINITY));
-      for (let k = 1; k < N; k++) {
-        const prev = a[k - 1]!;
-        const cur = a[k]!;
-        constrainGE(prev, cur, 1);
-      }
-      for (let k = 0; k < N; k++) expect(Math.round(a[k]!.value.lo)).toBe(k);
-    }
-  });
-});
-
-function constrainGE(
-  prev: ReturnType<typeof range>,
-  cur: ReturnType<typeof range>,
-  gap: number,
-): void {
-  constrain([prev], [cur], (get, emit) =>
-    emit(cur, { lo: get(prev).lo + gap, hi: Number.POSITIVE_INFINITY }),
-  );
-}

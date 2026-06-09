@@ -2,16 +2,22 @@
 // runs lazily on read, once per invalidation, in dependency order — and it
 // inherits the engine's glitch-freedom (no stale re-runs across components).
 // These tests pin those properties, which the old effect-push model lacked.
+//
+// `Flags` (bit-AND candidate sets) is used as the narrowing lattice: it
+// genuinely narrows between two concretes, so a re-solve is observable.
 
 import { describe, expect, it } from "vitest";
-import { effect, num, range, settle } from "../index";
+import { effect, Flags, num, settle } from "../index";
 import { constrain, equal } from "../relate";
+
+const F = ["b0", "b1", "b2", "b3"] as const;
+const fl = (m: number) => new Flags([...F], m);
 
 describe("solving is lazy and demand-driven", () => {
   it("does not solve until a member is read", () => {
     let runs = 0;
-    const a = range(0, 100);
-    const b = range(40, 60);
+    const a = fl(0b1111);
+    const b = fl(0b0101);
     constrain([a], [b], (get, emit) => {
       runs++;
       emit(b, get(a));
@@ -23,20 +29,19 @@ describe("solving is lazy and demand-driven", () => {
 
     expect(runs).toBe(0); // declared, but nothing pulled it → no work
 
-    expect(a.value).toEqual({ lo: 40, hi: 60 });
+    expect(a.value).toBe(0b0101); // AND of bases
     const afterFirstRead = runs;
     expect(afterFirstRead).toBeGreaterThan(0);
 
-    // Reading again with no input change reuses the memoized solve.
-    void b.value;
+    void b.value; // re-read with no input change → reuse memoized solve
     void a.value;
     expect(runs).toBe(afterFirstRead);
   });
 
   it("re-solves only after an input (base) write", () => {
     let runs = 0;
-    const a = range(0, 100);
-    const b = range(0, 100);
+    const a = fl(0b1111);
+    const b = fl(0b1111);
     constrain([a], [b], (get, emit) => {
       runs++;
       emit(b, get(a));
@@ -48,10 +53,9 @@ describe("solving is lazy and demand-driven", () => {
     void a.value;
     const settled = runs;
 
-    // Writing a member writes its assertion and invalidates the region.
-    a.value = { lo: 20, hi: 80 };
+    a.value = 0b0011; // write a member → writes its assertion, invalidates region
     expect(runs).toBe(settled); // not yet — nobody has read
-    expect(a.value).toEqual({ lo: 20, hi: 80 });
+    expect(a.value).toBe(0b0011);
     expect(runs).toBeGreaterThan(settled); // pulled → re-solved once
   });
 });
@@ -60,38 +64,35 @@ describe("glitch-freedom across chained SCCs", () => {
   it("a downstream effect fires once per upstream change (no stale re-runs)", () => {
     // Two cycles A={a,b}, C={c,d}; C is narrowed by A's member `a`, so A is
     // strictly upstream of C in the condensation.
-    const a = range(0, 100);
-    const b = range(0, 100);
+    const a = fl(0b1111);
+    const b = fl(0b1111);
     equal(a, b); // SCC A
 
-    const c = range(0, 100);
-    const d = range(0, 100);
+    const c = fl(0b1111);
+    const d = fl(0b1111);
     equal(c, d); // SCC C
-    // c ≥ a.lo  (reads a, an external to C) — makes A upstream of C
-    constrain([a], [c], (get, emit) => emit(c, { lo: get(a).lo, hi: Number.POSITIVE_INFINITY }));
+    constrain([a], [c], (get, emit) => emit(c, get(a))); // c := c ⊓ a → A upstream
 
     let fires = 0;
-    let seen = { lo: 0, hi: 0 };
+    let seen = 0;
     const stop = effect(() => {
       fires++;
       seen = c.value;
     });
     expect(fires).toBe(1); // initial run
 
-    // One upstream change → exactly one downstream fire, with the FINAL
-    // value (pull pulls A before C; never an intermediate/stale c).
-    a.value = { lo: 30, hi: 100 };
+    a.value = 0b0011; // one upstream change → exactly one downstream fire
     settle();
     expect(fires).toBe(2);
-    expect(seen.lo).toBe(30);
+    expect(seen).toBe(0b0011); // FINAL value (A pulled before C; never stale)
 
     stop();
   });
 
   it("an unrelated external change does not re-solve a component", () => {
     let runs = 0;
-    const a = range(0, 100);
-    const b = range(0, 100);
+    const a = fl(0b1111);
+    const b = fl(0b1111);
     const unrelated = num(5);
     constrain([a], [b], (get, emit) => {
       runs++;
@@ -112,13 +113,13 @@ describe("glitch-freedom across chained SCCs", () => {
 
 describe("derived views track the solved member", () => {
   it("a value-class view re-pulls when the solve changes", () => {
-    const a = range(0, 100);
-    const b = range(40, 60);
+    const a = fl(0b1111);
+    const b = fl(0b1111);
     equal(a, b);
-    expect(a.width.value).toBe(20); // [40,60]
+    expect(a.flag("b1").value).toBe(true); // 0b1111
 
-    a.value = { lo: 45, hi: 100 }; // assert a ≥ 45 → meet → [45,60]
-    expect(a.value).toEqual({ lo: 45, hi: 60 });
-    expect(a.width.value).toBe(15);
+    a.value = 0b1101; // assert a without bit1 → solved 0b1101
+    expect(a.value).toBe(0b1101);
+    expect(a.flag("b1").value).toBe(false);
   });
 });

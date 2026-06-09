@@ -29,11 +29,16 @@ export class Flags<K extends string> extends Cell<number> {
    *  all-ones mask (every bit still possible; `-1 & m = m`), `isBottom` is
    *  the empty mask. The relate layer uses it when a `Flags` joins a cyclic
    *  relation — e.g. boolean/finite-domain constraint propagation. */
-  static lattice: Lattice<number> = {
+  static lattice: Lattice<number, number> = {
     top: -1,
     meet: (a, b) => a & b,
     equals: (a, b) => a === b,
     isBottom: a => a === 0,
+    abstract: v => v,
+    concretize: (k, fallback) => (k === -1 ? fallback : k),
+    // A mask is "pinned" once it's narrowed off the all-ones top; finite
+    // height (each meet only clears bits), so no `widen` is needed.
+    pinned: k => (k === -1 ? undefined : k),
   };
 
   #bits = new Map<K, Writable<Bool>>();

@@ -1,53 +1,52 @@
 // Adversarial: try to BREAK the pull-driven SCC engine. Each block targets a
-// specific suspected weakness. Where behaviour is a genuine design question
-// the test documents what actually happens (so we learn), rather than
-// asserting a wish.
+// specific suspected weakness. `Flags` (bit-AND candidate sets) is the
+// narrowing lattice — it genuinely narrows between concretes, so re-solves are
+// observable and contradictions (empty meet) are reachable.
 
 import { describe, expect, it } from "vitest";
-import { effect, num, range, settle } from "../index";
+import { cell, effect, Flags, num, settle } from "../index";
 import { assert, constrain, equal } from "../relate";
 
-const PINF = Number.POSITIVE_INFINITY;
-const NINF = Number.NEGATIVE_INFINITY;
-const span = (lo = NINF, hi = PINF) => range(lo, hi);
+const F = ["b0", "b1", "b2", "b3"] as const;
+const fl = (m: number) => new Flags([...F], m);
 
 // ── 1. diamond: one upstream feeds two branches into a sink ──────────
 
 describe("diamond glitch-freedom", () => {
   it("a sink reading two branches of a shared upstream fires once", () => {
-    const a = span(0, 100);
-    const a2 = span(0, 100);
+    const a = fl(0b1111);
+    const a2 = fl(0b1111);
     equal(a, a2); // upstream SCC A
 
-    const b = span();
-    const b2 = span();
+    const b = fl(0b1111);
+    const b2 = fl(0b1111);
     equal(b, b2);
-    constrain([a], [b], (get, emit) => emit(b, { lo: get(a).lo, hi: PINF }));
+    constrain([a], [b], (get, emit) => emit(b, get(a))); // b ⊓= a
 
-    const c = span();
-    const c2 = span();
+    const c = fl(0b1111);
+    const c2 = fl(0b1111);
     equal(c, c2);
-    constrain([a], [c], (get, emit) => emit(c, { lo: NINF, hi: get(a).hi }));
+    constrain([a], [c], (get, emit) => emit(c, get(a)));
 
-    const d = span();
-    const d2 = span();
+    const d = fl(0b1111);
+    const d2 = fl(0b1111);
     equal(d, d2);
-    constrain([b], [d], (get, emit) => emit(d, { lo: get(b).lo, hi: PINF }));
-    constrain([c], [d], (get, emit) => emit(d, { lo: NINF, hi: get(c).hi }));
+    constrain([b], [d], (get, emit) => emit(d, get(b)));
+    constrain([c], [d], (get, emit) => emit(d, get(c)));
 
     let fires = 0;
-    let seen = { lo: 0, hi: 0 };
+    let seen = 0;
     const stop = effect(() => {
       fires++;
       seen = d.value;
     });
     expect(fires).toBe(1);
-    expect(seen).toEqual({ lo: 0, hi: 100 });
+    expect(seen).toBe(0b1111);
 
-    a.value = { lo: 30, hi: 70 }; // one change at the apex
+    a.value = 0b0011; // one change at the apex
     settle();
     expect(fires).toBe(2); // single coherent fire at the sink
-    expect(seen).toEqual({ lo: 30, hi: 70 });
+    expect(seen).toBe(0b0011);
     stop();
   });
 });
@@ -55,14 +54,12 @@ describe("diamond glitch-freedom", () => {
 // ── 2. contradiction (empty meet) ───────────────────────────────────
 
 describe("contradiction", () => {
-  it("disjoint intervals meet to bottom without looping or crashing", () => {
-    const a = span(0, 10);
-    const b = span(20, 30);
+  it("disjoint candidate sets meet to bottom without looping or crashing", () => {
+    const a = fl(0b1100);
+    const b = fl(0b0011);
     equal(a, b);
-    const v = a.value;
-    expect(v.lo).toBe(20);
-    expect(v.hi).toBe(10); // lo > hi ⇒ bottom
-    expect(range(20, 10).constructor as unknown).toBeDefined();
+    expect(a.value).toBe(0); // AND = 0 ⇒ bottom (no candidates)
+    expect(b.value).toBe(0);
   });
 });
 
@@ -70,9 +67,9 @@ describe("contradiction", () => {
 
 describe("self-loop", () => {
   it("a cell constraining itself solves to its own fixpoint", () => {
-    const a = span(0, 100);
-    constrain([a], [a], (get, emit) => emit(a, { lo: get(a).lo, hi: Math.min(get(a).hi, 50) }));
-    expect(a.value).toEqual({ lo: 0, hi: 50 });
+    const a = fl(0b1111);
+    constrain([a], [a], (_get, emit) => emit(a, 0b0111));
+    expect(a.value).toBe(0b0111);
   });
 });
 
@@ -80,8 +77,8 @@ describe("self-loop", () => {
 
 describe("re-entrancy footgun", () => {
   it("reading a co-member's .value inside a rule is caught, not silently wrong", () => {
-    const a = span(0, 100);
-    const b = span(0, 100);
+    const a = fl(0b1111);
+    const b = fl(0b1111);
     // BUG-shaped rule: should use get(a); reads a.value directly instead.
     constrain([a], [b], (_get, emit) => emit(b, a.value));
     constrain([b], [a], (get, emit) => emit(a, get(b)));
@@ -92,24 +89,24 @@ describe("re-entrancy footgun", () => {
 // ── 5. base staleness: write a value equal to the SOLVED projection ──
 
 describe("write-equal-to-solved vs base", () => {
-  it("documents whether a no-op-looking write updates the standing base", () => {
-    const a = span(0, 100);
-    const b = span(40, 60);
-    const unlink = equal(a, b); // a shows [40,60]
-    expect(a.value).toEqual({ lo: 40, hi: 60 });
+  it("a no-op-looking write still pins the standing base", () => {
+    const a = fl(0b1111);
+    const b = fl(0b0101);
+    const unlink = equal(a, b); // a shows 0b0101
+    expect(a.value).toBe(0b0101);
 
-    a.value = { lo: 40, hi: 60 }; // equals what a currently shows, but pins base
-    unlink(); // relax to the asserted base (write reaches base, not skipped)
-    expect(a.value).toEqual({ lo: 40, hi: 60 });
+    a.value = 0b0101; // equals what a currently shows, but pins base
+    unlink(); // relax to the asserted base (write reached base, not skipped)
+    expect(a.value).toBe(0b0101);
   });
 
-  it("assert() always updates the base (unlike a no-op-looking write)", () => {
-    const a = span(0, 100);
-    const b = span(40, 60);
+  it("assert() always updates the base", () => {
+    const a = fl(0b1111);
+    const b = fl(0b0101);
     const unlink = equal(a, b);
-    assert(a, { lo: 40, hi: 60 });
+    assert(a, 0b0101);
     unlink();
-    expect(a.value).toEqual({ lo: 40, hi: 60 });
+    expect(a.value).toBe(0b0101);
   });
 });
 
@@ -117,12 +114,12 @@ describe("write-equal-to-solved vs base", () => {
 
 describe("plain cell as constraint target", () => {
   it("constraining a non-lattice cell is a silent no-op (no throw)", () => {
-    const x = span(0, 100);
-    const y = num(5);
+    const x = fl(0b1111);
+    const y = cell(5); // bare Cell — no static lattice, can never be a member
     expect(() =>
       constrain([x], [y as unknown as typeof x], (get, emit) => emit(y as never, get(x) as never)),
     ).not.toThrow();
-    expect(y.value).toBe(5); // untouched — y has no lattice, never a member
+    expect(y.value).toBe(5); // untouched
   });
 });
 
@@ -130,48 +127,48 @@ describe("plain cell as constraint target", () => {
 
 describe("topology churn", () => {
   it("repeated link/unlink keeps values correct (stale-link stress)", () => {
-    const a = span(0, 100);
-    const b = span(20, 80);
+    const a = fl(0b1111);
+    const b = fl(0b0110);
     for (let i = 0; i < 50; i++) {
       const unlink = equal(a, b);
-      expect(a.value).toEqual({ lo: 20, hi: 80 });
-      expect(b.value).toEqual({ lo: 20, hi: 80 });
+      expect(a.value).toBe(0b0110);
+      expect(b.value).toBe(0b0110);
       unlink();
-      expect(a.value).toEqual({ lo: 0, hi: 100 });
-      expect(b.value).toEqual({ lo: 20, hi: 80 });
+      expect(a.value).toBe(0b1111);
+      expect(b.value).toBe(0b0110);
     }
   });
 
   it("growing then shrinking an SCC stays consistent", () => {
-    const a = span(0, 100);
-    const b = span(10, 90);
-    const c = span(20, 80);
+    const a = fl(0b1111);
+    const b = fl(0b0111);
+    const c = fl(0b1110);
     const u1 = equal(a, b);
-    const u2 = equal(b, c); // {a,b,c} → [20,80]
-    expect(a.value).toEqual({ lo: 20, hi: 80 });
+    const u2 = equal(b, c); // {a,b,c} → 0b0110
+    expect(a.value).toBe(0b0110);
     u2(); // split off c
-    expect(a.value).toEqual({ lo: 10, hi: 90 });
-    expect(c.value).toEqual({ lo: 20, hi: 80 });
+    expect(a.value).toBe(0b0111);
+    expect(c.value).toBe(0b1110);
     u1();
-    expect(a.value).toEqual({ lo: 0, hi: 100 });
+    expect(a.value).toBe(0b1111);
   });
 });
 
 // ── 8. feedback: an effect writes a member it reads ─────────────────
 
 describe("effect feedback into a member", () => {
-  it("a clamping effect converges (no infinite flush)", () => {
-    const a = span(0, 100);
-    const b = span(0, 100);
+  it("a bit-clearing effect converges (no infinite flush)", () => {
+    const a = fl(0b1111);
+    const b = fl(0b1111);
     equal(a, b);
     let fires = 0;
     const stop = effect(() => {
       fires++;
       const v = a.value;
-      if (v.lo < 50) a.value = { lo: 50, hi: v.hi };
+      if (v & 0b1000) a.value = v & 0b0111; // clear top bit
     });
     settle();
-    expect(a.value).toEqual({ lo: 50, hi: 100 });
+    expect(a.value).toBe(0b0111);
     expect(fires).toBeLessThan(10);
     stop();
   });
@@ -183,12 +180,10 @@ describe("deep SCC-DAG chain", () => {
   it("solves lazily and propagates correctly down a long chain", () => {
     const N = 40;
     let runs = 0;
-    // chain of 2-cycles; component k narrowed by component k-1's member.
-    const lo: ReturnType<typeof span>[] = [];
-    const hi: ReturnType<typeof span>[] = [];
+    const xs: ReturnType<typeof fl>[] = [];
     for (let k = 0; k < N; k++) {
-      const x = span(0, 1000);
-      const y = span(0, 1000);
+      const x = fl(0b1111);
+      const y = fl(0b1111);
       constrain([x], [y], (get, emit) => {
         runs++;
         emit(y, get(x));
@@ -197,29 +192,27 @@ describe("deep SCC-DAG chain", () => {
         runs++;
         emit(x, get(y));
       });
-      lo.push(x);
-      hi.push(y);
+      xs.push(x);
       if (k > 0) {
-        const prev = lo[k - 1]!;
-        constrain([prev], [x], (get, emit) => emit(x, { lo: get(prev).lo, hi: PINF }));
+        const prev = xs[k - 1]!;
+        constrain([prev], [x], (get, emit) => emit(x, get(prev)));
       }
     }
 
     expect(runs).toBe(0); // fully lazy: nothing read yet
 
-    lo[0]!.value = { lo: 100, hi: 1000 }; // drive the head
+    xs[0]!.value = 0b0111; // drive the head
     expect(runs).toBe(0); // still lazy — no read
 
-    // Reading the tail pulls the whole chain upstream-first.
-    expect(lo[N - 1]!.value.lo).toBe(100);
+    expect(xs[N - 1]!.value).toBe(0b0111); // reading the tail pulls the chain
     expect(runs).toBeGreaterThan(0);
   });
 
   it("disjoint components solve independently (reading one ≠ solving all)", () => {
     let runsA = 0;
     let runsB = 0;
-    const a = span(0, 100);
-    const a2 = span(0, 100);
+    const a = fl(0b1111);
+    const a2 = fl(0b1111);
     constrain([a], [a2], (get, emit) => {
       runsA++;
       emit(a2, get(a));
@@ -229,8 +222,8 @@ describe("deep SCC-DAG chain", () => {
       emit(a, get(a2));
     });
 
-    const b = span(0, 100);
-    const b2 = span(0, 100);
+    const b = fl(0b1111);
+    const b2 = fl(0b1111);
     constrain([b], [b2], (get, emit) => {
       runsB++;
       emit(b2, get(b));
@@ -250,15 +243,13 @@ describe("deep SCC-DAG chain", () => {
 
 describe("sequential writes", () => {
   it("repeated writes last-write-win; reads after see the solved fixpoint", () => {
-    const a = span(0, 100);
-    const b = span(0, 100);
+    const a = fl(0b1111);
+    const b = fl(0b1111);
     equal(a, b);
-    // No batch() in this engine: the value graph is synchronous, so two
-    // back-to-back writes simply last-write-win and read back the fixpoint.
-    a.value = { lo: 10, hi: 100 };
-    a.value = { lo: 20, hi: 90 };
-    expect(a.value).toEqual({ lo: 20, hi: 90 });
-    expect(b.value).toEqual({ lo: 20, hi: 90 });
+    a.value = 0b0111;
+    a.value = 0b0011;
+    expect(a.value).toBe(0b0011);
+    expect(b.value).toBe(0b0011);
   });
 });
 
@@ -266,10 +257,10 @@ describe("sequential writes", () => {
 
 describe("peek on a member", () => {
   it("peek returns the solved value without establishing a dependency", () => {
-    const a = span(0, 100);
-    const b = span(30, 70);
+    const a = fl(0b1111);
+    const b = fl(0b0110);
     equal(a, b);
-    expect(a.peek()).toEqual({ lo: 30, hi: 70 });
+    expect(a.peek()).toBe(0b0110);
   });
 });
 
@@ -277,43 +268,43 @@ describe("peek on a member", () => {
 
 describe("effect refires across rebuilds", () => {
   it("merging a member's component refires its subscribers", () => {
-    const a = span(0, 100);
-    const a2 = span(0, 100);
+    const a = fl(0b1111);
+    const a2 = fl(0b1111);
     equal(a, a2);
     let fires = 0;
-    let seen = { lo: 0, hi: 0 };
+    let seen = 0;
     const stop = effect(() => {
       fires++;
       seen = a.value;
     });
-    expect(seen).toEqual({ lo: 0, hi: 100 });
+    expect(seen).toBe(0b1111);
 
-    const c = span(20, 80);
+    const c = fl(0b0110);
     equal(a, c); // merge → {a,a2,c}
     settle();
     expect(fires).toBe(2);
-    expect(seen).toEqual({ lo: 20, hi: 80 });
+    expect(seen).toBe(0b0110);
     stop();
   });
 
   it("disposing the last relation refires subscribers with the base", () => {
-    const a = span(0, 100);
-    const b = span(30, 70);
+    const a = fl(0b1111);
+    const b = fl(0b0110);
     const unlink = equal(a, b);
-    let seen = { lo: 0, hi: 0 };
+    let seen = 0;
     const stop = effect(() => {
       seen = a.value;
     });
-    expect(seen).toEqual({ lo: 30, hi: 70 });
+    expect(seen).toBe(0b0110);
     unlink();
     settle();
-    expect(seen).toEqual({ lo: 0, hi: 100 });
+    expect(seen).toBe(0b1111);
     stop();
   });
 
   it("two effects on two members each fire once per upstream change", () => {
-    const a = span(0, 100);
-    const b = span(0, 100);
+    const a = fl(0b1111);
+    const b = fl(0b1111);
     equal(a, b);
     let fa = 0;
     let fb = 0;
@@ -326,7 +317,7 @@ describe("effect refires across rebuilds", () => {
       void b.value;
     });
     expect([fa, fb]).toEqual([1, 1]);
-    a.value = { lo: 25, hi: 75 };
+    a.value = 0b0101;
     settle();
     expect([fa, fb]).toEqual([2, 2]); // each once, no glitch double-fire
     sa();
@@ -338,54 +329,48 @@ describe("effect refires across rebuilds", () => {
 
 describe("synchronous read-after-write", () => {
   it("reading a member right after a write sees the just-written base", () => {
-    const a = span(0, 100);
-    const b = span(0, 100);
+    const a = fl(0b1111);
+    const b = fl(0b1111);
     equal(a, b);
-    // The value graph is synchronous, so the read sees the re-solved value
-    // immediately — no batch, no settle needed (that's effects only).
-    a.value = { lo: 30, hi: 100 };
-    const mid = a.value;
-    expect(mid).toEqual({ lo: 30, hi: 100 });
+    a.value = 0b0111;
+    expect(a.value).toBe(0b0111);
   });
 });
 
 // ── 14. adversarial rule bodies (non-monotone emits) ────────────────
 
 describe("adversarial rule bodies", () => {
-  it("a rule emitting WIDER intervals still converges (meet only shrinks)", () => {
-    const a = span(0, 100);
+  it("a rule emitting the top element still converges (meet only shrinks)", () => {
+    const a = fl(0b1111);
     constrain([a], [a], (_get, emit) => {
-      emit(a, { lo: NINF, hi: PINF }); // tries to widen — meet ignores it
-      emit(a, { lo: 10, hi: 90 }); // and narrow
+      emit(a, Flags.lattice.top); // tries to widen — meet ignores it
+      emit(a, 0b0111); // and narrow
     });
-    expect(a.value).toEqual({ lo: 10, hi: 90 });
+    expect(a.value).toBe(0b0111);
   });
 
-  it("an infinitely-descending (halving) cycle terminates via ε", () => {
-    const a = range(0, 1);
-    constrain([a], [a], (get, emit) => {
-      const v = get(a);
-      emit(a, { lo: (v.lo + v.hi) / 2, hi: v.hi });
-    });
-    const r = a.value;
-    expect(r.hi).toBe(1);
-    expect(r.lo).toBeGreaterThan(0.9);
-    expect(r.lo).toBeLessThanOrEqual(1);
+  it("an unrelated external Num change re-solves to the same fixpoint", () => {
+    const ext = num(0);
+    const a = fl(0b1111);
+    constrain([ext], [a], (_get, emit) => emit(a, 0b0111));
+    expect(a.value).toBe(0b0111);
+    ext.value = 1; // forces a re-solve; result unchanged
+    expect(a.value).toBe(0b0111);
   });
 });
 
 // ── 15. reconverging triangle (one SCC) ─────────────────────────────
 
 describe("reconverging cycle", () => {
-  it("a 3-cycle of equals is a single SCC at the full intersection", () => {
-    const a = span(0, 100);
-    const b = span(10, 90);
-    const c = span(20, 80);
+  it("a 3-cycle of equals is a single SCC at the full bit-AND", () => {
+    const a = fl(0b1111);
+    const b = fl(0b0111);
+    const c = fl(0b1110);
     equal(a, b);
     equal(b, c);
     equal(c, a); // triangle
-    expect(a.value).toEqual({ lo: 20, hi: 80 });
-    expect(b.value).toEqual({ lo: 20, hi: 80 });
-    expect(c.value).toEqual({ lo: 20, hi: 80 });
+    expect(a.value).toBe(0b0110);
+    expect(b.value).toBe(0b0110);
+    expect(c.value).toBe(0b0110);
   });
 });

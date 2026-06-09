@@ -70,9 +70,13 @@ computed**.
 ## 3. Two regimes, two invariant sets
 
 **Acyclic (lens DAG).** Unchanged. Forward = function composition along the DAG;
-backward = lens `put` recursing toward sources, short-circuiting where a lens is
-1-arg / source-independent. Lens laws hold locally. This is the transparent
-default and stays first-class.
+backward = lens `put` recursing toward sources. The only short-circuit is a
+**concrete no-op stop**: propagation halts at a parent that already holds the
+target value (`parent._equals(push, settled(parent))`), independent of lens
+arity. (Arity only affects the inverse *memo* — a source-reading 1→1 lens keys
+its 1-slot memo on `(target, parentRead)`; it does not change where propagation
+stops.) Lens laws hold locally. This is the transparent default and stays
+first-class.
 
 **Cyclic (propagator SCC).** A cell's value is the **least fixpoint of the
 monotone propagators over its current inputs**, computed by repeated lattice
@@ -111,6 +115,17 @@ A single lens edge plays one of two roles, decided **purely by SCC membership**
 
 The same authored lens serves both roles; the engine picks the role from where
 the edge sits. This is what makes lenses and propagators "true equals".
+
+**Lens-structure edges are folded into the condensation (implemented).** A lens
+member reads its parent(s) — a dataflow dependency the SCC decomposition *must*
+see. If it didn't, two components coupled only through a lens channel would form
+a cycle the condensation can't detect and would oscillate (invalidating each
+other across settles forever). So when a cell becomes a member, `relate.ts`
+walks its whole lens chain and registers each `parent → child` read-edge (and
+gives every chain cell a base, so an *intermediate* lens that lands in an SCC
+solves as a real member instead of re-entering the solve through a live `.value`
+read). With the lens edges present, a genuine cycle-through-a-lens condenses into
+**one SCC** and solves as a unit — Role A — rather than crashing or looping.
 
 ---
 
@@ -158,20 +173,57 @@ The single most important correctness lever: **the lattice has to represent the
 true value domain of the cell**, "the meta of narrowing, one level up". Get the
 level wrong and projections silently misbehave.
 
-- **Flat** is the universal default: ⊥ (unknown) / `value` / ⊤ (conflict).
-  Finite-height, terminates trivially, sound for everything. Plain `Num`/`Bool`
-  cells live here unless they opt into something richer.
+**The contract (implemented): `Lattice<T, K = T>`.** The knowledge type `K` is
+**distinct from the value type `T`**. Alongside the meet-semilattice core
+(`top: K`, `meet`, `equals`, `isBottom`) it carries the adjunction maps and two
+solver hooks:
 
-- **Componentwise** (a product of per-field lattices) makes **field projections
-  homomorphisms** and makes **partial backward demands** (Section 8) compose
-  field-wise. This is what `Vec` (x,y), and a *corrected* `Range`/`Box` want.
+- `abstract(v: T): K` — **α**, lift a concrete seed/external input into knowledge.
+- `concretize(k: K, fallback: T): T` — **γ**, collapse knowledge to a concrete
+  value, returning `fallback` (the cell's current value) when underdetermined or
+  over-constrained (7a). No `K` ever leaves a component.
+- `pinned(k: K): T | undefined` — the concrete value iff `k` is a singleton
+  (a point interval, a flat known), else `undefined`. Lens transformers consult
+  this: a forward/backward transformer only fires once its input is *pinned* to
+  a value (Section 5).
+- `widen?(prev, next): K` — optional convergence accelerator for infinite-height
+  lattices (Section 10). Finite-height lattices omit it.
+
+Combinators (`lattice.ts`): `flat` (the universal default), `interval` (an
+ordered scalar `[min,max]`), and `tuple` (componentwise product over named
+fields). A value class declares one as a static `lattice`; the relate layer
+resolves it only when the cell joins a cyclic relation, so the acyclic core
+never pays.
+
+- **Interval** is the default for *scalars and coordinates*: `K = [min,max]`,
+  `meet` = intersection, α lifts a point, γ clamps the current value into the
+  surviving interval (moves only if forced). It is a **strict superset of flat**
+  (a flat "known v" is the point `[v,v]`; "unknown" is `[-∞,+∞]`) but adds
+  *ordered narrowing* — "x ≥ 3" is expressible — for free. So `Num` and `Vec`'s
+  coordinates now use `interval`, not flat. Its only cost is infinite height,
+  handled by `widen` (Section 10).
+
+- **Flat** remains the universal *fallback* for any domain without an order:
+  `K = ⊤ (unknown) | value | ⊥ (conflict)`. Finite-height, terminates trivially,
+  sound for everything. `Bool` lives here.
+
+- **Componentwise** (`tuple` — a product of per-field lattices) makes **field
+  projections homomorphisms** and makes **partial backward demands** (Section 8)
+  compose field-wise. **Now implemented** for `Vec` (`interval x × interval y`),
+  `Range` (`K = interval lo × interval hi`), and `Box` (four independent
+  intervals). So `equal` is field-wise: an endpoint both sides agree on unifies;
+  a conflicting one keeps its own value (per 7a). `Flags` stays `K = T = mask`
+  with bit-AND.
 
 - **Geometric / coupled** lattices (interval-intersection, rectangle-overlap)
   are a *different modelling*: "the value lies somewhere in this region". They're
   fine when that's the intent, but they **couple fields** (e.g. a `Range`'s
   scalar interval couples `lo`/`hi`/`width`; a `Box`'s overlap couples `x`/`w`
-  via `right = x+w`), which breaks clean field projection. The audit (Section 11)
-  flags `Range` and `Box` as currently mis-levelled for projection use.
+  via `right = x+w`), which breaks clean field projection. We deliberately did
+  **not** pick this reading for `Range`/`Box`; one consequence is that
+  inequality-narrowing of a *concrete* endpoint (e.g. "lo ≥ 1" on a point base)
+  is a contradiction, not a narrowing — that pattern belongs to the region
+  reading and is out of scope for the componentwise default.
 
 Rule of thumb: **pick the lattice so the field lenses you care about are
 homomorphisms.** If a value is fundamentally a tuple you project into, use the
@@ -181,23 +233,33 @@ componentwise product.
 
 ## 7. Decisions locked in this conversation
 
-### 7a. Hard edge #4 — underdetermined reads as the *current value*
+### 7a. Hard edge #4 — base-as-fact seed, current-value fallback on publish
 
-When a cyclic cell is not determined by the constraints, it **reads as its
-current concrete value** — not ⊥, not "unknown". The solver carries information
-*about* what a value should be; **if it can change the value it does, otherwise
-no-op.** No ⊥/⊤/partial element ever escapes a component into the wider DAG.
+Two distinct mechanisms, made precise in the implementation:
 
-Consequence (subtle but clarifying): a member's **current value is the *weakest*
-input — a fallback/default, not an asserted fact.** Genuine constraint
-information overrides it; where no constraint determines the cell, the current
-value stands. This keeps the system **transparent**: from the acyclic DAG's
-point of view, every cell always holds an ordinary concrete value. The cyclic
-machinery never "colours" downstream consumers with lattice elements.
+- **Seed (α / `abstract`).** A member's standing assertion (its `base` channel)
+  is lifted into knowledge — `abstract(base.value) → K` — and seeded into the
+  solve as a concrete *fact*, folded by `meet` alongside every rule contribution.
+  So the base is a genuine participant, not a passive default.
+- **Publish (γ / `concretize`).** At the component boundary,
+  `concretize(K, fallback = current value)` collapses knowledge back to a
+  concrete `T`, returning the **current value** whenever the field is
+  *underdetermined* (no constraint pinned it) *or over-constrained* (the meet hit
+  ⊥). So **if the constraints can refine the value, they do; otherwise it keeps
+  its current value.** No ⊥/⊤/partial element ever escapes a component into the
+  wider DAG — the cyclic machinery never "colours" downstream consumers.
 
-This also means conflict only arises between **two genuine constraints**
-(over-determination → ⊤/contradiction, or the "who yields" question), never
-between a constraint and a mere current value.
+With **domain-faithful** lattices (Section 6) this is **field-wise**: in a
+`Range`, an endpoint the constraints agree on is refined while a conflicting one
+independently keeps its current value — there is no whole-value collapse.
+
+A consequence worth stating plainly: because the base is itself seeded as a
+fact, a single constraint that *conflicts* with the base drives that field to ⊥
+and so the cell **keeps its base** on publish — the standing assertion dominates
+a lone contradicting constraint. Genuine over-determination between two
+*independent* constraints is still an honest contradiction (the "who yields"
+question, deferred — 7c); it just resolves per field to the fallback rather than
+leaking a lattice element.
 
 ### 7b. Freeze stateful-lens complements per solve
 
@@ -264,6 +326,18 @@ propagators. Worth pursuing on its own.
   Field views pulled into the cycle make the box's relevant fields part of the
   SCC; backward demands combine field-wise (Section 8) instead of trampling.
 
+- **Cycle through a lens, e.g. `equal(p, p.shift(5))`.** Both `p` and its shift
+  are members, so the shift is a *constraint lens* (Role A): `equal` says
+  `p = shifted`, the lens says `shifted = p + 5`, i.e. `p = p + 5` — an honest
+  contradiction. The solver **shrugs** (each field keeps its current value) and
+  publishes `p = [0,100]`, `shifted = [5,105]`. No error, no loop: this used to
+  throw "relation cycle through a lens"; it is now first-class. The dual
+  consistent case (`equal(a, a.shift(0))`) settles to the lens relation and
+  writes route both ways through it. A re-entrant read that the engine's own
+  cyclic-read guard trips (a lens chain looping back into a mid-solve member)
+  simply contributes ⊤ (no information) and uses the cached value as fallback —
+  sound, never fatal.
+
 ---
 
 ## 10. Termination on continuous lattices (research grounding)
@@ -289,10 +363,17 @@ From abstract interpretation (Cousot & Cousot; Amato/Scozzari; Apinis et al.):
      textbook accelerated descent and the right tool for continuous lattices.
   3. **Landmark/threshold ramps** for the dual (widening) side if we ever climb.
 
-- **Takeaway for us:** replace the blunt `MAX_WAVES` with (i) "finite/flat ⇒
-  exact, no cap", (ii) "continuous ⇒ ε-narrowing operator with a sound stop".
-  Termination becomes a *property of the lattice*, declared alongside it, not a
-  global magic number.
+- **Takeaway for us (implemented):** the blunt `MAX_WAVES` cap is **gone**.
+  Termination is now a *property of the lattice*: (i) finite/flat ⇒ exact, no
+  cap; (ii) continuous ⇒ the lattice's `widen` snaps a bound shut once it inches
+  by less than `WIDEN_EPS` (1e-6), a sound post-fixpoint. The solver runs exact
+  `meet` waves and only flips into widening after `WIDEN_AFTER` (64) waves — a
+  threshold any finite-height lattice reaches its fixpoint *well* before, so
+  widening never engages for them and their result is exact. Only a genuine
+  infinite descent crosses it, where `widen` guarantees a finite stop. There is
+  **no hard wave cap** and no watchdog: a solve that doesn't have a `widen` and
+  doesn't converge would be a lattice bug, not something a magic number papers
+  over.
 
 ---
 
@@ -305,8 +386,9 @@ right), and each lens classified **H** = homomorphism (exact both ways),
 **flat** transformer as a fallback.
 
 ### Num — domain: scalar ℝ
-Faithful lattice: **flat** (a plain number is known/unknown). A richer "interval"
-domain is really a *separate* value type, not plain `Num`.
+Faithful lattice: **interval** `[min,max]` (✔ implemented, replacing flat). A
+plain number abstracts to a point `[v,v]`; ordered narrowing ("x ≥ 3") is now
+expressible, and flat is recovered as the point/full-line special cases.
 
 | Lens | Class | Notes |
 |---|---|---|
@@ -319,7 +401,7 @@ domain is really a *separate* value type, not plain `Num`.
 | `cyclic(period)` | **S** | hidden representative; freeze per solve |
 
 ### Vec — domain: ℝ²
-Faithful lattice: **componentwise** (interval on x × interval on y), or flat.
+Faithful lattice: **componentwise** `interval x × interval y` (✔ implemented).
 
 | Lens | Class | Notes |
 |---|---|---|
@@ -332,11 +414,11 @@ Faithful lattice: **componentwise** (interval on x × interval on y), or flat.
 
 ### Range — domain: ordered pair `(lo, hi)`
 Faithful lattice: **componentwise over (lo,hi)** (interval on lo × interval on
-hi). ⚠ **Current lattice is a *scalar* interval-intersection — wrong level.** It
-couples `lo`/`hi`/`width` and breaks clean projection. **Action: re-level to the
-(lo,hi) product** so `.lo`/`.hi` become homomorphisms.
+hi). ✔ **Implemented** as `tuple({ lo: interval, hi: interval })`, replacing the
+old scalar interval-intersection (which coupled `lo`/`hi`/`width`). `.lo`/`.hi`
+are now homomorphisms.
 
-| Lens | Class | Notes (under corrected lattice) |
+| Lens | Class | Notes |
 |---|---|---|
 | `shift` | **H** | translates both coords |
 | `scale(k)` | **H** (k>0) | |
@@ -348,11 +430,9 @@ couples `lo`/`hi`/`width` and breaks clean projection. **Action: re-level to the
 
 ### Box — domain: `{x, y, w, h}`
 Faithful lattice for projection: **componentwise (4 independent intervals)**.
-⚠ **Current lattice is rectangle-overlap (a "region" reading)** which couples
-`x`/`w` (and `y`/`h`) via `right = x+w`. Fine if you genuinely mean "the rect lies
-in this region", but it makes `.x`/`.w` abstractions instead of clean
-projections. **Action: decide intent; use componentwise for field-projection
-use.**
+✔ **Implemented** as `tuple({ x, y, w, h: interval })`, replacing the old
+rectangle-overlap region reading (which coupled `x`/`w` and `y`/`h` via
+`right = x+w`). `.x`/`.y`/`.w`/`.h` are now clean projections.
 
 | Lens | Class | Notes |
 |---|---|---|
@@ -385,31 +465,50 @@ Faithful lattice: **flat** (false / true / ⊥ / ⊤) — the classic 4-element.
 - *Functionals / lossy / predicates / fan-ins* → **A** (sound forward, abstain
   backward).
 - *Cyclic/representative-carrying* → **S** (freeze complement).
-- The two **actionable lattice corrections** are **Range** and **Box**:
-  re-level to componentwise where field projection is the intent.
+- The lattice corrections are **done**: `Num` and `Vec` now use `interval`
+  (scalar/coordinate narrowing), and **Range**/**Box** are componentwise
+  (`tuple` of intervals), so field projection is clean.
 
 ---
 
 ## 12. Implementation implications (for when we return to code)
 
 Already in place (`src/core3`): the acyclic executor, microtask-scheduled
-effects, SCC condensation (`condense.ts`, incremental + decremental), pull-driven
-"SCC as generalized computed", `relate.ts`.
+effects, SCC condensation (`condense.ts`, incremental + decremental) **with
+lens-structure edges folded in** (so lens-coupled cycles condense correctly,
+Section 4), the first-class **`Component`** solver node + member projection
+(`cell.ts`, replacing the old external Cell-poking hooks), domain-faithful
+`Lattice<T,K>` + `flat`/`interval`/`tuple` combinators with `pinned`/`widen`
+(`lattice.ts`), auto-lifted constraint-lens transformers, and `relate.ts`
+driving components off `condense.drainDirty()`. Coverage includes a cross-layer
+oracle fuzz and a structural robustness fuzz (cycles-through-lenses,
+self-relations, dense churn, lens-member writes) asserting no edit a user can
+make throws, leaks a lattice element, or fails to reach an idempotent fixpoint.
 
 What this model asks for next:
 
-1. **Lattice on the value class, faithfully.** Static `lattice` per class
-   (`{ top, meet, equals, isBottom, height? }`); flat as the universal default so
-   *every* value participates. Correct `Range`/`Box` to componentwise. The engine
-   resolves the lattice only when a cell is actually in an SCC (no cost to the
-   acyclic path).
-2. **Transformers per lens, flat-by-default.** Optional `(F, B)` on lens specs;
-   absent ⇒ flat transformer (sound, coarse). Homomorphic lenses get exact ones.
-3. **Per-SCC fixpoint solver** that pulls like a computed, seeds from **current
-   values** (7a) + channels + frozen complements (7b), merges via `meet`, and
-   **publishes concrete values** (never lattice elements) downstream.
-4. **Termination by lattice, not by cap** (Section 10): finite/flat exact;
-   continuous via ε-narrowing.
+1. **Lattice on the value class, faithfully.** ✔ Static `lattice` per class
+   (`{ top, meet, equals, isBottom, abstract, concretize }`, `K` distinct from
+   `T`); flat as the universal default so *every* value participates; `Range`/
+   `Box` corrected to componentwise. The engine resolves the lattice only when a
+   cell is actually in an SCC (no cost to the acyclic path).
+2. **Transformers auto-lifted from the existing lens (implemented).** A
+   constraint lens (Role A) needs no new authoring: `buildGroup` reuses the
+   lens's *own* forward function (stored on `BwdSpec.fwd`) and inverse (`put`) to
+   synthesize a forward transformer (`m ⊒ abstract(fwd(pinned(parent)))`) and,
+   for a source-*independent* inverse, a backward one (`parent ⊒
+   abstract(put(pinned(m)))`). Both fire only once the input is `pinned`. A
+   source-reading inverse (clamp, field spread-replace) abstains backward, still
+   sound. Richer non-homomorphic transformers remain a future opt-in.
+3. **Per-SCC fixpoint solver** (the `Component` node) that pulls like a computed,
+   seeds from **bases** (α) + channels + frozen complements (7b), merges via
+   `meet`, and **publishes concrete values** via γ (never lattice elements,
+   fallback to current value when underdetermined — 7a) downstream. Re-entrant
+   reads (a lens chain looping back into a mid-solve member) are caught and
+   contribute ⊤, so a cycle through a lens never throws.
+4. **Termination by lattice, not by cap** (✔ Section 10): `MAX_WAVES` removed;
+   finite/flat exact, continuous via the lattice's `widen` after `WIDEN_AFTER`
+   exact waves.
 5. **Partial backward demands** (Section 8) — merge field-wise; nice on its own.
 6. Keep `latticeOf` membership **local and type-driven**; with a flat default the
    silent "scalars excluded from relations" hole disappears.
@@ -419,7 +518,8 @@ What this model asks for next:
 - **Transformer soundness is on the author.** A wrong `B` can narrow away real
   solutions. Mitigation: flat default, and maybe a debug "randomized soundness
   check" (compare transformer image vs. sampled concrete image).
-- **Lattice-domain faithfulness audit** must actually be applied (Range/Box).
+- **Lattice-domain faithfulness audit** — applied for Range/Box/Vec/Num/Bool/
+  Flags; other value classes still default to flat until they opt in.
 - **"Who yields"** (7c) — deferred; gates the nicest reactive-UI APIs.
 - **Continuous-lattice narrowing operator** design — ε vs. landmarks vs.
   float-finite; needs a concrete choice per continuous value class.

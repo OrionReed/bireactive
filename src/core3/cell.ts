@@ -322,6 +322,12 @@ class BwdSpec {
    *  Stateful: the spec's `bwd`. */
   // biome-ignore lint/suspicious/noExplicitAny: put fn is opaque shape
   put: ((target: any, current?: any) => any) | undefined = undefined;
+  /** The 1→1 lens FORWARD map as a pure value function (the getter applies it
+   *  to the live parent; this is the same map, callable on a candidate value).
+   *  Stored only for `buildLens1`, so the relate layer can lift a lens that
+   *  sits INSIDE a cycle into a forward knowledge transformer. */
+  // biome-ignore lint/suspicious/noExplicitAny: fwd fn is opaque shape
+  fwd: ((v: any) => any) | undefined = undefined;
   /** Complement machinery; presence IS the stateful-mode discriminant. */
   stateful: StatefulCore | undefined = undefined;
   /** Index in `bwdQueue` of this cell's latest push; the drain skips stale
@@ -436,23 +442,45 @@ export const isLens = (v: unknown): v is Cell<unknown> =>
 export const isReadonly = (v: unknown): v is Cell<unknown> =>
   v instanceof Cell && v.getter !== undefined && v._bwd === undefined;
 
-/** A meet-semilattice with a contradiction test — the merge law for a
- *  family of knowledge values (interval, rectangle, candidate set). NOT a
- *  per-cell field: a value CLASS declares one as a static, and the relate
- *  layer resolves it only for cells that join a cyclic relation. The engine
- *  proper never sees it — forward writes always overwrite and change
- *  detection is the cell's own `equals`, so the acyclic core pays nothing. */
-export interface Lattice<T> {
+/** A meet-semilattice over a KNOWLEDGE type `K`, distinct from the cell's
+ *  VALUE type `T`. `K` carries partial information during a cyclic solve;
+ *  `abstract` lifts a concrete seed/input into `K` and `concretize` collapses
+ *  it back to a `T` at the component boundary (falling back to the cell's
+ *  current value when underdetermined, so no `K` ever escapes into the DAG).
+ *  See `lattice.ts` for the `flat`/`interval`/`tuple` combinators.
+ *
+ *  NOT a per-cell field: a value CLASS declares one as a static, and the
+ *  relate layer resolves it only for cells that join a cyclic relation. The
+ *  acyclic core never sees it — forward writes overwrite and change detection
+ *  is the cell's own `equals`, so it pays nothing. */
+export interface Lattice<T, K = T> {
   /** No information — the identity for `meet`. */
-  readonly top: T;
+  readonly top: K;
   /** Greatest lower bound of two contributions. Commutative, associative,
    *  idempotent — so a fold is order-independent (confluent). */
-  meet(a: T, b: T): T;
+  meet(a: K, b: K): K;
   /** Lattice equality — drives the solver's fixpoint test (may differ from
    *  the cell's `equals`, e.g. an ε tolerance over reals). */
-  equals(a: T, b: T): boolean;
+  equals(a: K, b: K): boolean;
   /** Self-contradiction: empty interval / empty candidate set / clash. */
-  isBottom(a: T): boolean;
+  isBottom(a: K): boolean;
+  /** Lift a concrete value (a seed, or an external input) into knowledge. */
+  abstract(v: T): K;
+  /** Collapse knowledge to a concrete value; `fallback` (the cell's current
+   *  value) is returned when `k` is underdetermined. */
+  concretize(k: K, fallback: T): T;
+  /** The single concrete value `k` pins down, or `undefined` when `k` is
+   *  underdetermined (not exactly one value) or bottom. Drives the
+   *  flat-precision lens transformer inside a cycle: a lens fires forward
+   *  only once its parent's knowledge is pinned. */
+  pinned(k: K): T | undefined;
+  /** Convergence accelerator for INFINITE-height lattices (real intervals):
+   *  given the previous and freshly-narrowed knowledge, return a value that
+   *  guarantees the descending chain terminates (a sound post-fixpoint). A
+   *  finite-height lattice (`flat`, bitset, product of finite) omits it —
+   *  naive iteration already terminates, so termination is a property of the
+   *  lattice, never a global iteration cap. */
+  widen?(prev: K, next: K): K;
 }
 
 export interface CellOptions<T = unknown> {
@@ -793,6 +821,7 @@ function buildLens1<C extends Cell<any>>(
   // key) and passes it in, so the parent snapshot isn't read twice and the
   // inverse can be memoized on `(target, parentRead)`.
   b.put = bwd;
+  b.fwd = fwd;
   b.readsSource = readsSource;
   b.parent = parent;
   return cell;
@@ -1489,71 +1518,207 @@ export function cachedDerive<S extends Cell<any>, C extends new (...args: never[
   return lazy(parent, key, () => (Cls as any).derive(parent, fn)) as InstanceType<C>;
 }
 
-// ── relation-group support (the relate layer's only engine hooks) ────
+// ── Component: a cyclic SCC as a first-class solver node ─────────────
 //
-// An SCC is a generalized COMPUTED. The whole component is solved by one
-// internal computed node `G` (the solver). Each member stays the SAME cell
-// the user made, but while it participates it behaves as a writable
-// projection of `G`: reading it PULLS `G` (so the fixpoint runs lazily, in
-// dependency order, glitch-free — the ordinary computed path), and writing
-// it flows to its `base` source (its standing assertion), which `G` reads —
-// so a write invalidates `G` and the next read re-solves. Leaving every
-// relation restores it to a plain source. Members are never split into
-// input/output cells: the duality lives inside one node.
+// A cyclic strongly-connected component is solved by ONE `Component` — a
+// computed node whose `_update` reads the component's inputs (each member's
+// base assertion + any external cells) and folds the rules to a lattice
+// fixpoint in the KNOWLEDGE space `K`, then publishes a concrete `T` per
+// member into `solved`. Each member becomes a writable PROJECTION of the
+// component: reading it pulls the solver (lazy, glitch-free, in dependency
+// order — the ordinary computed path) and returns its slot; writing it flows
+// to its base assertion, which the solver reads, so a write re-invalidates
+// and the next read re-solves. Members only ever hold `T`; `K` never leaves
+// the component, so the acyclic DAG sees plain concrete values.
 //
-// These are the only places the engine knows relations exist; the partition,
-// the lattice fold, and the scheduling policy all live in `relate.ts`.
+// The whole mechanism is here (a real node + member projection), NOT poked
+// into Cell internals from outside: the relate layer only constructs a
+// `Component`, disposes it, and relaxes orphaned members. The partition
+// (which cells form a component) and the rule registry live in `relate.ts`.
 
-/** Internal computed (a per-SCC solver `G`); not user-visible. `getter`
- *  runs the fixpoint and stashes member results; its return value is just a
- *  freshness token. */
-export function internalComputed<T>(getter: () => T): Cell<T> {
-  const c = new Cell<T>(undefined as T);
-  c.getter = getter;
-  c.flags = F.Mutable | F.Dirty;
-  return c;
-}
+/** A relation rule, folded in knowledge space: `get(c)` yields a member's
+ *  current `K` (or an external input lifted via its lattice), `emit(c, k)`
+ *  meets `k` into a member. Order-independent (meet is confluent). */
+export type RelationBody = (
+  get: (c: Cell<unknown>) => unknown,
+  emit: (c: Cell<unknown>, k: unknown) => void,
+) => void;
 
-/** Retire an internal computed: unlink its inputs so they stop referencing
- *  it (no stale propagation, no leak). Idempotent. */
-export function disposeInternalComputed<T>(c: Cell<T>): void {
-  disposeAllDepsInReverse(c);
-  c.getter = undefined;
-  c.flags = F.None;
-}
+/** Waves of exact `meet` iteration before a solve starts WIDENING. Any
+ *  finite-height lattice (flat, bitset, product of finite) reaches its
+ *  fixpoint long before this, so widening never engages and the result is
+ *  exact. Only a genuinely infinite descent (a real interval narrowing
+ *  forever) crosses the threshold, at which point the lattice's `widen`
+ *  guarantees a sound, finite stop. There is NO hard wave cap: termination
+ *  is a property of the lattice (finite height, or a `widen`), not a magic
+ *  number. */
+const WIDEN_AFTER = 64;
 
-/** Capture `m`'s current writable identity as a durable BASE channel — the
- *  assertion the solver reads and that member writes flow to. A SOURCE yields
- *  a snapshot source (its value IS its assertion, no upstream to track). A
- *  LENS yields a clone carrying the same derivation + inverse, so the solver
- *  reads the LIVE upstream-derived value as the assertion (upstream changes
- *  re-invalidate the solve) and member writes route back THROUGH the lens to
- *  its real parents. Called once, before `m` first joins a relation, while it
- *  still holds its original identity. The base is durable across re-joins, so
- *  writes are never lost between leaving and rejoining. */
-export function captureBase<T>(m: Cell<T>): Cell<T> {
-  const base = new Cell<T>(m.peek());
-  base._equals = m._equals; // match change detection (value-class equality)
-  if (m.getter !== undefined) {
-    base.getter = m.getter; // closures capture the PARENTS, not `m` — safe to share
-    base._bwd = m._bwd;
-    base.flags = F.Mutable | F.Dirty; // re-derive + re-link to parents on first pull
+const latticeOf = (c: Cell<unknown>): Lattice<unknown, unknown> | undefined =>
+  (c.constructor as { lattice?: Lattice<unknown, unknown> }).lattice;
+
+export class Component extends Cell<number> {
+  readonly members: readonly Cell<unknown>[];
+  private readonly bases: readonly Cell<unknown>[];
+  private readonly lattices: readonly Lattice<unknown, unknown>[];
+  private readonly rules: readonly RelationBody[];
+  /** Per slot: true ⇒ a fully-DERIVED member (a lens whose parent is a fellow
+   *  member). It carries no standing assertion — seed ⊤ and let its forward
+   *  transformer determine it — and on publish falls back to `fallbacks[i]`
+   *  (its frozen value) rather than reading its base (which would re-enter the
+   *  solve through the parent). A source/channel member is `false`: seed its
+   *  base, fall back to its base's live value. */
+  private readonly derived: readonly boolean[];
+  private readonly fallbacks: readonly unknown[];
+  private readonly index = new Map<Cell<unknown>, number>();
+  /** Published concrete value per member slot; read by member projections. */
+  readonly solved: unknown[];
+  private version = 0;
+
+  constructor(
+    members: readonly Cell<unknown>[],
+    bases: readonly Cell<unknown>[],
+    lattices: readonly Lattice<unknown, unknown>[],
+    rules: readonly RelationBody[],
+    derived: readonly boolean[],
+    fallbacks: readonly unknown[],
+  ) {
+    super(0);
+    this.members = members;
+    this.bases = bases;
+    this.lattices = lattices;
+    this.rules = rules;
+    this.derived = derived;
+    this.fallbacks = fallbacks;
+    // Seed each slot with the member's current value so a projection reads a
+    // well-formed `T` even before the first solve (and if this component is
+    // disposed without ever solving) — never `undefined`.
+    this.solved = members.map(m => m.currentValue);
+    members.forEach((m, i) => this.index.set(m, i));
+    this.getter = () => this.solve();
+    this.flags = F.Mutable | F.Dirty;
+    members.forEach((m, i) => attachMember(m, this, i, bases[i]!));
   }
-  return base;
+
+  /** Fold the component to a lattice fixpoint and publish per member. Runs as
+   *  the node's getter (tracked), so every base/external read becomes a dep —
+   *  any of them changing re-invalidates the whole component.
+   *
+   *  Allocation discipline: one `work` array per solve (not per wave) and an
+   *  external snapshot cache so a rule re-reading the same outside cell across
+   *  waves lifts it once. Convergence is tracked per `emit` (a `moved` flag),
+   *  so there is no per-wave array copy. */
+  private solve(): number {
+    const { members, bases, lattices, rules, index, solved, derived, fallbacks } = this;
+    const n = members.length;
+    const work = new Array<unknown>(n);
+    const fb = new Array<unknown>(n); // concretize fallback, captured at seed time
+    const extCache = new Map<Cell<unknown>, unknown>();
+
+    const get = (c: Cell<unknown>): unknown => {
+      const i = index.get(c);
+      if (i !== undefined) return work[i];
+      if (extCache.has(c)) return extCache.get(c);
+      const lat = latticeOf(c); // external input: lift via its own lattice
+      // A lens chain can loop an external read back through a fellow member
+      // that's mid-solve (the engine's own cyclic-read guard). That path
+      // simply carries no usable knowledge here ⇒ contribute ⊤.
+      let k: unknown;
+      try {
+        k = lat ? lat.abstract(c.value) : c.value;
+      } catch (e) {
+        if (!(e instanceof RangeError)) throw e;
+        k = lat ? lat.top : undefined;
+      }
+      extCache.set(c, k);
+      return k;
+    };
+    let moved = false;
+    let widening = false;
+    const emit = (c: Cell<unknown>, k: unknown): void => {
+      const i = index.get(c);
+      if (i === undefined) return;
+      const lat = lattices[i]!;
+      let next = lat.meet(work[i], k);
+      if (widening && lat.widen !== undefined) next = lat.widen(work[i], next);
+      if (!lat.equals(work[i], next)) {
+        work[i] = next;
+        moved = true;
+      }
+    };
+
+    // Seed: a DERIVED member carries no assertion (⊤; its forward transformer
+    // fills it). A source/channel member abstracts its base — but reading the
+    // base may loop back through this very solve (a lens chain re-entering a
+    // member); if so, seed ⊤ and keep the member's current value as fallback.
+    for (let i = 0; i < n; i++) {
+      const lat = lattices[i]!;
+      if (derived[i]) {
+        work[i] = lat.top;
+        fb[i] = fallbacks[i];
+        continue;
+      }
+      try {
+        const sv = bases[i]!.value;
+        work[i] = lat.abstract(sv);
+        fb[i] = sv;
+      } catch (e) {
+        if (!(e instanceof RangeError)) throw e;
+        work[i] = lat.top;
+        fb[i] = members[i]!.currentValue; // cached value, no re-entrant read
+      }
+    }
+    let waves = 0;
+    do {
+      moved = false;
+      if (++waves > WIDEN_AFTER) widening = true;
+      for (const body of rules) body(get, emit);
+    } while (moved);
+    for (let i = 0; i < n; i++) solved[i] = lattices[i]!.concretize(work[i], fb[i]);
+
+    return ++this.version;
+  }
+
+  /** Retire the solver: unlink its inputs (no stale propagation, no leak).
+   *  Members are separately re-attached or relaxed by the relate layer. */
+  dispose(): void {
+    disposeAllDepsInReverse(this);
+    this.getter = undefined;
+    this.flags = F.None;
+  }
 }
 
-/** Make `m` a writable projection over its `base` channel: forward reads run
- *  `getter`, backward writes flow (identity) to `base`. Severs `m`'s prior
- *  wiring (its identity now lives on `base`), marks it dirty, and notifies +
- *  schedules existing subscribers (a topology edit isn't a source write, so
- *  nothing else would). `m` is a single-parent lens, so the `set` path never
- *  peeks its projected view — writes stage straight to `base`, which itself
- *  prunes no-ops (and, if a lens, propagates to its parents). */
-function projectOver<T>(m: Cell<T>, getter: () => T, base: Cell<T>): void {
+/** Project `m` onto `comp`'s slot: forward reads pull the solver and return
+ *  the slot; backward writes flow (identity) to `base`. Severs `m`'s prior
+ *  wiring and notifies existing subscribers (a topology edit isn't a source
+ *  write, so nothing else would). Module-private: only a `Component`
+ *  constructs members, so relate never touches Cell internals. */
+function attachMember(m: Cell<unknown>, comp: Component, slot: number, base: Cell<unknown>): void {
+  rewire(
+    m,
+    () => {
+      void comp.value; // pull the lazy, glitch-free fixpoint in dependency order
+      return comp.solved[slot];
+    },
+    base,
+  );
+}
+
+/** `m` left every relation: relax to a passthrough of its base channel —
+ *  reads mirror `base` (a snapshot source, or a live lens), writes route to
+ *  it. */
+export function relaxToBase<T>(m: Cell<T>, base: Cell<T>): void {
+  rewire(m as Cell<unknown>, () => (base as Cell<unknown>).value, base as Cell<unknown>);
+}
+
+/** Repoint `m` as a single-parent lens (getter + identity write-back to
+ *  `base`), going through the Dirty/`_update` protocol so `checkDirty` sees a
+ *  real change and refires subscribers. */
+function rewire(m: Cell<unknown>, getter: () => unknown, base: Cell<unknown>): void {
   disposeAllDepsInReverse(m);
-  m.getter = getter as () => never;
+  m.getter = getter;
   const b = (m._bwd = new BwdSpec());
-  b.parent = base as Cell<unknown>;
+  b.parent = base;
   b.put = (t: unknown): unknown => t;
   m.flags = F.Mutable | F.Dirty;
   if (m.subs !== undefined) {
@@ -1562,16 +1727,19 @@ function projectOver<T>(m: Cell<T>, getter: () => T, base: Cell<T>): void {
   }
 }
 
-/** `m` joins a group: project from the solver (reading it pulls the lazy,
- *  glitch-free fixpoint in dependency order). */
-export function becomeMember<T>(m: Cell<T>, project: () => T, base: Cell<T>): void {
-  projectOver(m, project, base);
-}
-
-/** `m` left every relation: relax to a passthrough of its base channel —
- *  reads mirror `base` (a snapshot source, or the live lens), writes route to
- *  it. Going through the Dirty/`_update` protocol (not a direct poke) is what
- *  lets `checkDirty` see a real change and refire subscribers. */
-export function resignMember<T>(m: Cell<T>, base: Cell<T>): void {
-  projectOver(m, () => base.value, base);
+/** Capture `m`'s current writable identity as a durable BASE channel — the
+ *  assertion the solver reads and that member writes flow to. A SOURCE yields
+ *  a snapshot source; a LENS yields a clone carrying the same derivation +
+ *  inverse (so the solver reads the LIVE upstream value and member writes
+ *  route back through the lens). Captured once, while `m` still holds its
+ *  original identity; durable across re-joins so writes are never lost. */
+export function captureBase<T>(m: Cell<T>): Cell<T> {
+  const base = new Cell<T>(m.peek());
+  base._equals = m._equals;
+  if (m.getter !== undefined) {
+    base.getter = m.getter; // closures capture the PARENTS, not `m` — safe to share
+    base._bwd = m._bwd;
+    base.flags = F.Mutable | F.Dirty;
+  }
+  return base;
 }

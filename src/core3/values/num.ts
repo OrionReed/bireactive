@@ -13,6 +13,7 @@ import {
   type Writable,
   type WritableBrand,
 } from "../cell";
+import { interval } from "../lattice";
 import type { Linear, Pack, TraitDict } from "../traits";
 import { Bool } from "./bool";
 
@@ -49,6 +50,14 @@ export class Num extends Cell<V> {
     pack: packImpl,
   } satisfies TraitDict<V>;
   declare readonly _t: typeof Num.traits;
+
+  /** Interval lattice `[min,max]` over the scalar. A plain write seeds a
+   *  point; a relation can narrow it to a band (`x ≥ 5`), and two concretes
+   *  that disagree conflict (empty interval ⇒ keep current). Infinite height,
+   *  so it carries `widen` — termination needs no iteration cap. Lets a `Num`
+   *  participate in cyclic relations, ordering constraints included; the
+   *  relate layer resolves it. */
+  static lattice = interval;
 
   constructor(v: V = 0) {
     super(v, { equals });

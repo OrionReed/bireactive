@@ -15,6 +15,7 @@ import {
   type Val,
   type Writable,
 } from "../cell";
+import { interval, tuple } from "../lattice";
 import type { Linear, Pack, Pivotal, TraitDict } from "../traits";
 import { Num, num } from "./num";
 
@@ -92,6 +93,11 @@ export class Vec extends Cell<V> {
     pivotal: pivotalImpl,
   } satisfies TraitDict<V>;
   declare readonly _t: typeof Vec.traits;
+
+  /** Componentwise interval lattice — x and y each narrow independently, so
+   *  `.x` / `.y` project as homomorphisms inside a cyclic relation and either
+   *  axis can take an ordering constraint. */
+  static lattice = tuple<V>({ x: interval, y: interval });
 
   constructor(v: V = { x: 0, y: 0 }) {
     super(v, { equals });

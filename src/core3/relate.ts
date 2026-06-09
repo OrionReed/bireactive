@@ -30,15 +30,17 @@
 // solve is bounded to its own component.
 
 import {
-  becomeMember,
-  type Cell,
+  Cell,
+  Component,
   captureBase,
-  disposeInternalComputed,
-  internalComputed,
+  isLens,
   type Lattice,
-  resignMember,
+  type RelationBody,
+  relaxToBase,
 } from "./cell";
 import { DynCondensation } from "./condense";
+
+export type { RelationBody } from "./cell";
 
 // biome-ignore lint/suspicious/noExplicitAny: heterogeneous relation graph
 type AnyCell = Cell<any>;
@@ -48,24 +50,15 @@ type AnyCell = Cell<any>;
  *  only when needed — never stored on the cell, never overriding its
  *  `equals`. `undefined` ⇒ a plain cell that can't be a relation member (it
  *  only ever acts as an external input feeding a component). */
-function latticeOf(c: AnyCell): Lattice<unknown> | undefined {
-  return (c.constructor as { lattice?: Lattice<unknown> }).lattice;
+function latticeOf(c: AnyCell): Lattice<unknown, unknown> | undefined {
+  return (c.constructor as { lattice?: Lattice<unknown, unknown> }).lattice;
 }
-
-/** A relation rule: reads cells, writes (narrows) cells. `body` reads via
- *  `get` and contributes via `emit`; the solver folds emissions by `meet`. */
-export type RelationBody = (get: <T>(c: Cell<T>) => T, emit: <T>(c: Cell<T>, v: T) => void) => void;
 
 interface Rule {
   readonly reads: readonly AnyCell[];
   readonly writes: readonly AnyCell[];
   readonly body: RelationBody;
 }
-
-/** Safety bound for slow-converging real-interval cycles. Finite lattices
- *  reach a fixpoint well before this; never throws — a stalled run holds a
- *  sound over-approximation. */
-const MAX_WAVES = 10_000;
 
 // ── module scheduler state ──────────────────────────────────────────
 
@@ -97,9 +90,47 @@ function removeEdgeRef(r: AnyCell, w: AnyCell): void {
   }
 }
 
+/** Register the LENS-STRUCTURE edges of a member into the condensation.
+ *
+ *  A lens member reads its parent(s), a dataflow dependency the relation graph
+ *  must see: otherwise two components coupled only through a lens channel form
+ *  a cycle the condensation can't detect (it tracks only relation edges) and
+ *  they oscillate — invalidating each other across settles forever. Folding
+ *  the lens edges in keeps the condensation a true DAG: cells genuinely cycled
+ *  through lenses land in ONE SCC and solve together.
+ *
+ *  Walks the whole lens chain (parent → child for each link), held through the
+ *  permanent `edgeRefs` count and NEVER removed — the lens structure is fixed
+ *  for the cell's life. Anonymous intermediate lenses become condensation
+ *  nodes but never solve (no base; `buildGroup` filters them out). Must run
+ *  while `m` still holds its original identity (before it is re-wired). */
+function registerLensParents(m: AnyCell): void {
+  const seen = new Set<AnyCell>();
+  const visit = (child: AnyCell): void => {
+    if (seen.has(child) || !isLens(child)) return;
+    seen.add(child);
+    const parent = child._bwd!.parent;
+    const parents = parent instanceof Cell ? [parent] : Array.isArray(parent) ? parent : [];
+    for (const p of parents) {
+      const pc = p as AnyCell;
+      cond.addNode(pc);
+      addEdgeRef(pc, child); // p → child: child reads p
+      // Give every cell in the chain a base, so an INTERMEDIATE lens that
+      // lands inside an SCC solves as a real member (the chain folds in
+      // K-space via constraint transformers) instead of being skipped and
+      // re-entering the solve through a live `.value` read. Capture now, while
+      // the chain still holds its original identity. A cell that never enters
+      // a cycle keeps its base unused (it solves nothing — a plain channel).
+      if (latticeOf(pc) !== undefined && !baseOf.has(pc)) baseOf.set(pc, captureBase(pc));
+      visit(pc);
+    }
+  };
+  visit(m);
+}
+
 interface Group {
-  /** The internal solver computed for this SCC. */
-  readonly g: Cell<number>;
+  /** The first-class solver node for this SCC. */
+  readonly comp: Component;
   readonly members: readonly AnyCell[];
 }
 /** Which live SCC group currently owns each member, so a topology change
@@ -135,8 +166,13 @@ export function constrain(
     // Capture the standing-assertion channel the first time `w` becomes a
     // member — while it still holds its original identity. For a source that's
     // a value snapshot; for a lens it's a clone of the lens (so upstream flows
-    // in and writes flow back through it). See `captureBase`.
-    if (latticeOf(w) !== undefined && !baseOf.has(w)) baseOf.set(w, captureBase(w));
+    // in and writes flow back through it). See `captureBase`. Also fold the
+    // lens's structural read-edges into the condensation so lens-coupled
+    // regions condense into one SCC instead of oscillating across components.
+    if (latticeOf(w) !== undefined && !baseOf.has(w)) {
+      baseOf.set(w, captureBase(w));
+      registerLensParents(w);
+    }
     const rs = rulesByMember.get(w);
     if (rs === undefined) rulesByMember.set(w, [rule]);
     else rs.push(rule);
@@ -163,16 +199,16 @@ function disposeRule(rule: Rule): void {
   recompile(rule.writes);
 }
 
-// ── incremental compilation: one solver computed per SCC ────────────
+// ── incremental compilation: one Component per cyclic SCC ───────────
 //
 // A topology change rebuilds ONLY the components it touched. `affected` =
 // the cells the condensation re-grouped (merges via window-recondense,
 // splits via resplit) plus the cells the new/removed rule writes. Every
-// group owning an affected cell is torn down, then each distinct current
+// group owning an affected cell is disposed, then each distinct current
 // component over the affected region is rebuilt — so merges (N groups → 1)
-// and splits (1 group → N) both fall out correctly. No `batch` wrapper: the
-// engine hooks (`becomeMember`/`resignMember`) schedule any watching effects
-// onto the microtask, which coalesces them into one run.
+// and splits (1 group → N) both fall out correctly. The `Component` node and
+// its member projections run through the normal dep/sub graph, so any
+// watching effects are scheduled onto the microtask and coalesced.
 
 function recompile(writes: readonly AnyCell[]): void {
   const affected = cond.drainDirty();
@@ -183,7 +219,7 @@ function recompile(writes: readonly AnyCell[]): void {
   for (const n of affected) {
     const g = owner.get(n);
     if (g !== undefined) {
-      disposeInternalComputed(g.g);
+      g.comp.dispose();
       for (const m of g.members) {
         owner.delete(m);
         orphans.add(m);
@@ -198,109 +234,96 @@ function recompile(writes: readonly AnyCell[]): void {
   for (const m of orphans) {
     if (!owner.has(m)) {
       const b = baseOf.get(m);
-      if (b !== undefined) resignMember(m, b);
+      if (b !== undefined) relaxToBase(m, b);
     }
   }
 }
 
 function buildGroup(rep: AnyCell): void {
-  const members = cond.membersOf(rep).filter(c => latticeOf(c) !== undefined);
+  // Real members carry a base (set when they became a write-member). Lens
+  // parents pulled in only as condensation nodes (for SCC detection) have a
+  // lattice but no base — they're channels into the component, not solved.
+  const members = cond.membersOf(rep).filter(c => baseOf.has(c));
   if (members.length === 0) return;
 
   const memberSet = new Set(members);
   const ruleSet = new Set<Rule>();
   for (const m of members) for (const r of rulesByMember.get(m) ?? []) ruleSet.add(r);
   if (ruleSet.size === 0) return; // no rules → nothing to solve; relax as orphan
-  const compRules = [...ruleSet];
 
-  // The solver's output, filled on each pull and read by member projections.
-  const solved = new Map<AnyCell, unknown>();
-  let version = 0;
-  // A member's assertion (a lens's `base`) may read a FELLOW member of this
-  // same component — relating `p.shift(k)` to `p`, say. That re-enters this
-  // very solver mid-fixpoint, which the engine reports as "read its own
-  // value". The propagator fold can't see the lens transfer-function to solve
-  // such a region, so we surface a CLEAR domain error instead of the engine's
-  // internal one. (Any self-read DURING a solve is precisely this case.)
-  const g = internalComputed<number>(() => {
+  const bases = members.map(m => baseOf.get(m)!);
+  const lattices = members.map(m => latticeOf(m)!);
+  const bodies: RelationBody[] = [...ruleSet].map(r => r.body);
+  const derived = members.map(() => false);
+  const fallbacks = new Array<unknown>(members.length);
+
+  // A lens member whose PARENT is a fellow member is a constraint lens (the
+  // "both sides in the component" case): its base reads the parent, so seeding
+  // or falling back through it would re-enter the solve. Mark it DERIVED — seed
+  // ⊤, fall back to its frozen value — and (for a single-parent invertible
+  // lens) lift the lens into forward/backward knowledge transformers so the
+  // relationship is honoured inside the cycle. A lens whose parent is OUTSIDE
+  // stays a plain channel (today's behaviour); a lens by itself isn't a
+  // constraint. See `unified-relations.md` §4–5.
+  members.forEach((m, i) => {
+    const base = bases[i];
+    if (!isLens(base)) return;
+    const bw = base._bwd!;
+    const parent = bw.parent;
+    const singleMemberParent = parent instanceof Cell && memberSet.has(parent);
+    const multiMemberParent = Array.isArray(parent) && parent.some(p => memberSet.has(p));
+    if (!singleMemberParent && !multiMemberParent) return; // channel: parent external
+
+    derived[i] = true;
+    // Frozen fallback = the lens's current forward value, read through its own
+    // base (the live clone over the ORIGINAL parent). If that read can't be
+    // evaluated mid-rewire (a parent in flux), fall back to the member's last
+    // cached value — always a well-formed `T`.
     try {
-      solveInto(solved, members, memberSet, compRules);
-    } catch (e) {
-      if (e instanceof RangeError)
-        throw new Error(
-          "relate: relation cycle through a lens — a member's assertion " +
-            "depends on a fellow member it derives from. A lens and a cell it " +
-            "reads cannot both be members of the same relation; relate their " +
-            "shared source instead.",
-        );
-      throw e;
+      fallbacks[i] = base.peek();
+    } catch {
+      fallbacks[i] = m.peek();
     }
-    return ++version;
+
+    if (singleMemberParent && bw.fwd !== undefined) {
+      const p = parent as AnyCell;
+      const latM = lattices[i]!;
+      const latP = latticeOf(p)!;
+      const fwd = bw.fwd;
+      // forward: m ⊒ F(parent), once the parent's knowledge pins a value.
+      bodies.push((get, emit) => {
+        const pv = latP.pinned(get(p));
+        if (pv !== undefined) emit(m, latM.abstract(fwd(pv)));
+      });
+      // backward: parent ⊒ B(m) for a source-INDEPENDENT inverse (1-arg `put`:
+      // shift/scale/affine/add/not/xor — the homomorphisms). A source-reading
+      // inverse (field spread-replace, clamp) abstains backward, still sound.
+      const put = bw.put;
+      if (put !== undefined && !bw.readsSource) {
+        bodies.push((get, emit) => {
+          const mv = latM.pinned(get(m));
+          if (mv !== undefined) emit(p, latP.abstract(put(mv)));
+        });
+      }
+    }
   });
 
-  const group: Group = { g, members };
-  for (const m of members) {
-    owner.set(m, group);
-    becomeMember(
-      m,
-      () => {
-        void g.value; // pull the solver (lazy fixpoint, in dependency order)
-        return solved.get(m);
-      },
-      baseOf.get(m)!,
-    );
-  }
+  // The Component constructor projects each member onto its solved slot.
+  const comp = new Component(members, bases, lattices, bodies, derived, fallbacks);
+  const group: Group = { comp, members };
+  for (const m of members) owner.set(m, group);
 }
 
-/** Solve one component to a lattice fixpoint, storing each member's result.
- *  Runs inside the solver computed `g`, so every input read here — externals
- *  via `get`, each member's base — becomes a dependency of `g`, and any of
- *  them changing re-invalidates the whole component. Recomputes from base
- *  each pull (sound when inputs relax). */
-function solveInto(
-  solved: Map<AnyCell, unknown>,
-  members: AnyCell[],
-  memberSet: Set<AnyCell>,
-  compRules: Rule[],
-): void {
-  const lat = new Map<AnyCell, Lattice<unknown>>();
-  const work = new Map<AnyCell, unknown>();
-  for (const m of members) {
-    lat.set(m, latticeOf(m)!);
-    work.set(m, baseOf.get(m)!.value); // tracked: solver depends on the base
-  }
+// ── relation combinators (declared directly, no wrapper) ────────────
 
-  // Members read from the work map (no dependency — internal to the solve);
-  // externals read live via `.value` (tracked → solver depends on them, and
-  // an external that is itself another SCC's member pulls that solve first).
-  const get = <T>(c: Cell<T>): T => (memberSet.has(c) ? (work.get(c) as T) : c.value);
-  const emit = <T>(c: Cell<T>, v: T): void => {
-    if (!memberSet.has(c)) return;
-    work.set(c, lat.get(c)!.meet(work.get(c), v));
-  };
-
-  let waves = 0;
-  let moved = true;
-  while (moved && waves < MAX_WAVES) {
-    waves++;
-    moved = false;
-    const before = new Map(work);
-    for (const r of compRules) r.body(get, emit);
-    for (const m of members) {
-      if (!lat.get(m)!.equals(before.get(m), work.get(m))) moved = true;
-    }
-  }
-
-  solved.clear();
-  for (const m of members) solved.set(m, work.get(m));
-}
-
-// ── interval combinators (declared directly, no wrapper) ────────────
-
-/** a = b — both narrow to the intersection. */
+/** a = b — each cell's knowledge meets the other's (their common refinement
+ *  in the lattice). Knowledge flows both ways; conflicting concretes give a
+ *  contradiction (`isBottom`). */
 export function equal<T>(a: Cell<T>, b: Cell<T>): () => void {
-  const d1 = constrain([a], [b], (get, emit) => emit(b, get(a)));
-  const d2 = constrain([b], [a], (get, emit) => emit(a, get(b)));
+  const ca = a as Cell<unknown>;
+  const cb = b as Cell<unknown>;
+  const d1 = constrain([a], [b], (get, emit) => emit(cb, get(ca)));
+  const d2 = constrain([b], [a], (get, emit) => emit(ca, get(cb)));
   return () => {
     d1();
     d2();

@@ -13,13 +13,13 @@ import {
   fieldLens,
   type Init,
   isReadonly,
-  type Lattice,
   reader,
   readNow,
   type Val,
   type Writable,
   type WritableBrand,
 } from "../cell";
+import { interval, tuple } from "../lattice";
 import type { Linear, Pack, TraitDict } from "../traits";
 import { Bool } from "./bool";
 import { Num, num } from "./num";
@@ -71,8 +71,6 @@ const packImpl: Pack<V> = {
   write: (a, o) => ({ lo: a[o]!, hi: a[o + 1]! }),
 };
 
-const LAT_EPS = 1e-9;
-
 export class Range extends Cell<V> {
   static traits = {
     linear: linearImpl,
@@ -83,16 +81,12 @@ export class Range extends Cell<V> {
   } satisfies TraitDict<V>;
   declare readonly _t: typeof Range.traits;
 
-  /** Interval-intersection lattice — a `Range` read as partial knowledge of
-   *  a span. `meet` is overlap, `top` is the whole line, `isBottom` is an
-   *  empty span. The relate layer picks this up automatically when a `Range`
-   *  joins a cyclic relation; no per-cell wiring. */
-  static lattice: Lattice<V> = {
-    top: { lo: Number.NEGATIVE_INFINITY, hi: Number.POSITIVE_INFINITY },
-    meet: (a, b) => ({ lo: Math.max(a.lo, b.lo), hi: Math.min(a.hi, b.hi) }),
-    equals: (a, b) => Math.abs(a.lo - b.lo) <= LAT_EPS && Math.abs(a.hi - b.hi) <= LAT_EPS,
-    isBottom: a => a.lo > a.hi + LAT_EPS,
-  };
+  /** Domain-faithful lattice over the `(lo, hi)` PAIR: each endpoint is an
+   *  independently-narrowable interval, so `.lo` / `.hi` project as
+   *  homomorphisms inside a cyclic relation. (This is the coordinate reading,
+   *  not "the span lies somewhere in [lo,hi]".) The relate layer picks it up
+   *  automatically when a `Range` joins a relation; no per-cell wiring. */
+  static lattice = tuple<V>({ lo: interval, hi: interval });
 
   constructor(v: V = { lo: 0, hi: 1 }) {
     super(v, { equals });

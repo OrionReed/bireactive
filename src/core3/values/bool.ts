@@ -9,6 +9,7 @@
 // `Bool.lens([a, b], fwd, bwd)` with an explicit policy.
 
 import { Cell, type Init, reader, type Val, type Writable } from "../cell";
+import { flat } from "../lattice";
 import type { Linear, TraitDict } from "../traits";
 
 type V = boolean;
@@ -30,6 +31,10 @@ const linearImpl: Linear<V> = {
 export class Bool extends Cell<V> {
   static traits = { linear: linearImpl, equals } satisfies TraitDict<V>;
   declare readonly _t: typeof Bool.traits;
+
+  /** Flat lattice — false / true / unknown / conflict. Lets a `Bool`
+   *  participate in cyclic relations; the relate layer resolves it. */
+  static lattice = flat<V>(equals);
 
   constructor(v: V = false) {
     super(v, { equals });
