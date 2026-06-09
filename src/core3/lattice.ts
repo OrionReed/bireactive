@@ -85,6 +85,15 @@ export const interval: Lattice<number, Iv> = {
     if (max < prev.max && prev.max - max < WIDEN_EPS) max = prev.max;
     return min === next.min && max === next.max ? next : { min, max };
   },
+  // Endpoint image, re-normalised so a decreasing `f` still yields min ≤ max.
+  // Sound for Iso homomorphisms (shift/scale/affine/exp) — invertible ⇒
+  // monotone — so a partial band (`x ≥ 3`) flows through `.add`/`.scale`/… in a
+  // cycle instead of waiting for the parent to pin a point.
+  image: (k, f) => {
+    const a = f(k.min);
+    const b = f(k.max);
+    return a <= b ? { min: a, max: b } : { min: b, max: a };
+  },
 };
 
 // ── tuple: componentwise product over named fields ──────────────────

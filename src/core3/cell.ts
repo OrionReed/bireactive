@@ -440,6 +440,17 @@ export const isLens = (v: unknown): v is Cell<unknown> =>
 export const isReadonly = (v: unknown): v is Cell<unknown> =>
   v instanceof Cell && v.getter !== undefined && v._rel === undefined;
 
+/** A writable derived cell's structural inputs (its lens parents), normalised to
+ *  an array; `[]` for a source or read-only cell. The relation layer reads this
+ *  to fold lens dataflow edges into its condensation WITHOUT naming `Transfer`. */
+export function parentsOf(c: Cell<unknown>): readonly Cell<unknown>[] {
+  const r = c._rel;
+  if (r === undefined) return EMPTY_PARENTS;
+  const p = r.parents;
+  return p instanceof Cell ? [p] : Array.isArray(p) ? (p as Cell<unknown>[]) : EMPTY_PARENTS;
+}
+const EMPTY_PARENTS: readonly Cell<unknown>[] = [];
+
 /** A meet-semilattice over a KNOWLEDGE type `K`, distinct from the cell's
  *  VALUE type `T`. `K` carries partial information during a cyclic solve;
  *  `abstract` lifts a concrete seed/input into `K` and `concretize` collapses
@@ -479,6 +490,13 @@ export interface Lattice<T, K = T> {
    *  naive iteration already terminates, so termination is a property of the
    *  lattice, never a global iteration cap. */
   widen?(prev: K, next: K): K;
+  /** Map this knowledge through a MONOTONE scalar `f`, staying in the same `K`
+   *  representation — the lattice's own knowledge-transformer for a homomorphic
+   *  (Iso) lens. An interval maps endpoint-wise (the whole band flows); a
+   *  lattice that can't represent a band omits it, and the cyclic lens-lift
+   *  falls back to pin-gated transfer (fire only once the value is pinned).
+   *  Defined only where band-level narrowing is sound. */
+  image?(k: K, f: (t: number) => number): K;
 }
 
 export interface CellOptions<T = unknown> {
@@ -1626,10 +1644,13 @@ export function cachedDerive<S extends Cell<any>, C extends new (...args: never[
 // and the next read re-solves. Members only ever hold `T`; `K` never leaves
 // the component, so the acyclic DAG sees plain concrete values.
 //
-// The whole mechanism is here (a real node + member projection), NOT poked
-// into Cell internals from outside: the relate layer only constructs a
-// `Component`, disposes it, and relaxes orphaned members. The partition
-// (which cells form a component) and the rule registry live in `relate.ts`.
+// The whole mechanism is here (a real node + member overlay), NOT poked into
+// Cell internals from outside: relate hands over members + lattices + rules +
+// free, and the `Component` folds its OWN lens members (lifting each constraint
+// lens from the cell's intrinsic `_rel` — relate never inspects a `Transfer`).
+// relate only constructs a `Component`, disposes it, and relaxes orphaned
+// members; the partition (which cells form a component) and the rule registry
+// live in `relate.ts`.
 
 /** A relation rule, folded in knowledge space: `get(c)` yields a member's
  *  current `K` (or an external input lifted via its lattice), `emit(c, k)`
@@ -1662,6 +1683,52 @@ const WIDEN_AFTER = 64;
 
 const latticeOf = (c: Cell<unknown>): Lattice<unknown, unknown> | undefined =>
   (c.constructor as { lattice?: Lattice<unknown, unknown> }).lattice;
+
+/** Lift a constraint lens's transfer into K-space relation rules, reading the
+ *  SAME `Transfer` the acyclic executor uses (its maps are abstracted, never
+ *  re-authored). When the member and its parent share a band-capable lattice
+ *  (`image`) and the lens is a homomorphism (`Iso`), map the whole band both
+ *  ways — a real two-way interval transformer, so partial knowledge (a free var
+ *  bounded `≥ 3`) flows through. Otherwise pin-gated: forward once the parent's
+ *  knowledge pins a value (every single-parent kind), backward only for a
+ *  source-INDEPENDENT inverse (`Iso`); a source-reading inverse (`Lens`: field
+ *  spread-replace, clamp) abstains backward, still sound. */
+function liftLens(
+  rel: Transfer,
+  m: Cell<unknown>,
+  latM: Lattice<unknown, unknown>,
+  p: Cell<unknown>,
+  latP: Lattice<unknown, unknown>,
+  rules: CompiledRule[],
+): void {
+  const fwd = rel.fwd as (t: unknown) => unknown;
+  if (rel.kind === K.Iso && latM === latP && latM.image !== undefined) {
+    const img = latM.image;
+    const bwd = rel.bwd as (t: unknown) => unknown;
+    const f = fwd as (t: number) => number;
+    const b = bwd as (t: number) => number;
+    rules.push({ reads: [p], body: (get, emit) => emit(m, img(get(p), f)) });
+    rules.push({ reads: [m], body: (get, emit) => emit(p, img(get(m), b)) });
+    return;
+  }
+  rules.push({
+    reads: [p],
+    body: (get, emit) => {
+      const pv = latP.pinned(get(p));
+      if (pv !== undefined) emit(m, latM.abstract(fwd(pv)));
+    },
+  });
+  if (rel.kind === K.Iso) {
+    const bwd = rel.bwd as (t: unknown) => unknown;
+    rules.push({
+      reads: [m],
+      body: (get, emit) => {
+        const mv = latM.pinned(get(m));
+        if (mv !== undefined) emit(p, latP.abstract(bwd(mv)));
+      },
+    });
+  }
+}
 
 export class Component extends Cell<number> {
   readonly members: readonly Cell<unknown>[];
@@ -1696,23 +1763,60 @@ export class Component extends Cell<number> {
   constructor(
     members: readonly Cell<unknown>[],
     lattices: readonly Lattice<unknown, unknown>[],
-    rules: readonly CompiledRule[],
-    derived: readonly boolean[],
-    fallbacks: readonly unknown[],
+    userRules: readonly CompiledRule[],
     free: readonly boolean[],
   ) {
     super(0);
+    const n = members.length;
     this.members = members;
     this.lattices = lattices;
-    this.rules = rules;
-    this.derived = derived;
-    this.fallbacks = fallbacks;
     this.free = free;
     // Seed each slot with the member's current value so `_project` reads a
     // well-formed `T` even before the first solve (and if this component is
     // disposed without ever solving) — never `undefined`.
     this.solved = members.map(m => m.currentValue);
     members.forEach((m, i) => this.index.set(m, i));
+
+    // Fold lens members the component owns. A LENS member whose PARENT is a
+    // fellow member is a CONSTRAINT lens ("both sides inside the cycle"):
+    // re-evaluating its forward would re-enter the solve through the parent, so
+    // mark it DERIVED (seed ⊤, fall back to its frozen forward value) and — for
+    // a single-parent invertible lens — lift the lens's OWN transfer into
+    // forward/backward knowledge rules so the relationship holds inside the
+    // cycle. A lens whose parent is OUTSIDE stays a plain channel. The engine
+    // does this from the cell's intrinsic `_rel` (never clobbered by
+    // membership), so relate hands over rules + lattices and never inspects a
+    // `Transfer`.
+    const derived = members.map(() => false);
+    const fallbacks = new Array<unknown>(n);
+    const rules: CompiledRule[] = userRules.slice();
+    members.forEach((m, i) => {
+      if (!isLens(m)) return; // source member — no lens to fold
+      const rel = m._rel!;
+      const parent = rel.parents;
+      const singleMemberParent = parent instanceof Cell && this.index.has(parent);
+      const multiMemberParent = Array.isArray(parent) && parent.some(p => this.index.has(p));
+      if (!singleMemberParent && !multiMemberParent) return; // channel: parent external
+
+      derived[i] = true;
+      // Frozen fallback = the lens's current forward value via its intrinsic
+      // getter (untracked snapshot, not a dep). If unreadable mid-recompile (a
+      // parent in flux), fall back to the member's last cached value.
+      const g = m.getter!;
+      try {
+        fallbacks[i] = untracked(() => g.call(m));
+      } catch {
+        fallbacks[i] = m.peek();
+      }
+      if (singleMemberParent) {
+        const p = parent as Cell<unknown>;
+        liftLens(rel, m, lattices[i]!, p, lattices[this.index.get(p)!]!, rules);
+      }
+    });
+    this.rules = rules;
+    this.derived = derived;
+    this.fallbacks = fallbacks;
+
     const readers: number[][] = members.map(() => []);
     rules.forEach((rule, r) => {
       for (const c of rule.reads) {

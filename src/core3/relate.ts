@@ -30,25 +30,23 @@
 // solve is bounded to its own component.
 
 import {
-  Cell,
+  type Cell,
   type CompiledRule,
   Component,
   isLens,
-  K,
   type Lattice,
+  parentsOf,
   type RelationBody,
   relax,
-  untracked,
 } from "./cell";
 import { DynCondensation } from "./condense";
-import { interval } from "./lattice";
 
 export type { RelationBody } from "./cell";
 
 // biome-ignore lint/suspicious/noExplicitAny: heterogeneous relation graph
 type AnyCell = Cell<any>;
 
-// ── interval-knowledge helpers (shared by the lens lift and contractors) ──
+// ── interval-knowledge helpers (the two-way numeric contractors) ──
 const NINF = Number.NEGATIVE_INFINITY;
 const PINF = Number.POSITIVE_INFINITY;
 interface Iv {
@@ -56,14 +54,6 @@ interface Iv {
   readonly max: number;
 }
 const iv = (k: unknown): Iv => k as Iv;
-/** Map a band through a MONOTONE scalar `f` (endpoint image, re-normalised so a
- *  decreasing `f` still yields min ≤ max). Sound for Iso homomorphisms
- *  (shift/scale/affine/exp) — invertible ⇒ monotone. */
-const mapBand = (k: Iv, f: (t: number) => number): Iv => {
-  const a = f(k.min);
-  const b = f(k.max);
-  return a <= b ? { min: a, max: b } : { min: b, max: a };
-};
 
 /** A cell's lattice, declared as a static on its value CLASS
  *  (`Range.lattice`, `Box.lattice`, `Flags.lattice`, …) and resolved here
@@ -108,9 +98,7 @@ function registerLensParents(m: AnyCell): void {
   const visit = (child: AnyCell): void => {
     if (seen.has(child) || !isLens(child)) return;
     seen.add(child);
-    const parent = child._rel!.parents;
-    const parents = parent instanceof Cell ? [parent] : Array.isArray(parent) ? parent : [];
-    for (const p of parents) {
+    for (const p of parentsOf(child)) {
       const pc = p as AnyCell;
       cond.addNode(pc);
       cond.addEdge(pc, child); // p → child: child reads p (permanent lens edge)
@@ -246,57 +234,6 @@ function recompile(writes: readonly AnyCell[]): void {
   }
 }
 
-/** Lift a constraint lens's transfer into K-space relation bodies, reading the
- *  SAME `Transfer` the acyclic executor uses (its maps are abstracted, never
- *  re-authored). Forward: `m ⊒ abstract(fwd(pinned(parent)))`, once the parent's
- *  knowledge pins a value — for every single-parent kind. Backward:
- *  `parent ⊒ abstract(bwd(pinned(m)))` only for a source-INDEPENDENT inverse
- *  (`Iso`: shift/scale/affine/add/not/xor — the homomorphisms). A source-reading
- *  inverse (`Lens`: field spread-replace, clamp) abstains backward, still sound. */
-function liftToKSpace(
-  rel: NonNullable<AnyCell["_rel"]>,
-  m: AnyCell,
-  latM: Lattice<unknown, unknown>,
-  p: AnyCell,
-  latP: Lattice<unknown, unknown>,
-  rules: CompiledRule[],
-): void {
-  const fwd = rel.fwd;
-  // Iso over two scalar intervals: a monotone homomorphism, so map the WHOLE
-  // band both ways (a real two-way interval transformer). Partial knowledge — a
-  // free var bounded `≥ 3` — now flows through `.add`/`.scale`/`.affine`/`.exp`
-  // instead of waiting for the parent to pin a point.
-  if (rel.kind === K.Iso && latM === interval && latP === interval) {
-    const bwd = rel.bwd;
-    rules.push({ reads: [p], body: (get, emit) => emit(m, mapBand(iv(get(p)), fwd as F)) });
-    rules.push({ reads: [m], body: (get, emit) => emit(p, mapBand(iv(get(m)), bwd as F)) });
-    return;
-  }
-  // Pin-gated fallback (any lattice / any kind): forward once the parent's
-  // knowledge pins a value; backward only for a source-independent (Iso)
-  // inverse. A non-monotone inverse (sin/clamp/quantize — `Lens` kind) abstains
-  // backward, still sound.
-  rules.push({
-    reads: [p],
-    body: (get, emit) => {
-      const pv = latP.pinned(get(p));
-      if (pv !== undefined) emit(m, latM.abstract(fwd(pv)));
-    },
-  });
-  if (rel.kind === K.Iso) {
-    const bwd = rel.bwd;
-    rules.push({
-      reads: [m],
-      body: (get, emit) => {
-        const mv = latM.pinned(get(m));
-        if (mv !== undefined) emit(p, latP.abstract(bwd(mv)));
-      },
-    });
-  }
-}
-
-type F = (t: number) => number;
-
 function buildComponent(rep: AnyCell): void {
   // Real members are marked in `memberCells` (write-targets + lens-chain cells).
   // Lens parents pulled in only as condensation nodes (for SCC detection) have a
@@ -304,58 +241,19 @@ function buildComponent(rep: AnyCell): void {
   const members = cond.membersOf(rep).filter(c => memberCells.has(c));
   if (members.length === 0) return;
 
-  const memberSet = new Set(members);
   const ruleSet = new Set<Rule>();
   for (const m of members) for (const r of rulesByMember.get(m) ?? []) ruleSet.add(r);
   if (ruleSet.size === 0) return; // no rules → nothing to solve; relax as orphan
 
   const lattices = members.map(m => latticeOf(m)!);
   const rules: CompiledRule[] = [...ruleSet].map(r => ({ body: r.body, reads: r.reads }));
-  const derived = members.map(() => false);
   const isFree = members.map(m => freeVars.has(m));
-  const fallbacks = new Array<unknown>(members.length);
 
-  // A LENS member whose PARENT is a fellow member is a constraint lens (the
-  // "both sides in the component" case): re-evaluating its forward would re-enter
-  // the solve through the parent. Mark it DERIVED — seed ⊤, fall back to its
-  // frozen value — and (for a single-parent invertible lens) lift the lens into
-  // forward/backward knowledge transformers so the relationship is honoured
-  // inside the cycle. A lens whose parent is OUTSIDE stays a plain channel
-  // (today's behaviour); a lens by itself isn't a constraint. See §4–5.
-  //
-  // A member's INTRINSIC identity is never clobbered by membership (only
-  // `_region` is set), so even one already governed by a now-disposed component
-  // still has its real `_rel` and its original forward getter — read those.
-  members.forEach((m, i) => {
-    if (!isLens(m)) return; // source member — no lens to lift
-    const rel = m._rel!;
-    const parent = rel.parents;
-    const singleMemberParent = parent instanceof Cell && memberSet.has(parent);
-    const multiMemberParent = Array.isArray(parent) && parent.some(p => memberSet.has(p));
-    if (!singleMemberParent && !multiMemberParent) return; // channel: parent external
-
-    derived[i] = true;
-    // Frozen fallback = the lens's current forward value via its intrinsic getter
-    // (untracked: this is a snapshot, not a dep). If that read can't be evaluated
-    // mid-recompile (a parent in flux), fall back to the member's last cached
-    // value — always a well-formed `T`.
-    const origGetter = m.getter!;
-    try {
-      // The forward getter reads `this._rel`, so run it with `this === m`.
-      fallbacks[i] = untracked(() => origGetter.call(m));
-    } catch {
-      fallbacks[i] = m.peek();
-    }
-
-    if (singleMemberParent) {
-      const p = parent as AnyCell;
-      liftToKSpace(rel, m, lattices[i]!, p, latticeOf(p)!, rules);
-    }
-  });
-
-  // The Component constructor marks each member governed (reads now project its
-  // solved slot).
-  const comp = new Component(members, lattices, rules, derived, fallbacks, isFree);
+  // Hand the engine the members, their lattices, the user rules, and which are
+  // free. The `Component` folds its own lens members (constraint lenses lifted
+  // from each cell's intrinsic transfer) and marks every member governed — relate
+  // never inspects a `Transfer`.
+  const comp = new Component(members, lattices, rules, isFree);
   for (const m of members) owner.set(m, comp);
 }
 
