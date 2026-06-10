@@ -30,15 +30,21 @@
 // solve is bounded to its own component.
 
 import {
+  beginRegionBuild,
+  bumpTopoGen,
   type Cell,
   type CompiledRule,
   Component,
+  endRegionBuild,
   isLens,
   isReadonly,
   type Lattice,
+  markRelational,
   parentsOf,
+  refireCells,
+  regionGen,
   type RelationBody,
-  relax,
+  setRegionResolver,
 } from "./cell";
 import { DynCondensation } from "./condense";
 
@@ -109,18 +115,23 @@ function registerLensParents(m: AnyCell): void {
       // re-entering the solve through a live `.value` read. A cell that never
       // enters a cycle keeps the mark unused (it solves nothing — a plain
       // channel).
-      if (latticeOf(pc) !== undefined) memberCells.add(pc);
+      if (latticeOf(pc) !== undefined) {
+        memberCells.add(pc);
+        markRelational(pc); // a lens parent can be a real member too
+      }
       visit(pc);
     }
   };
   visit(m);
 }
 
-/** The live SCC solver that currently owns each member, so a topology change
- *  rebuilds ONLY the components it actually touched. Keyed by member: across an
- *  edit a member still points at its OLD `Component` (the NEW partition is read
- *  from `cond`), which is how `recompile` finds what to dispose. */
-const owner = new WeakMap<AnyCell, Component>();
+/** Materialized SCC solvers, keyed by condensation REPRESENTATIVE. The membership
+ *  source of truth is `cond`; this is just the lazily-built solver cache for each
+ *  cyclic region. An entry is born on the first read of any member (`resolveRegion`)
+ *  and retired when its rep merges/splits or its rules change (`recompile`). A
+ *  region declared but never read never appears here — so N incremental `constrain`
+ *  calls don't rebuild a growing region N times. */
+const regions = new Map<AnyCell, Component>();
 
 /** Cells that are relation members (write-targets, plus lens-chain cells folded
  *  in for SCC detection). A pure membership MARKER: the standing assertion
@@ -155,8 +166,41 @@ export function assert<T>(c: Cell<T>, value: T): void {
   (c as { value: T }).value = value;
 }
 
-/** Declare a relationship. Registers the rule + its dataflow edges and
- *  (re)compiles the affected SCCs. Live immediately — no wrapper. */
+/** Resolve which region a member belongs to RIGHT NOW (the engine's lazy read
+ *  path calls this via `setRegionResolver`). Returns the region for a cyclic
+ *  SCC — building it on demand and caching by representative — or `undefined`
+ *  for a singleton (⇒ the member reads degenerately; the implicit "left the
+ *  relation" path). The region materializes here, on first read, NOT eagerly at
+ *  `constrain` time. */
+/** Reps whose region is mid-build — breaks the recursion when the `Component`
+ *  ctor samples a co-member's value (which would otherwise re-enter here for the
+ *  same rep). A re-entrant resolve reads the member intrinsically instead. */
+const building = new Set<AnyCell>();
+
+function resolveRegion(m: AnyCell): Component | undefined {
+  const rep = cond.representative(m);
+  if (building.has(rep)) return undefined; // mid-build ⇒ intrinsic read
+  const g = regions.get(rep);
+  if (g !== undefined && !g.disposed && g.builtGen === regionGen()) return g;
+  if (g !== undefined && !g.disposed) g.dispose(); // stale structure ⇒ rebuild
+  // Build whenever this group has solvable members with rules — a singleton
+  // forward constraint (acyclic `narrow`) is a 1-member region, exactly like a
+  // cyclic SCC. `buildRegion` returns `undefined` when the group has no rules
+  // (a pure channel, or a member that lost its last rule) ⇒ degenerate read.
+  building.add(rep);
+  beginRegionBuild();
+  try {
+    return buildRegion(rep);
+  } finally {
+    building.delete(rep);
+    endRegionBuild();
+  }
+}
+setRegionResolver(resolveRegion as (m: Cell<unknown>) => Component | undefined);
+
+/** Declare a relationship. Registers the rule + its dataflow edges and bumps the
+ *  topology generation. No region is built here: affected regions re-derive
+ *  lazily on the next read (`resolveRegion`). Live immediately — no wrapper. */
 export function constrain(
   reads: readonly AnyCell[],
   writes: readonly AnyCell[],
@@ -168,18 +212,22 @@ export function constrain(
     // definition — it can contribute its value as an INPUT wherever a rule reads
     // it, but it can never be narrowed or written, so it never becomes a member/
     // governed view. Skip it as a write-target: a rule emitting to it simply
-    // no-ops (it's in no component's index), and its value still flows in
-    // through every `reads` edge. This keeps its lazy getter read-path intact
-    // rather than overriding it with a projection that only ever re-derives the
-    // same value.
+    // no-ops (it's in no region's index), and its value still flows in through
+    // every `reads` edge. This keeps its lazy getter read-path intact rather than
+    // overriding it with a projection that only ever re-derives the same value.
     if (isReadonly(w)) continue;
-    // Mark `w` a member the first time it joins a relation. Its standing
-    // assertion lives natively on the cell (see `memberCells`). Also fold the
-    // lens's structural read-edges into the condensation so lens-coupled
-    // regions condense into one SCC instead of oscillating across components.
-    if (latticeOf(w) !== undefined && !memberCells.has(w)) {
-      memberCells.add(w);
-      registerLensParents(w);
+    // Mark `w` a relation member. `markRelational` flips it onto the lazy
+    // region-resolution read path (idempotent, so it's safe even if `w` was
+    // already pulled in as a lens parent). Its standing assertion lives natively
+    // on the cell (see `memberCells`). The first time, also fold the lens's
+    // structural read-edges into the condensation so lens-coupled regions
+    // condense into one SCC instead of oscillating across regions.
+    if (latticeOf(w) !== undefined) {
+      markRelational(w);
+      if (!memberCells.has(w)) {
+        memberCells.add(w);
+        registerLensParents(w);
+      }
     }
     const rs = rulesByMember.get(w);
     if (rs === undefined) rulesByMember.set(w, [rule]);
@@ -192,8 +240,8 @@ export function constrain(
 }
 
 /** Remove a relationship: drop its rule + edges. A removed edge may SPLIT an
- *  SCC (the condensation resplits locally); the affected components are
- *  rebuilt incrementally, same as for a join. */
+ *  SCC (the condensation resplits locally); affected regions re-derive lazily on
+ *  the next read, same as for a join. */
 function disposeRule(rule: Rule): void {
   for (const w of rule.writes) {
     const rs = rulesByMember.get(w);
@@ -207,56 +255,63 @@ function disposeRule(rule: Rule): void {
   recompile(rule.writes);
 }
 
-// ── incremental compilation: one Component per cyclic SCC ───────────
+// ── lazy compilation: regions materialize on read, retire on edit ───
 //
-// A topology change rebuilds ONLY the components it touched. `affected` =
-// the cells the condensation re-grouped (merges via window-recondense,
-// splits via resplit) plus the cells the new/removed rule writes. Every
-// `Component` owning an affected cell is disposed, then each distinct current
-// component over the affected region is rebuilt — so merges (N → 1) and splits
-// (1 → N) both fall out correctly. The `Component` node and its member
-// projections run through the normal dep/sub graph, so any watching effects
-// are scheduled onto the microtask and coalesced.
+// A topology edit does NOT rebuild anything. It only retires the ALREADY-
+// MATERIALIZED regions it disturbed (a region exists only if some member was
+// read) and bumps the generation so caches re-resolve. Each disturbed region
+// refires its linked members (so watching effects re-pull) and unlinks its
+// inputs; the new grouping then re-derives on the next read of any member. So
+// the cost of an edit is proportional to the regions actually in use, not to the
+// size of the component — N incremental edits during construction (nothing read
+// yet) touch zero regions.
 
 function recompile(writes: readonly AnyCell[]): void {
-  const affected = cond.drainDirty();
-  // Read-only write-targets are never members and may not even be condensation
-  // nodes (a pure `constrain([x], [derivedRO], …)`), so they have no component
-  // to rebuild — skip them (`representative` would throw on an unknown node).
-  for (const w of writes) if (!isReadonly(w)) affected.add(w);
+  // Cells whose grouping changed (merge/split) plus the edited write-targets
+  // (a rule-only change doesn't re-group but still changes values).
+  const dirty = cond.drainDirty();
+  for (const w of writes) if (!isReadonly(w)) dirty.add(w as AnyCell);
 
-  const reps = new Set<AnyCell>();
-  const orphans = new Set<AnyCell>();
-  for (const n of affected) {
-    const comp = owner.get(n);
-    if (comp !== undefined) {
-      comp.dispose();
-      for (const m of comp.members) {
-        owner.delete(m);
-        orphans.add(m);
-      }
-    }
-    reps.add(cond.representative(n));
+  // Materialized regions disturbed by this edit: the one each dirty cell used to
+  // be in (cached on the cell), the one now sitting at its representative, and —
+  // safety net — any whose representative was absorbed by a merge.
+  const stale = new Set<Component>();
+  const consider = (g: Component | undefined): void => {
+    if (g !== undefined && !g.disposed) stale.add(g);
+  };
+  for (const n of dirty) {
+    consider(n._region);
+    consider(regions.get(cond.representative(n)));
   }
-  for (const rep of reps) buildComponent(rep);
+  for (const [rep, g] of regions) if (cond.representative(rep) !== rep) consider(g);
 
-  // A cell that lost its last rule (no longer owned by any Component) relaxes
-  // back to its standing assertion as a plain source (or its original lens).
-  for (const m of orphans) {
-    if (!owner.has(m)) relax(m);
+  // Bump FIRST so any re-pull triggered by the refire below re-resolves against
+  // the new generation (and finds retired Map entries gone).
+  bumpTopoGen();
+
+  // Everything whose value may have moved: the re-grouped cells AND every member
+  // of a retired region (a co-member's value can shift even if it didn't change
+  // component). Their watchers re-pull and rebuild lazily; the regions then
+  // unlink their inputs. All cheap when nothing has been read (no subs).
+  const refire = new Set<AnyCell>(dirty);
+  for (const g of stale) {
+    regions.delete(g.rep);
+    for (const m of g.members) refire.add(m as AnyCell);
   }
+  for (const g of stale) g.dispose();
+  refireCells(refire as Set<Cell<unknown>>);
 }
 
-function buildComponent(rep: AnyCell): void {
+function buildRegion(rep: AnyCell): Component | undefined {
   // Real members are marked in `memberCells` (write-targets + lens-chain cells).
   // Lens parents pulled in only as condensation nodes (for SCC detection) have a
-  // lattice but no mark — they're channels into the component, not solved.
+  // lattice but no mark — they're channels into the region, not solved.
   const members = cond.membersOf(rep).filter(c => memberCells.has(c));
-  if (members.length === 0) return;
+  if (members.length === 0) return undefined;
 
   const ruleSet = new Set<Rule>();
   for (const m of members) for (const r of rulesByMember.get(m) ?? []) ruleSet.add(r);
-  if (ruleSet.size === 0) return; // no rules → nothing to solve; relax as orphan
+  if (ruleSet.size === 0) return undefined; // no rules → nothing to solve
 
   const lattices = members.map(m => latticeOf(m)!);
   const rules: CompiledRule[] = [...ruleSet].map(r => ({ body: r.body, reads: r.reads }));
@@ -264,10 +319,12 @@ function buildComponent(rep: AnyCell): void {
 
   // Hand the engine the members, their lattices, the user rules, and which are
   // free. The `Component` folds its own lens members (constraint lenses lifted
-  // from each cell's intrinsic transfer) and marks every member governed — relate
-  // never inspects a `Transfer`.
-  const comp = new Component(members, lattices, rules, isFree);
-  for (const m of members) owner.set(m, comp);
+  // from each cell's intrinsic transfer); members become governed VIEWS lazily,
+  // each on its own first read — relate never inspects a `Transfer`.
+  const comp = new Component(rep, members, lattices, rules, isFree);
+  comp.builtGen = regionGen();
+  regions.set(rep, comp);
+  return comp;
 }
 
 // ── relation combinators (declared directly, no wrapper) ────────────

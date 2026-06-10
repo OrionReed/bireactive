@@ -69,6 +69,146 @@ const queued: (Effect | undefined)[] = [];
  *  fixpoint by flush. */
 const bwdQueue: Cell<unknown>[] = [];
 
+// ── relation membership: condensation-derived, lazy, generation-gated ──
+//
+// A cell's membership in a cyclic region is NOT stored as a mode that the
+// relate layer hand-maintains; it's a FUNCTION of the live condensation,
+// looked up lazily on read and cached on the cell, validated against a global
+// topology generation. The relate layer just edits the condensation + rule
+// registry and bumps `topoGen`; regions then materialize implicitly when a
+// member is first read (so a declared-but-unread relation costs only its graph
+// edges, and N incremental edits don't rebuild the growing region N times).
+//
+// `_regionGen` is the per-cell discriminant: `NONREL` ⇒ a plain cell (never in
+// a relation — the byte-cheap hot path skips everything below); `RESOLVE` ⇒
+// relational but its region must be (re)looked-up on the next read; otherwise
+// it equals the `topoGen` at which `_region` was last resolved.
+const NONREL = -1;
+const RESOLVE = -2;
+let topoGen = 0;
+
+/** Resolve which region (if any) a member belongs to RIGHT NOW, from the live
+ *  condensation — installed by the relate layer (keeps cell.ts free of the
+ *  condensation + rule registry). Returns the region for a cyclic SCC, or
+ *  `undefined` for a singleton (⇒ the member reads degenerately, the implicit
+ *  "left the relation" path — no `relax`). */
+let regionResolver: ((m: Cell<unknown>) => Component | undefined) | undefined;
+
+/** Install the region resolver; returns a restore fn. */
+export function setRegionResolver(fn: typeof regionResolver): () => void {
+  const prev = regionResolver;
+  regionResolver = fn;
+  return () => {
+    regionResolver = prev;
+  };
+}
+
+/** Bump the topology generation — every relation edit calls this, so cached
+ *  per-cell region resolutions (`_regionGen`) go stale and re-resolve lazily on
+ *  the next read. The single source of "the relation graph changed". */
+export function bumpTopoGen(): void {
+  topoGen++;
+}
+
+/** Current topology generation — the relate layer stamps a freshly built
+ *  region's `builtGen` with this and compares to detect a stale structure. */
+export function regionGen(): number {
+  return topoGen;
+}
+
+/** Depth of in-progress region builds. While building, a co-member read (the
+ *  builder samples lens fallbacks) must NOT cache a `undefined` resolution: the
+ *  member's real governance is established once the build completes. The relate
+ *  layer brackets `buildRegion` with these. */
+let regionBuilding = 0;
+export function beginRegionBuild(): void {
+  regionBuilding++;
+}
+export function endRegionBuild(): void {
+  regionBuilding--;
+}
+
+/** Mark a cell as a relation participant (idempotent). Flips it off the plain
+ *  hot path and onto the lazy region-resolution path; the actual region is
+ *  found on the next read. */
+export function markRelational(c: Cell<unknown>): void {
+  if (c._regionGen === NONREL) c._regionGen = RESOLVE;
+}
+
+/** Unmark a cell that left every relation: it reverts to a plain cell (or its
+ *  intrinsic lens). If it was governed, drop the stale member→region link so the
+ *  next read recomputes its own value. */
+export function unmarkRelational(c: Cell<unknown>): void {
+  if (c._regionGen === NONREL) return;
+  if (c._region !== undefined) {
+    const g = c._region;
+    disposeAllDepsInReverse(c);
+    c._region = undefined;
+    if (g.subs === undefined && !g.disposed) g.dispose();
+  }
+  c._regionGen = NONREL;
+  c.flags = F.Mutable | F.Dirty;
+  if (c.subs !== undefined) {
+    propagate(c.subs, false);
+    if (!flushing) flush();
+  }
+}
+
+/** Wake the watchers of cells whose value may have changed because the relation
+ *  graph changed (a member joined/left a region, or a region's rules changed) —
+ *  a single push so deferred effects re-pull and re-resolve. Cheap when nothing
+ *  watches the cell (no subs), so a topology edit during construction (nobody
+ *  reading yet) costs nothing here. Called by the relate layer's recompile after
+ *  it bumps the generation. */
+export function refireCells(cells: Iterable<Cell<unknown>>): void {
+  let any = false;
+  for (const c of cells) {
+    // Re-resolve governance NOW (not lazily on the next value read): an effect
+    // re-runs through the PUSH path (`checkDirty`/`_update`), which never visits
+    // the value getter where `ensureRegion` otherwise lives — so a member whose
+    // region just changed would `_update` against a stale `_region`. Resolving
+    // here also marks the member dirty on a transition, so the watcher's
+    // dirty-check recomputes it.
+    if (c._regionGen !== NONREL) ensureRegion(c);
+    const subs = c.subs;
+    if (subs !== undefined) {
+      propagate(subs, runDepth > 0);
+      any = true;
+    }
+  }
+  if (any && !flushing) flush();
+}
+
+/** Resolve + cache `m`'s current region and keep its member→region link in
+ *  sync — lazily, per-member, pulled. This is the single place membership
+ *  transitions happen: it folds in what used to be the `Component` member-
+ *  overlay AND `relax`, but pays only for the member being read, never sweeping
+ *  a whole component on every topology edit. Pure structure wiring (no
+ *  refire/flush), so it's re-entrancy-safe to call mid-read. */
+function ensureRegion(m: Cell<unknown>): Component | undefined {
+  if (m._regionGen === topoGen) return m._region;
+  const g = regionResolver !== undefined ? regionResolver(m) : undefined;
+  // Mid-build re-entrant read of a co-member (the builder is sampling lens
+  // fallbacks): read its INTRINSIC value and DON'T cache — its governance is
+  // wired once this build finishes (matches the old "overlay after fallbacks"
+  // order). Leaving `_regionGen` stale makes the next read re-resolve properly.
+  if (g === undefined && regionBuilding > 0) return undefined;
+  const old = m._region;
+  if (old !== g) {
+    // Drop stale wiring: a governed member's single region dep, or — when a cell
+    // FIRST becomes governed — its intrinsic forward deps (so its sole dep is the
+    // region). The last member to leave a now-empty region disposes it
+    // (ref-counted by `subs`), so no component is ever swept eagerly.
+    if (old !== undefined || g !== undefined) disposeAllDepsInReverse(m);
+    if (old !== undefined && old.subs === undefined && !old.disposed) old.dispose();
+    m._region = g;
+    m.flags = F.Mutable | F.Dirty;
+    if (g !== undefined) link(g, m, cycle);
+  }
+  m._regionGen = topoGen;
+  return g;
+}
+
 interface ReactiveNode {
   flags: number;
   deps: Link | undefined;
@@ -538,16 +678,21 @@ export class Cell<T = unknown> implements ReactiveNode {
    *  is exactly `_rel !== undefined`. See `Transfer`. */
   _rel: Transfer | undefined;
 
-  /** The component this cell is a VIEW of while it's a relation member, else
-   *  `undefined` — presence IS the member discriminant. The cell keeps its
-   *  INTRINSIC definition (a source's `undefined` getter, a lens's forward
-   *  getter); a governed read projects `_region`'s solved slot instead, and
-   *  `solve` recovers the seed from that same intrinsic definition (a source
-   *  member's standing in its own `pendingValue`, a lens member's in its
-   *  retained `_rel`). Nothing is stowed, so `relax` has nothing to restore. As
-   *  a view its only dep is the component (a single permanent link); the
-   *  computed's dynamic dep tracking doesn't apply. */
+  /** Cached resolution of the region this cell is a VIEW of, or `undefined`
+   *  when it currently resolves to a singleton (degenerate read). NOT the
+   *  membership source of truth — that's the condensation; this is a lazily
+   *  filled cache validated by `_regionGen`. The cell keeps its INTRINSIC
+   *  definition (a source's `undefined` getter, a lens's forward getter); a
+   *  governed read projects `_region`'s solved slot instead. While governed its
+   *  only dep is the region (a single link, re-pointed lazily on a topology
+   *  change, never per-edit). */
   _region: Component | undefined;
+
+  /** Topology generation at which `_region` was resolved, or the `NONREL`/
+   *  `RESOLVE` sentinels. `NONREL` ⇒ plain cell (the hot read path skips all
+   *  region logic in one int compare); `RESOLVE` ⇒ relational, re-resolve on
+   *  next read; else the `topoGen` the cache is valid for. */
+  _regionGen: number;
 
   constructor(initial: T, opts?: CellOptions<T>) {
     this.currentValue = initial;
@@ -563,6 +708,7 @@ export class Cell<T = unknown> implements ReactiveNode {
     this._unwatchedHook = undefined;
     this._rel = undefined;
     this._region = undefined;
+    this._regionGen = NONREL;
     if (opts !== undefined) {
       if (opts.equals !== undefined) this._equals = opts.equals;
       if (opts.watched !== undefined) this._watched = opts.watched;
@@ -1067,30 +1213,39 @@ function dispatchLens(ctor: CellCtor<Cell<any>>, args: any[]): unknown {
 // Install `value` on the prototype (for silly TypeScript inference reasons I'd like to avoid if we can figure it out).
 Object.defineProperty(Cell.prototype, "value", {
   get(this: Cell<unknown>): unknown {
-    const flags = this.flags;
-    if (this._region !== undefined) {
-      // Governed member: value is the component's solved projection, NOT the
-      // intrinsic forward/standing. Same read protocol as a computed (validate
-      // its one fixed dep `G`, `_update`, link the reader), but `_update` just
-      // projects the solved slot instead of running a getter — the intrinsic
-      // getter is left intact for the seed / `relax`.
-      if (flags & F.RecursedCheck) {
-        throw new RangeError(
-          `Cyclic member: ${(this.constructor as { name?: string }).name ?? "?"} read its own value`,
-        );
-      }
-      if (
-        flags & F.Dirty ||
-        (flags & F.Pending &&
-          (checkDirty(this.deps!, this) || ((this.flags = flags & ~F.Pending), false)))
-      ) {
-        if (this._update()) {
-          const subs = this.subs;
-          if (subs !== undefined) shallowPropagate(subs);
+    let flags = this.flags;
+    // Relational cell: resolve (lazily, condensation-derived) whether it's a
+    // governed member of a cyclic region right now. A plain cell is `NONREL` and
+    // skips all of this in one int compare. A relational cell that resolves to a
+    // singleton (`g === undefined`) falls through to its intrinsic read below
+    // (the implicit "left the relation" path — no `relax`).
+    if (this._regionGen !== NONREL) {
+      const g = this._regionGen === topoGen ? this._region : ensureRegion(this);
+      if (g !== undefined) {
+        // Governed member: value is the region's solved projection, NOT the
+        // intrinsic forward/standing. Same read protocol as a computed (validate
+        // its one region dep, `_update`, link the reader), but `_update` just
+        // projects the solved slot instead of running a getter.
+        flags = this.flags;
+        if (flags & F.RecursedCheck) {
+          throw new RangeError(
+            `Cyclic member: ${(this.constructor as { name?: string }).name ?? "?"} read its own value`,
+          );
         }
+        if (
+          flags & F.Dirty ||
+          (flags & F.Pending &&
+            (checkDirty(this.deps!, this) || ((this.flags = flags & ~F.Pending), false)))
+        ) {
+          if (this._update()) {
+            const subs = this.subs;
+            if (subs !== undefined) shallowPropagate(subs);
+          }
+        }
+        if (activeSub !== undefined) link(this, activeSub, cycle);
+        return this.currentValue;
       }
-      if (activeSub !== undefined) link(this, activeSub, cycle);
-      return this.currentValue;
+      flags = this.flags; // ensureRegion may have re-dirtied on the transition
     }
     if (this.getter !== undefined) {
       if (flags & F.RecursedCheck) {
@@ -1212,12 +1367,14 @@ function settled(cell: Cell<unknown>): unknown {
  *  propagates. Both no-op on an unchanged value. The single leaf-write path,
  *  shared by the setter, the backward pass, and split/stateful forks. */
 function commitStanding(target: Cell<unknown>, v: unknown): void {
-  const region = target._region;
-  if (region !== undefined) {
-    if (target._equals(v, target.pendingValue)) return;
-    target.pendingValue = v;
-    region.invalidate();
-    return;
+  if (target._regionGen !== NONREL) {
+    const region = ensureRegion(target);
+    if (region !== undefined) {
+      if (target._equals(v, target.pendingValue)) return;
+      target.pendingValue = v;
+      region.invalidate();
+      return;
+    }
   }
   target._writeSource(v);
 }
@@ -1268,7 +1425,7 @@ function propagateBwd(start: Cell<unknown>, target: unknown): void {
       // governed source member compares against its standing inside
       // `commitStanding` (its `pendingValue` IS the standing, not the projection
       // `settled`/`peek` would return).
-      if (parent._region === undefined && parent._equals(push, settled(parent))) return;
+      if (parent._regionGen === NONREL && parent._equals(push, settled(parent))) return;
       commitStanding(parent, push);
       return;
     }
@@ -1760,8 +1917,17 @@ export class Component extends Cell<number> {
    *  governed member recomputes. */
   readonly solved: unknown[];
   private version = 0;
+  /** Condensation representative this region was built for — the Map key, and
+   *  the staleness check (a topology edit may make `rep` no longer a rep). */
+  readonly rep: Cell<unknown>;
+  /** `topoGen` this region's STRUCTURE was derived at; `< topoGen` ⇒ stale,
+   *  rebuild lazily on the next resolve. Set by the relate layer after build. */
+  builtGen = -1;
+  /** Retired (inputs unlinked); guards double-dispose and stale reuse. */
+  disposed = false;
 
   constructor(
+    rep: Cell<unknown>,
     members: readonly Cell<unknown>[],
     lattices: readonly Lattice<unknown, unknown>[],
     userRules: readonly CompiledRule[],
@@ -1769,6 +1935,7 @@ export class Component extends Cell<number> {
   ) {
     super(0);
     const n = members.length;
+    this.rep = rep;
     this.members = members;
     this.lattices = lattices;
     this.free = free;
@@ -1828,27 +1995,12 @@ export class Component extends Cell<number> {
     this.readers = readers;
     this.getter = () => this.solve();
     this.flags = F.Mutable | F.Dirty;
-    // Turn each member into a VIEW of this component: an OVERLAY, not a rewrite.
-    // The cell keeps its intrinsic definition (a source's `undefined` getter, a
-    // lens's forward + `_rel`); `_region` redirects reads to this component's
-    // solved slot (`_project`, via the governed branch of the value getter /
-    // `_update`), and `solve` reads the intact getter straight back for the seed
-    // — nothing is stowed, so `relax` has nothing to restore. Drop the member's
-    // standalone upstream deps and wire its ONE permanent dep: member→G. Unlike
-    // a computed's dynamic dep set, this link is never re-tracked or purged — it
-    // exists only to carry `G`'s re-solve down to the member (and on to the
-    // member's watchers via `propagate`). Notify existing subscribers (a
-    // topology edit isn't a value write, so nothing else would).
-    for (const m of members) {
-      disposeAllDepsInReverse(m);
-      m._region = this;
-      m.flags = F.Mutable | F.Dirty;
-      link(this, m, cycle);
-      if (m.subs !== undefined) {
-        propagate(m.subs, false);
-        if (!flushing) flush();
-      }
-    }
+    // Members are NOT overlaid here. Each becomes a VIEW of this region lazily,
+    // on its own first read after this build (`ensureRegion`): the cell keeps
+    // its intrinsic definition (a source's `undefined` getter, a lens's forward
+    // + `_rel`), and `_region` redirects reads to this region's solved slot. So a
+    // never-read member costs nothing, and a topology edit doesn't sweep every
+    // member of a (possibly huge) component — the wiring is pulled, not pushed.
   }
 
   /** Ensure the fixpoint is current (glitch-free, in dependency order) and
@@ -2012,28 +2164,15 @@ export class Component extends Cell<number> {
     return ++this.version;
   }
 
-  /** Retire the solver: unlink its inputs (no stale propagation, no leak).
-   *  Members are separately re-attached or relaxed by the relate layer. */
+  /** Retire the solver: unlink its inputs (no stale propagation, no leak) and
+   *  mark disposed. Members re-point lazily (`ensureRegion`); the last one to
+   *  leave a dead region triggers this. Refire-free, so it's safe to call
+   *  mid-read. */
   dispose(): void {
+    if (this.disposed) return;
     disposeAllDepsInReverse(this);
     this.getter = undefined;
     this.flags = F.None;
-  }
-}
-
-/** `m` left every relation: drop its component link and revert to standalone.
- *  Its intrinsic getter was never touched, so this is just clearing `_region`
- *  plus a Dirty recompute — a SOURCE member becomes a plain source again (its
- *  standing in `pendingValue` recommits as the live value), a LENS member a
- *  plain lens. The Dirty routes through `checkDirty` so the projection→standalone
- *  transition refires subscribers. No-op on a non-member. */
-export function relax(m: Cell<unknown>): void {
-  if (m._region === undefined) return;
-  disposeAllDepsInReverse(m);
-  m._region = undefined;
-  m.flags = F.Mutable | F.Dirty;
-  if (m.subs !== undefined) {
-    propagate(m.subs, false);
-    if (!flushing) flush();
+    this.disposed = true;
   }
 }
