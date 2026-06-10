@@ -1,5 +1,6 @@
 dist/
 dist-web/
+.scratch/
 .DS_Store
 bun.lockb
 yarn.lock

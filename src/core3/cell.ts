@@ -87,80 +87,31 @@ const NONREL = -1;
 const RESOLVE = -2;
 let topoGen = 0;
 
-/** Resolve which region (if any) a member belongs to RIGHT NOW, from the live
- *  condensation — installed by the relate layer (keeps cell.ts free of the
- *  condensation + rule registry). Returns the region for a cyclic SCC, or
- *  `undefined` for a singleton (⇒ the member reads degenerately, the implicit
- *  "left the relation" path — no `relax`). */
-let regionResolver: ((m: Cell<unknown>) => Component | undefined) | undefined;
-
-/** Install the region resolver; returns a restore fn. */
-export function setRegionResolver(fn: typeof regionResolver): () => void {
-  const prev = regionResolver;
-  regionResolver = fn;
-  return () => {
-    regionResolver = prev;
-  };
-}
-
-/** Bump the topology generation — every relation edit calls this, so cached
- *  per-cell region resolutions (`_regionGen`) go stale and re-resolve lazily on
- *  the next read. The single source of "the relation graph changed". */
-export function bumpTopoGen(): void {
+// The relation engine (graph + on-read SCC discovery + Component lifecycle)
+// lives at the bottom of this file, next to `Component`. There is no resolver
+// hook and no maintained condensation: membership is discovered during the pull
+// by `resolveRegion`, fused into the value getter through `ensureRegion` below.
+// `topoGen` is the single "relation graph changed" counter — an edit bumps it,
+// so every cached per-cell resolution (`_regionGen`) and built region
+// (`Component.builtGen`) goes stale and re-derives lazily on the next read.
+function bumpTopoGen(): void {
   topoGen++;
-}
-
-/** Current topology generation — the relate layer stamps a freshly built
- *  region's `builtGen` with this and compares to detect a stale structure. */
-export function regionGen(): number {
-  return topoGen;
-}
-
-/** Depth of in-progress region builds. While building, a co-member read (the
- *  builder samples lens fallbacks) must NOT cache a `undefined` resolution: the
- *  member's real governance is established once the build completes. The relate
- *  layer brackets `buildRegion` with these. */
-let regionBuilding = 0;
-export function beginRegionBuild(): void {
-  regionBuilding++;
-}
-export function endRegionBuild(): void {
-  regionBuilding--;
 }
 
 /** Mark a cell as a relation participant (idempotent). Flips it off the plain
  *  hot path and onto the lazy region-resolution path; the actual region is
  *  found on the next read. */
-export function markRelational(c: Cell<unknown>): void {
+function markRelational(c: Cell<unknown>): void {
   if (c._regionGen === NONREL) c._regionGen = RESOLVE;
-}
-
-/** Unmark a cell that left every relation: it reverts to a plain cell (or its
- *  intrinsic lens). If it was governed, drop the stale member→region link so the
- *  next read recomputes its own value. */
-export function unmarkRelational(c: Cell<unknown>): void {
-  if (c._regionGen === NONREL) return;
-  if (c._region !== undefined) {
-    const g = c._region;
-    disposeAllDepsInReverse(c);
-    c._region = undefined;
-    if (g.subs === undefined && !g.disposed) g.dispose();
-  }
-  c._regionGen = NONREL;
-  c.flags = F.Mutable | F.Dirty;
-  if (c.subs !== undefined) {
-    propagate(c.subs, false);
-    if (!flushing) flush();
-  }
 }
 
 /** Wake the watchers of cells whose value may have changed because the relation
  *  graph changed (a member joined/left a region, or a region's rules changed) —
  *  a single push so deferred effects re-pull and re-resolve. Cheap when nothing
  *  watches the cell (no subs), so a topology edit during construction (nobody
- *  reading yet) costs nothing here. Called by the relate layer's recompile after
- *  it bumps the generation. */
-export function refireCells(cells: Iterable<Cell<unknown>>): void {
+ *  reading yet) costs nothing here. Called by `recompile` after it bumps the
+ *  generation. */
+function refireCells(cells: Iterable<Cell<unknown>>): void {
   let any = false;
   for (const c of cells) {
     // Re-resolve governance NOW (not lazily on the next value read): an effect
@@ -187,12 +138,12 @@ export function refireCells(cells: Iterable<Cell<unknown>>): void {
  *  refire/flush), so it's re-entrancy-safe to call mid-read. */
 function ensureRegion(m: Cell<unknown>): Component | undefined {
   if (m._regionGen === topoGen) return m._region;
-  const g = regionResolver !== undefined ? regionResolver(m) : undefined;
+  const g = resolveRegion(m);
   // Mid-build re-entrant read of a co-member (the builder is sampling lens
   // fallbacks): read its INTRINSIC value and DON'T cache — its governance is
   // wired once this build finishes (matches the old "overlay after fallbacks"
   // order). Leaving `_regionGen` stale makes the next read re-resolve properly.
-  if (g === undefined && regionBuilding > 0) return undefined;
+  if (g === undefined && building.size > 0) return undefined;
   const old = m._region;
   if (old !== g) {
     // Drop stale wiring: a governed member's single region dep, or — when a cell
@@ -581,9 +532,9 @@ export const isReadonly = (v: unknown): v is Cell<unknown> =>
   v instanceof Cell && v.getter !== undefined && v._rel === undefined;
 
 /** A writable derived cell's structural inputs (its lens parents), normalised to
- *  an array; `[]` for a source or read-only cell. The relation layer reads this
- *  to fold lens dataflow edges into its condensation WITHOUT naming `Transfer`. */
-export function parentsOf(c: Cell<unknown>): readonly Cell<unknown>[] {
+ *  an array; `[]` for a source or read-only cell. The relation engine reads this
+ *  to fold lens dataflow edges into the graph WITHOUT naming `Transfer`. */
+function parentsOf(c: Cell<unknown>): readonly Cell<unknown>[] {
   const r = c._rel;
   if (r === undefined) return EMPTY_PARENTS;
   const p = r.parents;
@@ -1824,7 +1775,7 @@ export type RelationBody = (
  *  never gate — a rule reading only externals fires exactly once. The contract
  *  is that `reads` covers every member the body pulls via `get`; under-declaring
  *  would miss a re-fire and could stop short of the fixpoint. */
-export interface CompiledRule {
+interface CompiledRule {
   readonly body: RelationBody;
   readonly reads: readonly Cell<unknown>[];
 }
@@ -1888,7 +1839,7 @@ function liftLens(
   }
 }
 
-export class Component extends Cell<number> {
+class Component extends Cell<number> {
   readonly members: readonly Cell<unknown>[];
   private readonly lattices: readonly Lattice<unknown, unknown>[];
   private readonly rules: readonly CompiledRule[];
@@ -2175,4 +2126,268 @@ export class Component extends Cell<number> {
     this.flags = F.None;
     this.disposed = true;
   }
+}
+
+// ── relation engine: graph + on-read SCC discovery + region lifecycle ─
+//
+// The cyclic counterpart to the acyclic forward/backward engine above, fused
+// into the SAME pull. You declare relationships directly as plain functions over
+// lattice cells (`constrain`, and the combinators in `relate.ts` on top). The
+// engine keeps only a refcounted relation graph (an edge u→v whenever a rule
+// reads u and writes v, plus each lens link parent→child) — NO maintained
+// condensation. An SCC is DISCOVERED on demand, when a member is first read,
+// by intersecting forward- and backward-reachability from that member
+// (`discoverSCC`); construction is therefore O(1) per edge. The discovered SCC
+// becomes one `Component` solver (lattice meet-fixpoint), cached on each member
+// and validated against `topoGen`, exactly like a computed's memo.
+
+// biome-ignore lint/suspicious/noExplicitAny: heterogeneous relation graph
+type AnyCell = Cell<any>;
+
+interface Rule {
+  readonly reads: readonly AnyCell[];
+  readonly writes: readonly AnyCell[];
+  readonly body: RelationBody;
+}
+
+/** Refcounted forward edges u→v (the same u→v induced by several rules or a
+ *  lens link carries a multiplicity; the edge disappears when the last inducer
+ *  removes it). `inc` mirrors it for backward reach. */
+const relOut = new Map<AnyCell, Map<AnyCell, number>>();
+const relInc = new Map<AnyCell, Map<AnyCell, number>>();
+
+function addEdge(u: AnyCell, v: AnyCell): void {
+  let o = relOut.get(u);
+  if (o === undefined) relOut.set(u, (o = new Map()));
+  o.set(v, (o.get(v) ?? 0) + 1);
+  let i = relInc.get(v);
+  if (i === undefined) relInc.set(v, (i = new Map()));
+  i.set(u, (i.get(u) ?? 0) + 1);
+}
+
+function removeEdge(u: AnyCell, v: AnyCell): void {
+  const o = relOut.get(u);
+  const c = o?.get(v) ?? 0;
+  if (c === 0) return;
+  if (c > 1) o!.set(v, c - 1);
+  else o!.delete(v);
+  const i = relInc.get(v)!;
+  const ci = i.get(u)!;
+  if (ci > 1) i.set(u, ci - 1);
+  else i.delete(u);
+}
+
+/** The strongly-connected component containing `m`, right now, from the live
+ *  relation graph: forward-reach ∩ backward-reach. A node n is in m's SCC iff
+ *  m reaches n (n ∈ fwd) and n reaches m — and any n→m path lies entirely in
+ *  fwd, so gating the backward walk on `fwd` is exact. Bounded to the two reach
+ *  sets, never the whole graph. Returns `[m]` for a singleton. */
+function discoverSCC(m: AnyCell): AnyCell[] {
+  const fwd = new Set<AnyCell>([m]);
+  const fstack: AnyCell[] = [m];
+  while (fstack.length > 0) {
+    const n = fstack.pop()!;
+    const o = relOut.get(n);
+    if (o !== undefined) for (const w of o.keys()) if (!fwd.has(w)) fwd.add(w), fstack.push(w);
+  }
+  const scc = new Set<AnyCell>([m]);
+  const bstack: AnyCell[] = [m];
+  while (bstack.length > 0) {
+    const n = bstack.pop()!;
+    const i = relInc.get(n);
+    if (i !== undefined)
+      for (const u of i.keys()) if (fwd.has(u) && !scc.has(u)) scc.add(u), bstack.push(u);
+  }
+  return [...scc];
+}
+
+/** Stable per-cell id, assigned lazily — picks an SCC's canonical representative
+ *  (its region cache key) deterministically across which member is read first. */
+let nextCellId = 0;
+const cellIds = new WeakMap<AnyCell, number>();
+function idOf(c: AnyCell): number {
+  let id = cellIds.get(c);
+  if (id === undefined) cellIds.set(c, (id = nextCellId++));
+  return id;
+}
+function repOf(scc: readonly AnyCell[]): AnyCell {
+  let rep = scc[0]!;
+  let best = idOf(rep);
+  for (let k = 1; k < scc.length; k++) {
+    const id = idOf(scc[k]!);
+    if (id < best) {
+      best = id;
+      rep = scc[k]!;
+    }
+  }
+  return rep;
+}
+
+/** Rules that WRITE each cell — the per-component rule index. */
+const rulesByMember = new WeakMap<AnyCell, Rule[]>();
+
+/** Materialized SCC solvers, keyed by canonical representative. The membership
+ *  source of truth is the live graph; this is just the lazily-built solver cache
+ *  for each cyclic region, born on the first read of any member and retired when
+ *  its rules change (`recompile`). A region declared but never read never
+ *  appears here — so N incremental `constrain` calls don't rebuild it N times. */
+const regions = new Map<AnyCell, Component>();
+
+/** Cells that are relation members (write-targets, plus lens-chain cells folded
+ *  in for SCC detection). A pure membership marker: the standing assertion lives
+ *  natively on the member, not in a side table. Tells a real member apart from a
+ *  read-only external that merely feeds a component. */
+const memberCells = new WeakSet<AnyCell>();
+
+/** Cells declared FREE variables (`free`): they carry no standing fact, so a
+ *  component seeds them ⊤ and lets the contractors determine them. */
+const freeVars = new WeakSet<AnyCell>();
+
+/** Members whose region is mid-build — breaks the recursion when the `Component`
+ *  ctor samples a co-member's value (which would re-enter here for the same
+ *  SCC). A re-entrant resolve reads the member intrinsically instead. */
+const building = new Set<AnyCell>();
+
+/** Register the LENS-STRUCTURE edges of a member into the relation graph. A lens
+ *  member reads its parent(s) — a dataflow dependency the graph must see, else
+ *  two components coupled only through a lens channel form a cycle discovery
+ *  can't detect and they oscillate. Walks the whole lens chain (permanent,
+ *  refcounted edges). A chain cell carrying a lattice is marked a member so an
+ *  intermediate lens landing inside an SCC solves (folding in K-space) instead
+ *  of re-entering the solve through a live `.value` read. */
+function registerLensParents(m: AnyCell): void {
+  const seen = new Set<AnyCell>();
+  const visit = (child: AnyCell): void => {
+    if (seen.has(child) || !isLens(child)) return;
+    seen.add(child);
+    for (const p of parentsOf(child)) {
+      const pc = p as AnyCell;
+      addEdge(pc, child); // p → child: child reads p (permanent lens edge)
+      if (latticeOf(pc) !== undefined) {
+        memberCells.add(pc);
+        markRelational(pc);
+      }
+      visit(pc);
+    }
+  };
+  visit(m);
+}
+
+/** Resolve which region `m` belongs to RIGHT NOW (called from the value getter
+ *  via `ensureRegion`). Discovers m's SCC from the live graph, builds + caches a
+ *  `Component` for it (keyed by canonical rep), or returns `undefined` for a
+ *  singleton with no rules (⇒ the member reads degenerately). */
+function resolveRegion(m: AnyCell): Component | undefined {
+  if (building.has(m)) return undefined; // mid-build ⇒ intrinsic read
+  const scc = discoverSCC(m);
+  const rep = repOf(scc);
+  const g = regions.get(rep);
+  if (g !== undefined && !g.disposed && g.builtGen === topoGen) return g;
+  if (g !== undefined && !g.disposed) g.dispose(); // stale structure ⇒ rebuild
+  for (const c of scc) building.add(c);
+  try {
+    return buildRegion(rep, scc);
+  } finally {
+    for (const c of scc) building.delete(c);
+  }
+}
+
+function buildRegion(rep: AnyCell, scc: readonly AnyCell[]): Component | undefined {
+  // Real members are marked in `memberCells` (write-targets + lens-chain cells).
+  // Lens parents pulled in only as graph nodes (for SCC detection) carry a
+  // lattice but no mark — they're channels into the region, not solved.
+  const members = scc.filter(c => memberCells.has(c));
+  if (members.length === 0) return undefined;
+
+  const ruleSet = new Set<Rule>();
+  for (const m of members) for (const r of rulesByMember.get(m) ?? []) ruleSet.add(r);
+  if (ruleSet.size === 0) return undefined; // no rules → nothing to solve
+
+  const lattices = members.map(m => latticeOf(m)!);
+  const rules: CompiledRule[] = [...ruleSet].map(r => ({ body: r.body, reads: r.reads }));
+  const isFree = members.map(m => freeVars.has(m));
+
+  const comp = new Component(rep, members, lattices, rules, isFree);
+  comp.builtGen = topoGen;
+  regions.set(rep, comp);
+  return comp;
+}
+
+/** A topology edit only adds/removes edges among its own reads/writes, so the
+ *  only MATERIALIZED regions it can merge or split are the ones already
+ *  containing one of those cells (cached as `_region`). Retire them; the new
+ *  grouping re-derives lazily on the next read of any member. */
+function recompile(reads: readonly AnyCell[], writes: readonly AnyCell[]): void {
+  const affected = new Set<AnyCell>();
+  for (const w of writes) if (!isReadonly(w)) affected.add(w);
+  for (const r of reads) affected.add(r);
+
+  const stale = new Set<Component>();
+  for (const c of affected) {
+    const g = c._region;
+    if (g !== undefined && !g.disposed) stale.add(g);
+  }
+
+  // Bump FIRST so any re-pull triggered by the refire below re-resolves against
+  // the new generation (and finds retired Map entries gone).
+  bumpTopoGen();
+
+  const refire = new Set<AnyCell>(affected);
+  for (const g of stale) {
+    regions.delete(g.rep);
+    for (const m of g.members) refire.add(m as AnyCell);
+  }
+  for (const g of stale) g.dispose();
+  refireCells(refire as Set<Cell<unknown>>);
+}
+
+/** Declare a relationship: a `body` that narrows `writes` from `reads`. Registers
+ *  the rule + its dataflow edges; the affected regions re-derive lazily on the
+ *  next read. Live immediately — no wrapper. Returns a disposer. */
+export function constrain(
+  reads: readonly AnyCell[],
+  writes: readonly AnyCell[],
+  body: RelationBody,
+): () => void {
+  const rule: Rule = { reads, writes, body };
+  for (const w of writes) {
+    // A READ-ONLY cell (`derive`) is fixed by definition — it can feed a rule as
+    // an INPUT but can never be narrowed, so skip it as a write-target (the rule
+    // emitting to it no-ops) and keep its lazy getter intact.
+    if (isReadonly(w)) continue;
+    if (latticeOf(w) !== undefined) {
+      markRelational(w);
+      if (!memberCells.has(w)) {
+        memberCells.add(w);
+        registerLensParents(w);
+      }
+    }
+    const rs = rulesByMember.get(w);
+    if (rs === undefined) rulesByMember.set(w, [rule]);
+    else rs.push(rule);
+    for (const r of reads) addEdge(r, w);
+  }
+  recompile(reads, writes);
+  return () => disposeRule(rule);
+}
+
+function disposeRule(rule: Rule): void {
+  for (const w of rule.writes) {
+    const rs = rulesByMember.get(w);
+    if (rs !== undefined) {
+      const i = rs.indexOf(rule);
+      if (i >= 0) rs.splice(i, 1);
+      if (rs.length === 0) rulesByMember.delete(w);
+    }
+    for (const r of rule.reads) removeEdge(r, w);
+  }
+  recompile(rule.reads, rule.writes);
+}
+
+/** Declare `c` a FREE variable: it carries no standing FACT, so a component
+ *  seeds it ⊤ (letting inequality/arithmetic contractors narrow it) and keeps
+ *  its value as the SOFT fallback (its preferred value when underdetermined).
+ *  Re-declarable; takes effect on the next solve. */
+export function free<T>(c: Cell<T>): void {
+  freeVars.add(c as AnyCell);
 }
