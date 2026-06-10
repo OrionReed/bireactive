@@ -69,97 +69,6 @@ const queued: (Effect | undefined)[] = [];
  *  fixpoint by flush. */
 const bwdQueue: Cell<unknown>[] = [];
 
-// ── relation membership: condensation-derived, lazy, generation-gated ──
-//
-// A cell's membership in a cyclic region is NOT stored as a mode that the
-// relate layer hand-maintains; it's a FUNCTION of the live condensation,
-// looked up lazily on read and cached on the cell, validated against a global
-// topology generation. The relate layer just edits the condensation + rule
-// registry and bumps `topoGen`; regions then materialize implicitly when a
-// member is first read (so a declared-but-unread relation costs only its graph
-// edges, and N incremental edits don't rebuild the growing region N times).
-//
-// `_regionGen` is the per-cell discriminant: `NONREL` ⇒ a plain cell (never in
-// a relation — the byte-cheap hot path skips everything below); `RESOLVE` ⇒
-// relational but its region must be (re)looked-up on the next read; otherwise
-// it equals the `topoGen` at which `_region` was last resolved.
-const NONREL = -1;
-const RESOLVE = -2;
-let topoGen = 0;
-
-// The relation engine (graph + on-read SCC discovery + Component lifecycle)
-// lives at the bottom of this file, next to `Component`. There is no resolver
-// hook and no maintained condensation: membership is discovered during the pull
-// by `resolveRegion`, fused into the value getter through `ensureRegion` below.
-// `topoGen` is the single "relation graph changed" counter — an edit bumps it,
-// so every cached per-cell resolution (`_regionGen`) and built region
-// (`Component.builtGen`) goes stale and re-derives lazily on the next read.
-function bumpTopoGen(): void {
-  topoGen++;
-}
-
-/** Mark a cell as a relation participant (idempotent). Flips it off the plain
- *  hot path and onto the lazy region-resolution path; the actual region is
- *  found on the next read. */
-function markRelational(c: Cell<unknown>): void {
-  if (c._regionGen === NONREL) c._regionGen = RESOLVE;
-}
-
-/** Wake the watchers of cells whose value may have changed because the relation
- *  graph changed (a member joined/left a region, or a region's rules changed) —
- *  a single push so deferred effects re-pull and re-resolve. Cheap when nothing
- *  watches the cell (no subs), so a topology edit during construction (nobody
- *  reading yet) costs nothing here. Called by `recompile` after it bumps the
- *  generation. */
-function refireCells(cells: Iterable<Cell<unknown>>): void {
-  let any = false;
-  for (const c of cells) {
-    // Re-resolve governance NOW (not lazily on the next value read): an effect
-    // re-runs through the PUSH path (`checkDirty`/`_update`), which never visits
-    // the value getter where `ensureRegion` otherwise lives — so a member whose
-    // region just changed would `_update` against a stale `_region`. Resolving
-    // here also marks the member dirty on a transition, so the watcher's
-    // dirty-check recomputes it.
-    if (c._regionGen !== NONREL) ensureRegion(c);
-    const subs = c.subs;
-    if (subs !== undefined) {
-      propagate(subs, runDepth > 0);
-      any = true;
-    }
-  }
-  if (any && !flushing) flush();
-}
-
-/** Resolve + cache `m`'s current region and keep its member→region link in
- *  sync — lazily, per-member, pulled. This is the single place membership
- *  transitions happen: it folds in what used to be the `Component` member-
- *  overlay AND `relax`, but pays only for the member being read, never sweeping
- *  a whole component on every topology edit. Pure structure wiring (no
- *  refire/flush), so it's re-entrancy-safe to call mid-read. */
-function ensureRegion(m: Cell<unknown>): Component | undefined {
-  if (m._regionGen === topoGen) return m._region;
-  const g = resolveRegion(m);
-  // Mid-build re-entrant read of a co-member (the builder is sampling lens
-  // fallbacks): read its INTRINSIC value and DON'T cache — its governance is
-  // wired once this build finishes (matches the old "overlay after fallbacks"
-  // order). Leaving `_regionGen` stale makes the next read re-resolve properly.
-  if (g === undefined && building.size > 0) return undefined;
-  const old = m._region;
-  if (old !== g) {
-    // Drop stale wiring: a governed member's single region dep, or — when a cell
-    // FIRST becomes governed — its intrinsic forward deps (so its sole dep is the
-    // region). The last member to leave a now-empty region disposes it
-    // (ref-counted by `subs`), so no component is ever swept eagerly.
-    if (old !== undefined || g !== undefined) disposeAllDepsInReverse(m);
-    if (old !== undefined && old.subs === undefined && !old.disposed) old.dispose();
-    m._region = g;
-    m.flags = F.Mutable | F.Dirty;
-    if (g !== undefined) link(g, m, cycle);
-  }
-  m._regionGen = topoGen;
-  return g;
-}
-
 interface ReactiveNode {
   flags: number;
   deps: Link | undefined;
@@ -405,6 +314,7 @@ function disposeAllDepsInReverse(sub: ReactiveNode): void {
 // relate layer abstracts this SAME object into K-space when the lens sits inside
 // a cycle, never re-authoring the maps. `kind` selects the shape, so the
 // backward pass switches on it instead of probing `Array.isArray`/flags.
+// NOTE: i wounder if this could fold into the flags?
 export const K = {
   /** 1→1, source-independent inverse `bwd(target) → parent`. */
   Iso: 0,
@@ -629,22 +539,6 @@ export class Cell<T = unknown> implements ReactiveNode {
    *  is exactly `_rel !== undefined`. See `Transfer`. */
   _rel: Transfer | undefined;
 
-  /** Cached resolution of the region this cell is a VIEW of, or `undefined`
-   *  when it currently resolves to a singleton (degenerate read). NOT the
-   *  membership source of truth — that's the condensation; this is a lazily
-   *  filled cache validated by `_regionGen`. The cell keeps its INTRINSIC
-   *  definition (a source's `undefined` getter, a lens's forward getter); a
-   *  governed read projects `_region`'s solved slot instead. While governed its
-   *  only dep is the region (a single link, re-pointed lazily on a topology
-   *  change, never per-edit). */
-  _region: Component | undefined;
-
-  /** Topology generation at which `_region` was resolved, or the `NONREL`/
-   *  `RESOLVE` sentinels. `NONREL` ⇒ plain cell (the hot read path skips all
-   *  region logic in one int compare); `RESOLVE` ⇒ relational, re-resolve on
-   *  next read; else the `topoGen` the cache is valid for. */
-  _regionGen: number;
-
   constructor(initial: T, opts?: CellOptions<T>) {
     this.currentValue = initial;
     this.pendingValue = initial;
@@ -658,8 +552,6 @@ export class Cell<T = unknown> implements ReactiveNode {
     this._watched = undefined;
     this._unwatchedHook = undefined;
     this._rel = undefined;
-    this._region = undefined;
-    this._regionGen = NONREL;
     if (opts !== undefined) {
       if (opts.equals !== undefined) this._equals = opts.equals;
       if (opts.watched !== undefined) this._watched = opts.watched;
@@ -668,7 +560,6 @@ export class Cell<T = unknown> implements ReactiveNode {
   }
 
   // The `value` accessor is installed on the prototype after the class
-  // body (V8 JITs a prototype accessor better than a class get/set here).
   // Declared `readonly` so a bare cell is read-only at the TYPE level;
   // writability is added back via `Writable<R>`. The runtime accessor is
   // settable regardless.
@@ -689,32 +580,16 @@ export class Cell<T = unknown> implements ReactiveNode {
       if (writeHook !== undefined) writeHook(this as Cell<unknown>);
       const subs = this.subs;
       if (subs !== undefined) propagate(subs, runDepth > 0);
+      // Push relaxation: schedule the propagators reading this just-committed
+      // source, then drain to a fixpoint (unless we're already inside a drain,
+      // in which case they're picked up by the running loop).
+      scheduleReaders(this as Cell<unknown>);
       if (!flushing && subs !== undefined) flush();
+      if (!relaxing && relaxQueue.length > 0) relax();
     }
   }
 
   _update(): boolean {
-    const region = this._region;
-    if (region !== undefined) {
-      // Governed member = a VIEW of its component. Its SOLE dep is the solver
-      // `G`, linked once when the component formed and never re-tracked, so the
-      // recompute is a fixed projection — no dep-set to swap-track, purge, or
-      // re-link (none of the computed's dynamic-dep bookkeeping applies to a
-      // view). Ensure `G` is solved (untracked, inside `_project`) and read this
-      // member's solved slot. The intrinsic getter stays put (it's the seed and
-      // the `relax` target); `RecursedCheck` guards a re-entrant read of THIS
-      // member mid-solve.
-      this.flags = F.Mutable | F.RecursedCheck;
-      let threw = true;
-      try {
-        const old = this.currentValue;
-        const next = (this.currentValue = region._project(this as Cell<unknown>) as T);
-        threw = false;
-        return !this._equals(old, next);
-      } finally {
-        this.flags = threw ? F.Mutable | F.Dirty : F.Mutable;
-      }
-    }
     if (this.getter !== undefined) {
       // Computed/lens: re-run the forward derivation.
       this.depsTail = undefined;
@@ -1164,40 +1039,10 @@ function dispatchLens(ctor: CellCtor<Cell<any>>, args: any[]): unknown {
 // Install `value` on the prototype (for silly TypeScript inference reasons I'd like to avoid if we can figure it out).
 Object.defineProperty(Cell.prototype, "value", {
   get(this: Cell<unknown>): unknown {
-    let flags = this.flags;
-    // Relational cell: resolve (lazily, condensation-derived) whether it's a
-    // governed member of a cyclic region right now. A plain cell is `NONREL` and
-    // skips all of this in one int compare. A relational cell that resolves to a
-    // singleton (`g === undefined`) falls through to its intrinsic read below
-    // (the implicit "left the relation" path — no `relax`).
-    if (this._regionGen !== NONREL) {
-      const g = this._regionGen === topoGen ? this._region : ensureRegion(this);
-      if (g !== undefined) {
-        // Governed member: value is the region's solved projection, NOT the
-        // intrinsic forward/standing. Same read protocol as a computed (validate
-        // its one region dep, `_update`, link the reader), but `_update` just
-        // projects the solved slot instead of running a getter.
-        flags = this.flags;
-        if (flags & F.RecursedCheck) {
-          throw new RangeError(
-            `Cyclic member: ${(this.constructor as { name?: string }).name ?? "?"} read its own value`,
-          );
-        }
-        if (
-          flags & F.Dirty ||
-          (flags & F.Pending &&
-            (checkDirty(this.deps!, this) || ((this.flags = flags & ~F.Pending), false)))
-        ) {
-          if (this._update()) {
-            const subs = this.subs;
-            if (subs !== undefined) shallowPropagate(subs);
-          }
-        }
-        if (activeSub !== undefined) link(this, activeSub, cycle);
-        return this.currentValue;
-      }
-      flags = this.flags; // ensureRegion may have re-dirtied on the transition
-    }
+    const flags = this.flags;
+    // A propagator member is a plain source: its concrete value is kept current
+    // by the relaxation drain on write, so it reads through the ordinary source
+    // path below — no region resolution, projection, or overlay on the hot read.
     if (this.getter !== undefined) {
       if (flags & F.RecursedCheck) {
         throw new RangeError(
@@ -1311,22 +1156,11 @@ function settled(cell: Cell<unknown>): unknown {
     : cell.peek();
 }
 
-/** Commit a value into a SOURCE-shaped leaf (`getter === undefined`). A governed
- *  source member re-seeds its standing (`pendingValue`) and re-solves its region
- *  — there's no member→component dep edge to carry the write (that would cycle),
- *  so the invalidate IS the propagation. A plain source commits and forward-
- *  propagates. Both no-op on an unchanged value. The single leaf-write path,
- *  shared by the setter, the backward pass, and split/stateful forks. */
+/** Commit a value into a SOURCE-shaped leaf (`getter === undefined`). Commits +
+ *  forward-propagates, and (via `_writeSource`) schedules + drains the
+ *  propagators reading it. No-ops on an unchanged value. The single leaf-write
+ *  path, shared by the setter, the backward pass, and split/stateful forks. */
 function commitStanding(target: Cell<unknown>, v: unknown): void {
-  if (target._regionGen !== NONREL) {
-    const region = ensureRegion(target);
-    if (region !== undefined) {
-      if (target._equals(v, target.pendingValue)) return;
-      target.pendingValue = v;
-      region.invalidate();
-      return;
-    }
-  }
   target._writeSource(v);
 }
 
@@ -1371,12 +1205,9 @@ function propagateBwd(start: Cell<unknown>, target: unknown): void {
     // pending value WITHOUT committing it, so a net-zero revert leaves the
     // source unchanged and downstream un-fired.
     if (parent.getter === undefined) {
-      // Leaf source-shaped parent. A PLAIN source takes the `settled` no-op stop
-      // (reads a staged pending WITHOUT committing — net-zero revert safety); a
-      // governed source member compares against its standing inside
-      // `commitStanding` (its `pendingValue` IS the standing, not the projection
-      // `settled`/`peek` would return).
-      if (parent._regionGen === NONREL && parent._equals(push, settled(parent))) return;
+      // Leaf source-shaped parent: `settled` no-op stop (reads a staged pending
+      // WITHOUT committing — net-zero revert safety), else commit.
+      if (parent._equals(push, settled(parent))) return;
       commitStanding(parent, push);
       return;
     }
@@ -1740,654 +1571,151 @@ export function cachedDerive<S extends Cell<any>, C extends new (...args: never[
   return lazy(parent, key, () => (Cls as any).derive(parent, fn)) as InstanceType<C>;
 }
 
-// ── Component: a cyclic SCC as a first-class solver node ─────────────
+// ── Propagators: cyclic regions by concrete equality-gated relaxation ─
 //
-// A cyclic strongly-connected component is solved by ONE `Component` — a
-// computed node whose `_update` reads the component's inputs (each member's
-// base assertion + any external cells) and folds the rules to a lattice
-// fixpoint in the KNOWLEDGE space `K`, then publishes a concrete `T` per
-// member into `solved`. Each member becomes a writable PROJECTION of the
-// component: reading it pulls the solver (lazy, glitch-free, in dependency
-// order — the ordinary computed path) and returns its slot; writing it flows
-// to its base assertion, which the solver reads, so a write re-invalidates
-// and the next read re-solves. Members only ever hold `T`; `K` never leaves
-// the component, so the acyclic DAG sees plain concrete values.
+// `constrain(reads, writes, body)` declares a PROPAGATOR: `body` reads its
+// inputs and writes concrete values to its outputs. There is NO region object,
+// condensation, lattice, or member overlay — relational cells stay plain
+// values, read through the ordinary source path. The only state is a per-source
+// list of "propagators that read me" (`readersOf`).
 //
-// The whole mechanism is here (a real node + member overlay), NOT poked into
-// Cell internals from outside: relate hands over members + lattices + rules +
-// free, and the `Component` folds its OWN lens members (lifting each constraint
-// lens from the cell's intrinsic `_rel` — relate never inspects a `Transfer`).
-// relate only constructs a `Component`, disposes it, and relaxes orphaned
-// members; the partition (which cells form a component) and the rule registry
-// live in `relate.ts`.
-
-/** A relation rule, folded in knowledge space: `get(c)` yields a member's
- *  current `K` (or an external input lifted via its lattice), `emit(c, k)`
- *  meets `k` into a member. Order-independent (meet is confluent). */
-export type RelationBody = (
-  get: (c: Cell<unknown>) => unknown,
-  emit: (c: Cell<unknown>, k: unknown) => void,
-) => void;
-
-/** A `RelationBody` paired with the cells it READS. The solver uses the reads
- *  to gate re-firing (semi-naive): a rule only re-runs when a member it reads
- *  has narrowed this solve. External reads are constant within a solve, so they
- *  never gate — a rule reading only externals fires exactly once. The contract
- *  is that `reads` covers every member the body pulls via `get`; under-declaring
- *  would miss a re-fire and could stop short of the fixpoint. */
-interface CompiledRule {
-  readonly body: RelationBody;
-  readonly reads: readonly Cell<unknown>[];
-}
-
-/** Waves of exact `meet` iteration before a solve starts WIDENING. Any
- *  finite-height lattice (flat, bitset, product of finite) reaches its
- *  fixpoint long before this, so widening never engages and the result is
- *  exact. Only a genuinely infinite descent (a real interval narrowing
- *  forever) crosses the threshold, at which point the lattice's `widen`
- *  guarantees a sound, finite stop. There is NO hard wave cap: termination
- *  is a property of the lattice (finite height, or a `widen`), not a magic
- *  number. */
-const WIDEN_AFTER = 64;
-
-const latticeOf = (c: Cell<unknown>): Lattice<unknown, unknown> | undefined =>
-  (c.constructor as { lattice?: Lattice<unknown, unknown> }).lattice;
-
-/** Lift a constraint lens's transfer into K-space relation rules, reading the
- *  SAME `Transfer` the acyclic executor uses (its maps are abstracted, never
- *  re-authored). When the member and its parent share a band-capable lattice
- *  (`image`) and the lens is a homomorphism (`Iso`), map the whole band both
- *  ways — a real two-way interval transformer, so partial knowledge (a free var
- *  bounded `≥ 3`) flows through. Otherwise pin-gated: forward once the parent's
- *  knowledge pins a value (every single-parent kind), backward only for a
- *  source-INDEPENDENT inverse (`Iso`); a source-reading inverse (`Lens`: field
- *  spread-replace, clamp) abstains backward, still sound. */
-function liftLens(
-  rel: Transfer,
-  m: Cell<unknown>,
-  latM: Lattice<unknown, unknown>,
-  p: Cell<unknown>,
-  latP: Lattice<unknown, unknown>,
-  rules: CompiledRule[],
-): void {
-  const fwd = rel.fwd as (t: unknown) => unknown;
-  if (rel.kind === K.Iso && latM === latP && latM.image !== undefined) {
-    const img = latM.image;
-    const bwd = rel.bwd as (t: unknown) => unknown;
-    const f = fwd as (t: number) => number;
-    const b = bwd as (t: number) => number;
-    rules.push({ reads: [p], body: (get, emit) => emit(m, img(get(p), f)) });
-    rules.push({ reads: [m], body: (get, emit) => emit(p, img(get(m), b)) });
-    return;
-  }
-  rules.push({
-    reads: [p],
-    body: (get, emit) => {
-      const pv = latP.pinned(get(p));
-      if (pv !== undefined) emit(m, latM.abstract(fwd(pv)));
-    },
-  });
-  if (rel.kind === K.Iso) {
-    const bwd = rel.bwd as (t: unknown) => unknown;
-    rules.push({
-      reads: [m],
-      body: (get, emit) => {
-        const mv = latM.pinned(get(m));
-        if (mv !== undefined) emit(p, latP.abstract(bwd(mv)));
-      },
-    });
-  }
-}
-
-class Component extends Cell<number> {
-  readonly members: readonly Cell<unknown>[];
-  private readonly lattices: readonly Lattice<unknown, unknown>[];
-  private readonly rules: readonly CompiledRule[];
-  /** Reverse freshness index: `readers[i]` lists the rule indices that READ
-   *  member slot `i`. When a slot narrows, exactly these rules re-fire. Built
-   *  once from each rule's declared reads (externals dropped — constant within a
-   *  solve). */
-  private readonly readers: readonly number[][];
-  /** Per slot: true ⇒ a fully-DERIVED member (a lens whose parent is a fellow
-   *  member). It carries no standing assertion — seed ⊤ and let its forward
-   *  transformer determine it — and on publish falls back to `fallbacks[i]`
-   *  (its frozen value) rather than re-evaluating its seed (which would re-enter
-   *  the solve through the parent). A source/channel member is `false`: seed
-   *  from its standing/upstream, fall back to that live value. */
-  private readonly derived: readonly boolean[];
-  /** Per slot: true ⇒ a FREE variable (declared via `free`). It carries no
-   *  standing FACT — seed ⊤ so inequality/arithmetic contractors actually
-   *  narrow it — but its seed value is the SOFT fallback on publish (its
-   *  preferred value when underdetermined). The difference from `derived`: a
-   *  derived member has a forward transformer and a frozen fallback; a free
-   *  member has no fact and a live fallback. */
-  private readonly free: readonly boolean[];
-  private readonly fallbacks: readonly unknown[];
-  private readonly index = new Map<Cell<unknown>, number>();
-  /** Published concrete value per member slot; read by `_project` when a
-   *  governed member recomputes. */
-  readonly solved: unknown[];
-  private version = 0;
-  /** Condensation representative this region was built for — the Map key, and
-   *  the staleness check (a topology edit may make `rep` no longer a rep). */
-  readonly rep: Cell<unknown>;
-  /** `topoGen` this region's STRUCTURE was derived at; `< topoGen` ⇒ stale,
-   *  rebuild lazily on the next resolve. Set by the relate layer after build. */
-  builtGen = -1;
-  /** Retired (inputs unlinked); guards double-dispose and stale reuse. */
-  disposed = false;
-
-  constructor(
-    rep: Cell<unknown>,
-    members: readonly Cell<unknown>[],
-    lattices: readonly Lattice<unknown, unknown>[],
-    userRules: readonly CompiledRule[],
-    free: readonly boolean[],
-  ) {
-    super(0);
-    const n = members.length;
-    this.rep = rep;
-    this.members = members;
-    this.lattices = lattices;
-    this.free = free;
-    // Seed each slot with the member's current value so `_project` reads a
-    // well-formed `T` even before the first solve (and if this component is
-    // disposed without ever solving) — never `undefined`.
-    this.solved = members.map(m => m.currentValue);
-    members.forEach((m, i) => this.index.set(m, i));
-
-    // Fold lens members the component owns. A LENS member whose PARENT is a
-    // fellow member is a CONSTRAINT lens ("both sides inside the cycle"):
-    // re-evaluating its forward would re-enter the solve through the parent, so
-    // mark it DERIVED (seed ⊤, fall back to its frozen forward value) and — for
-    // a single-parent invertible lens — lift the lens's OWN transfer into
-    // forward/backward knowledge rules so the relationship holds inside the
-    // cycle. A lens whose parent is OUTSIDE stays a plain channel. The engine
-    // does this from the cell's intrinsic `_rel` (never clobbered by
-    // membership), so relate hands over rules + lattices and never inspects a
-    // `Transfer`.
-    const derived = members.map(() => false);
-    const fallbacks = new Array<unknown>(n);
-    const rules: CompiledRule[] = userRules.slice();
-    members.forEach((m, i) => {
-      if (!isLens(m)) return; // source member — no lens to fold
-      const rel = m._rel!;
-      const parent = rel.parents;
-      const singleMemberParent = parent instanceof Cell && this.index.has(parent);
-      const multiMemberParent = Array.isArray(parent) && parent.some(p => this.index.has(p));
-      if (!singleMemberParent && !multiMemberParent) return; // channel: parent external
-
-      derived[i] = true;
-      // Frozen fallback = the lens's current forward value via its intrinsic
-      // getter (untracked snapshot, not a dep). If unreadable mid-recompile (a
-      // parent in flux), fall back to the member's last cached value.
-      const g = m.getter!;
-      try {
-        fallbacks[i] = untracked(() => g.call(m));
-      } catch {
-        fallbacks[i] = m.peek();
-      }
-      if (singleMemberParent) {
-        const p = parent as Cell<unknown>;
-        liftLens(rel, m, lattices[i]!, p, lattices[this.index.get(p)!]!, rules);
-      }
-    });
-    this.rules = rules;
-    this.derived = derived;
-    this.fallbacks = fallbacks;
-
-    const readers: number[][] = members.map(() => []);
-    rules.forEach((rule, r) => {
-      for (const c of rule.reads) {
-        const i = this.index.get(c);
-        if (i !== undefined) readers[i]!.push(r);
-      }
-    });
-    this.readers = readers;
-    this.getter = () => this.solve();
-    this.flags = F.Mutable | F.Dirty;
-    // Members are NOT overlaid here. Each becomes a VIEW of this region lazily,
-    // on its own first read after this build (`ensureRegion`): the cell keeps
-    // its intrinsic definition (a source's `undefined` getter, a lens's forward
-    // + `_rel`), and `_region` redirects reads to this region's solved slot. So a
-    // never-read member costs nothing, and a topology edit doesn't sweep every
-    // member of a (possibly huge) component — the wiring is pulled, not pushed.
-  }
-
-  /** Ensure the fixpoint is current (glitch-free, in dependency order) and
-   *  return `m`'s solved projection. The pull is UNTRACKED (`peek`): the
-   *  member→component dep is permanent — wired when the component formed — so
-   *  there's no link to re-establish here, and shielding `activeSub` keeps the
-   *  member's reader from binding directly to `G` (which would lose per-member
-   *  granularity). Called only from a governed member's `_update`. */
-  _project(m: Cell<unknown>): unknown {
-    this.peek();
-    return this.solved[this.index.get(m)!];
-  }
-
-  /** Re-solve trigger for a SOURCE member's standing write. The component reads
-   *  standings as plain fields (untracked, so there's no member→component dep
-   *  to cycle), so a standing write can't propagate through the dep graph on its
-   *  own: this marks the component dirty and notifies its subscribers (members
-   *  and watchers) directly (the dual of `_writeSource` for a node with no
-   *  upstream dep). */
-  invalidate(): void {
-    if (this.flags & F.Dirty) return;
-    this.flags = F.Mutable | F.Dirty;
-    const subs = this.subs;
-    if (subs !== undefined) {
-      propagate(subs, runDepth > 0);
-      if (!flushing) flush();
-    }
-  }
-
-  /** Fold the component to a lattice fixpoint and publish per member. Runs as
-   *  the node's getter (tracked), so every seed/external read becomes a dep —
-   *  any of them changing re-invalidates the whole component.
-   *
-   *  Semi-naive, wave-based (mirrors `src/propagators/solver.ts`): the first
-   *  wave fires every rule; each later wave fires only the rules that READ a
-   *  slot which narrowed in the previous wave (`readers` reverse index). Firing
-   *  in ascending rule index within a wave preserves the cascade order a
-   *  full-sweep got "for free", so a chain/ring converges in a few waves rather
-   *  than circulating; gating on freshness skips the rules that can't have
-   *  changed. Meet is confluent, so the fixpoint is order-independent.
-   *
-   *  Allocation discipline: one `work` array per solve, an external snapshot
-   *  cache (each outside cell lifted once), and two reused frontier buffers so
-   *  there's no per-wave array churn. */
-  private solve(): number {
-    const { members, lattices, rules, readers, index, solved, derived, fallbacks, free } = this;
-    const n = members.length;
-    const R = rules.length;
-    const work = new Array<unknown>(n);
-    const fb = new Array<unknown>(n); // concretize fallback, captured at seed time
-    const extCache = new Map<Cell<unknown>, unknown>();
-
-    const get = (c: Cell<unknown>): unknown => {
-      const i = index.get(c);
-      if (i !== undefined) return work[i];
-      if (extCache.has(c)) return extCache.get(c);
-      const lat = latticeOf(c); // external input: lift via its own lattice
-      // A lens chain can loop an external read back through a fellow member
-      // that's mid-solve (the engine's own cyclic-read guard). That path
-      // simply carries no usable knowledge here ⇒ contribute ⊤.
-      let k: unknown;
-      try {
-        k = lat ? lat.abstract(c.value) : c.value;
-      } catch (e) {
-        if (!(e instanceof RangeError)) throw e;
-        k = lat ? lat.top : undefined;
-      }
-      extCache.set(c, k);
-      return k;
-    };
-
-    // Slots that narrowed during the current wave (deduped via `slotDirty`),
-    // consumed afterwards to build the next wave's rule frontier.
-    const slotDirty = new Uint8Array(n);
-    const narrowed: number[] = [];
-    let widening = false;
-    const emit = (c: Cell<unknown>, k: unknown): void => {
-      const i = index.get(c);
-      if (i === undefined) return;
-      const lat = lattices[i]!;
-      const cur = work[i];
-      // Monotone meet: combine contributions by greatest-lower-bound. A genuine
-      // clash collapses to ⊥ and `concretize` then falls back (notes §7c).
-      // Associative/commutative/idempotent ⇒ the fixpoint is order-independent.
-      let next = lat.meet(cur, k);
-      if (widening && lat.widen !== undefined) next = lat.widen(cur, next);
-      if (!lat.equals(cur, next)) {
-        work[i] = next;
-        if (slotDirty[i] === 0) {
-          slotDirty[i] = 1;
-          narrowed.push(i);
-        }
-      }
-    };
-
-    // Seed: a DERIVED member carries no assertion (⊤; its forward transformer
-    // fills it). A SOURCE member reads its standing straight off the cell
-    // (`pendingValue`, untracked — the standing-write path re-invalidates us). A
-    // LENS member re-evaluates its INTRINSIC forward getter (never overwritten,
-    // tracked ⇒ the live upstream becomes a dep). That re-evaluation may loop
-    // back through this very solve (a lens chain re-entering a member); if so,
-    // seed ⊤ and keep the member's current value as fallback.
-    for (let i = 0; i < n; i++) {
-      const lat = lattices[i]!;
-      if (derived[i]) {
-        work[i] = lat.top;
-        fb[i] = fallbacks[i];
-        continue;
-      }
-      const m = members[i]!;
-      try {
-        // The forward getter (`singleGetter`/`multiGetter`/…) reads `this._rel`,
-        // so it must run with `this === m` (the original receiver).
-        const g = m.getter;
-        const sv = g === undefined ? m.pendingValue : g.call(m);
-        // Free variable: ⊤ seed (no fact, so contractors narrow it) but the
-        // seed value is its SOFT fallback (still a re-solve dependency).
-        work[i] = free[i] ? lat.top : lat.abstract(sv);
-        fb[i] = sv;
-      } catch (e) {
-        if (!(e instanceof RangeError)) throw e;
-        work[i] = lat.top;
-        fb[i] = m.currentValue; // cached value, no re-entrant read
-      }
-    }
-
-    // Wave 0 fires every rule; later waves only the readers of narrowed slots.
-    // WIDEN_AFTER waves ≈ WIDEN_AFTER·R firings: only a genuinely infinite
-    // descent reaches it; finite lattices drain far sooner.
-    const widenAt = WIDEN_AFTER * (R || 1);
-    let firings = 0;
-    const ruleQueued = new Uint8Array(R);
-    let frontier: number[] = Array.from({ length: R }, (_, r) => r);
-    let next: number[] = [];
-    while (frontier.length > 0) {
-      narrowed.length = 0;
-      for (let f = 0; f < frontier.length; f++) {
-        if (++firings > widenAt) widening = true;
-        rules[frontier[f]!]!.body(get, emit);
-      }
-      next.length = 0;
-      for (let q = 0; q < narrowed.length; q++) {
-        const slot = narrowed[q]!;
-        slotDirty[slot] = 0;
-        const rs = readers[slot]!;
-        for (let j = 0; j < rs.length; j++) {
-          const r = rs[j]!;
-          if (ruleQueued[r] === 0) {
-            ruleQueued[r] = 1;
-            next.push(r);
-          }
-        }
-      }
-      for (let j = 0; j < next.length; j++) ruleQueued[next[j]!] = 0;
-      const tmp = frontier;
-      frontier = next;
-      next = tmp;
-    }
-    for (let i = 0; i < n; i++) solved[i] = lattices[i]!.concretize(work[i], fb[i]);
-
-    return ++this.version;
-  }
-
-  /** Retire the solver: unlink its inputs (no stale propagation, no leak) and
-   *  mark disposed. Members re-point lazily (`ensureRegion`); the last one to
-   *  leave a dead region triggers this. Refire-free, so it's safe to call
-   *  mid-read. */
-  dispose(): void {
-    if (this.disposed) return;
-    disposeAllDepsInReverse(this);
-    this.getter = undefined;
-    this.flags = F.None;
-    this.disposed = true;
-  }
-}
-
-// ── relation engine: graph + on-read SCC discovery + region lifecycle ─
+// Mechanism (push relaxation). Committing a CHANGED value into a source — the
+// single `_writeSource` choke point shared by user writes, lens back-writes,
+// and a propagator's own writes — SCHEDULES every propagator reading it. The
+// schedule then DRAINS: each body runs, its writes route back through the value
+// setter, and a write that actually changes a value reschedules ITS readers.
+// The setter's equality test IS the fixpoint detector — the drain stops when no
+// write changes anything — so a whole cyclic region relaxes as ONE unit in a
+// single drain, and a divergent (over-constrained) region trips `RELAX_CAP`.
 //
-// The cyclic counterpart to the acyclic forward/backward engine above, fused
-// into the SAME pull. You declare relationships directly as plain functions over
-// lattice cells (`constrain`, and the combinators in `relate.ts` on top). The
-// engine keeps only a refcounted relation graph (an edge u→v whenever a rule
-// reads u and writes v, plus each lens link parent→child) — NO maintained
-// condensation. An SCC is DISCOVERED on demand, when a member is first read,
-// by intersecting forward- and backward-reachability from that member
-// (`discoverSCC`); construction is therefore O(1) per edge. The discovered SCC
-// becomes one `Component` solver (lattice meet-fixpoint), cached on each member
-// and validated against `topoGen`, exactly like a computed's memo.
+// `equal` is a two-way mirror; directional layout propagators (`beside`,
+// `distance`, …) fall straight out; and lenses compose for free — writing a
+// lens routes through `propagateBwd` to its source, whose commit reschedules,
+// so a rule reading a lens is indexed under that lens's underlying source.
+//
+// Eagerness note: a write relaxes its region immediately (work is bounded by
+// equality-gating, so only actually-changed propagators re-fire). On-read
+// laziness (defer the drain until a region member is demanded) is a future
+// refinement, not a correctness requirement.
 
-// biome-ignore lint/suspicious/noExplicitAny: heterogeneous relation graph
+// biome-ignore lint/suspicious/noExplicitAny: heterogeneous propagator graph
 type AnyCell = Cell<any>;
+
+/** A propagator body: read inputs, write outputs. `read(c)` is a cell's current
+ *  settled value; `write(c, v)` routes through the value setter (a source
+ *  commit, or a lens back-write), equality-gated. For a confluent region the
+ *  drain order is irrelevant; a divergent one trips the cap. */
+export type RelationBody = (
+  read: (c: Cell<unknown>) => unknown,
+  write: (c: Cell<unknown>, v: unknown) => void,
+) => void;
 
 interface Rule {
   readonly reads: readonly AnyCell[];
-  readonly writes: readonly AnyCell[];
   readonly body: RelationBody;
+  /** On the drain queue right now — the dedup guard. */
+  queued: boolean;
 }
 
-/** Refcounted forward edges u→v (the same u→v induced by several rules or a
- *  lens link carries a multiplicity; the edge disappears when the last inducer
- *  removes it). `inc` mirrors it for backward reach. */
-const relOut = new Map<AnyCell, Map<AnyCell, number>>();
-const relInc = new Map<AnyCell, Map<AnyCell, number>>();
+/** Propagators that READ each SOURCE cell. A rule reading a lens/computed is
+ *  indexed under the SOURCE(s) at the root of that read's parent chain: a source
+ *  is the only node that commits (`_writeSource`) and reschedules, and a lens's
+ *  value moves only when its source does. */
+const readersOf = new WeakMap<AnyCell, Rule[]>();
 
-function addEdge(u: AnyCell, v: AnyCell): void {
-  let o = relOut.get(u);
-  if (o === undefined) relOut.set(u, (o = new Map()));
-  o.set(v, (o.get(v) ?? 0) + 1);
-  let i = relInc.get(v);
-  if (i === undefined) relInc.set(v, (i = new Map()));
-  i.set(u, (i.get(u) ?? 0) + 1);
-}
-
-function removeEdge(u: AnyCell, v: AnyCell): void {
-  const o = relOut.get(u);
-  const c = o?.get(v) ?? 0;
-  if (c === 0) return;
-  if (c > 1) o!.set(v, c - 1);
-  else o!.delete(v);
-  const i = relInc.get(v)!;
-  const ci = i.get(u)!;
-  if (ci > 1) i.set(u, ci - 1);
-  else i.delete(u);
-}
-
-/** The strongly-connected component containing `m`, right now, from the live
- *  relation graph: forward-reach ∩ backward-reach. A node n is in m's SCC iff
- *  m reaches n (n ∈ fwd) and n reaches m — and any n→m path lies entirely in
- *  fwd, so gating the backward walk on `fwd` is exact. Bounded to the two reach
- *  sets, never the whole graph. Returns `[m]` for a singleton. */
-function discoverSCC(m: AnyCell): AnyCell[] {
-  const fwd = new Set<AnyCell>([m]);
-  const fstack: AnyCell[] = [m];
-  while (fstack.length > 0) {
-    const n = fstack.pop()!;
-    const o = relOut.get(n);
-    if (o !== undefined) for (const w of o.keys()) if (!fwd.has(w)) fwd.add(w), fstack.push(w);
+function addReader(c: AnyCell, rule: Rule): void {
+  if (c.getter === undefined) {
+    let rs = readersOf.get(c);
+    if (rs === undefined) readersOf.set(c, (rs = []));
+    rs.push(rule);
+    return;
   }
-  const scc = new Set<AnyCell>([m]);
-  const bstack: AnyCell[] = [m];
-  while (bstack.length > 0) {
-    const n = bstack.pop()!;
-    const i = relInc.get(n);
-    if (i !== undefined)
-      for (const u of i.keys()) if (fwd.has(u) && !scc.has(u)) scc.add(u), bstack.push(u);
-  }
-  return [...scc];
+  for (const p of parentsOf(c)) addReader(p as AnyCell, rule);
 }
 
-/** Stable per-cell id, assigned lazily — picks an SCC's canonical representative
- *  (its region cache key) deterministically across which member is read first. */
-let nextCellId = 0;
-const cellIds = new WeakMap<AnyCell, number>();
-function idOf(c: AnyCell): number {
-  let id = cellIds.get(c);
-  if (id === undefined) cellIds.set(c, (id = nextCellId++));
-  return id;
+function removeReader(c: AnyCell, rule: Rule): void {
+  if (c.getter === undefined) {
+    const rs = readersOf.get(c);
+    if (rs === undefined) return;
+    const i = rs.indexOf(rule);
+    if (i >= 0) rs.splice(i, 1);
+    if (rs.length === 0) readersOf.delete(c);
+    return;
+  }
+  for (const p of parentsOf(c)) removeReader(p as AnyCell, rule);
 }
-function repOf(scc: readonly AnyCell[]): AnyCell {
-  let rep = scc[0]!;
-  let best = idOf(rep);
-  for (let k = 1; k < scc.length; k++) {
-    const id = idOf(scc[k]!);
-    if (id < best) {
-      best = id;
-      rep = scc[k]!;
+
+/** Divergence guard: cap on total rule firings in one drain. A confluent region
+ *  settles in O(rules · diameter) firings, far under this; only an
+ *  over-constrained cycle with no fixpoint reaches it. */
+const RELAX_CAP = 1_000_000;
+
+const relaxQueue: Rule[] = [];
+let relaxing = false;
+
+/** Enqueue the propagators reading a just-committed source (from
+ *  `_writeSource`). The drain runs once the outermost write unwinds. */
+function scheduleReaders(c: AnyCell): void {
+  const rs = readersOf.get(c);
+  if (rs === undefined) return;
+  for (const r of rs) {
+    if (!r.queued) {
+      r.queued = true;
+      relaxQueue.push(r);
     }
   }
-  return rep;
 }
 
-/** Rules that WRITE each cell — the per-component rule index. */
-const rulesByMember = new WeakMap<AnyCell, Rule[]>();
+const relaxRead = (c: Cell<unknown>): unknown => c.peek();
+const relaxWrite = (c: Cell<unknown>, v: unknown): void => {
+  (c as { value: unknown }).value = v;
+};
 
-/** Materialized SCC solvers, keyed by canonical representative. The membership
- *  source of truth is the live graph; this is just the lazily-built solver cache
- *  for each cyclic region, born on the first read of any member and retired when
- *  its rules change (`recompile`). A region declared but never read never
- *  appears here — so N incremental `constrain` calls don't rebuild it N times. */
-const regions = new Map<AnyCell, Component>();
-
-/** Cells that are relation members (write-targets, plus lens-chain cells folded
- *  in for SCC detection). A pure membership marker: the standing assertion lives
- *  natively on the member, not in a side table. Tells a real member apart from a
- *  read-only external that merely feeds a component. */
-const memberCells = new WeakSet<AnyCell>();
-
-/** Cells declared FREE variables (`free`): they carry no standing fact, so a
- *  component seeds them ⊤ and lets the contractors determine them. */
-const freeVars = new WeakSet<AnyCell>();
-
-/** Members whose region is mid-build — breaks the recursion when the `Component`
- *  ctor samples a co-member's value (which would re-enter here for the same
- *  SCC). A re-entrant resolve reads the member intrinsically instead. */
-const building = new Set<AnyCell>();
-
-/** Register the LENS-STRUCTURE edges of a member into the relation graph. A lens
- *  member reads its parent(s) — a dataflow dependency the graph must see, else
- *  two components coupled only through a lens channel form a cycle discovery
- *  can't detect and they oscillate. Walks the whole lens chain (permanent,
- *  refcounted edges). A chain cell carrying a lattice is marked a member so an
- *  intermediate lens landing inside an SCC solves (folding in K-space) instead
- *  of re-entering the solve through a live `.value` read. */
-function registerLensParents(m: AnyCell): void {
-  const seen = new Set<AnyCell>();
-  const visit = (child: AnyCell): void => {
-    if (seen.has(child) || !isLens(child)) return;
-    seen.add(child);
-    for (const p of parentsOf(child)) {
-      const pc = p as AnyCell;
-      addEdge(pc, child); // p → child: child reads p (permanent lens edge)
-      if (latticeOf(pc) !== undefined) {
-        memberCells.add(pc);
-        markRelational(pc);
-      }
-      visit(pc);
-    }
-  };
-  visit(m);
-}
-
-/** Resolve which region `m` belongs to RIGHT NOW (called from the value getter
- *  via `ensureRegion`). Discovers m's SCC from the live graph, builds + caches a
- *  `Component` for it (keyed by canonical rep), or returns `undefined` for a
- *  singleton with no rules (⇒ the member reads degenerately). */
-function resolveRegion(m: AnyCell): Component | undefined {
-  if (building.has(m)) return undefined; // mid-build ⇒ intrinsic read
-  const scc = discoverSCC(m);
-  const rep = repOf(scc);
-  const g = regions.get(rep);
-  if (g !== undefined && !g.disposed && g.builtGen === topoGen) return g;
-  if (g !== undefined && !g.disposed) g.dispose(); // stale structure ⇒ rebuild
-  for (const c of scc) building.add(c);
+/** Drain scheduled propagators to a fixpoint. A rule's writes go through the
+ *  setter, whose `_writeSource` enqueues further rules (we are `relaxing`, so it
+ *  only enqueues — this loop picks them up), so the entire perturbed region
+ *  settles in one pass. Runs untracked: a body's reads/writes never bind to the
+ *  `activeSub` that triggered the originating write (e.g. an effect that sets a
+ *  cell). */
+function relax(): void {
+  relaxing = true;
+  const prev = activeSub;
+  activeSub = undefined;
+  let firings = 0;
   try {
-    return buildRegion(rep, scc);
+    while (relaxQueue.length > 0) {
+      if (++firings > RELAX_CAP) {
+        throw new RangeError("propagator relaxation did not converge (over-constrained cycle?)");
+      }
+      const r = relaxQueue.shift()!;
+      r.queued = false;
+      r.body(relaxRead, relaxWrite);
+    }
   } finally {
-    for (const c of scc) building.delete(c);
+    relaxing = false;
+    activeSub = prev;
+    for (const r of relaxQueue) r.queued = false;
+    relaxQueue.length = 0;
   }
 }
 
-function buildRegion(rep: AnyCell, scc: readonly AnyCell[]): Component | undefined {
-  // Real members are marked in `memberCells` (write-targets + lens-chain cells).
-  // Lens parents pulled in only as graph nodes (for SCC detection) carry a
-  // lattice but no mark — they're channels into the region, not solved.
-  const members = scc.filter(c => memberCells.has(c));
-  if (members.length === 0) return undefined;
-
-  const ruleSet = new Set<Rule>();
-  for (const m of members) for (const r of rulesByMember.get(m) ?? []) ruleSet.add(r);
-  if (ruleSet.size === 0) return undefined; // no rules → nothing to solve
-
-  const lattices = members.map(m => latticeOf(m)!);
-  const rules: CompiledRule[] = [...ruleSet].map(r => ({ body: r.body, reads: r.reads }));
-  const isFree = members.map(m => freeVars.has(m));
-
-  const comp = new Component(rep, members, lattices, rules, isFree);
-  comp.builtGen = topoGen;
-  regions.set(rep, comp);
-  return comp;
-}
-
-/** A topology edit only adds/removes edges among its own reads/writes, so the
- *  only MATERIALIZED regions it can merge or split are the ones already
- *  containing one of those cells (cached as `_region`). Retire them; the new
- *  grouping re-derives lazily on the next read of any member. */
-function recompile(reads: readonly AnyCell[], writes: readonly AnyCell[]): void {
-  const affected = new Set<AnyCell>();
-  for (const w of writes) if (!isReadonly(w)) affected.add(w);
-  for (const r of reads) affected.add(r);
-
-  const stale = new Set<Component>();
-  for (const c of affected) {
-    const g = c._region;
-    if (g !== undefined && !g.disposed) stale.add(g);
-  }
-
-  // Bump FIRST so any re-pull triggered by the refire below re-resolves against
-  // the new generation (and finds retired Map entries gone).
-  bumpTopoGen();
-
-  const refire = new Set<AnyCell>(affected);
-  for (const g of stale) {
-    regions.delete(g.rep);
-    for (const m of g.members) refire.add(m as AnyCell);
-  }
-  for (const g of stale) g.dispose();
-  refireCells(refire as Set<Cell<unknown>>);
-}
-
-/** Declare a relationship: a `body` that narrows `writes` from `reads`. Registers
- *  the rule + its dataflow edges; the affected regions re-derive lazily on the
- *  next read. Live immediately — no wrapper. Returns a disposer. */
+/** Declare a propagator: `body` writes `writes` from `reads`. Indexes it under
+ *  the sources its reads bottom out at, fires it once to seed (so the
+ *  relationship holds immediately), and returns a disposer. `writes` is the
+ *  declared output set — the bipartite edge — kept explicit so a relationship
+ *  reads as `reads → writes`; it is not needed to schedule (a write reschedules
+ *  via its own source commit). */
 export function constrain(
   reads: readonly AnyCell[],
-  writes: readonly AnyCell[],
+  _writes: readonly AnyCell[],
   body: RelationBody,
 ): () => void {
-  const rule: Rule = { reads, writes, body };
-  for (const w of writes) {
-    // A READ-ONLY cell (`derive`) is fixed by definition — it can feed a rule as
-    // an INPUT but can never be narrowed, so skip it as a write-target (the rule
-    // emitting to it no-ops) and keep its lazy getter intact.
-    if (isReadonly(w)) continue;
-    if (latticeOf(w) !== undefined) {
-      markRelational(w);
-      if (!memberCells.has(w)) {
-        memberCells.add(w);
-        registerLensParents(w);
-      }
-    }
-    const rs = rulesByMember.get(w);
-    if (rs === undefined) rulesByMember.set(w, [rule]);
-    else rs.push(rule);
-    for (const r of reads) addEdge(r, w);
-  }
-  recompile(reads, writes);
-  return () => disposeRule(rule);
-}
-
-function disposeRule(rule: Rule): void {
-  for (const w of rule.writes) {
-    const rs = rulesByMember.get(w);
-    if (rs !== undefined) {
-      const i = rs.indexOf(rule);
-      if (i >= 0) rs.splice(i, 1);
-      if (rs.length === 0) rulesByMember.delete(w);
-    }
-    for (const r of rule.reads) removeEdge(r, w);
-  }
-  recompile(rule.reads, rule.writes);
-}
-
-/** Declare `c` a FREE variable: it carries no standing FACT, so a component
- *  seeds it ⊤ (letting inequality/arithmetic contractors narrow it) and keeps
- *  its value as the SOFT fallback (its preferred value when underdetermined).
- *  Re-declarable; takes effect on the next solve. */
-export function free<T>(c: Cell<T>): void {
-  freeVars.add(c as AnyCell);
+  const rule: Rule = { reads, body, queued: false };
+  for (const r of reads) addReader(r, rule);
+  rule.queued = true;
+  relaxQueue.push(rule);
+  if (!relaxing) relax();
+  return () => {
+    for (const r of reads) removeReader(r, rule);
+  };
 }

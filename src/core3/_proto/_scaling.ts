@@ -6,11 +6,10 @@
 // members — the honest test of incremental SCC + lazy-region build.
 import { settle } from "../cell";
 import { num } from "../index";
-import { equal, free } from "../relate";
+import { equal } from "../relate";
 
 function timeChain(n: number, read: boolean): number {
   const xs = Array.from({ length: n }, () => num(0));
-  for (const x of xs) free(x);
   const t0 = performance.now();
   for (let i = 0; i < n - 1; i++) equal(xs[i]!, xs[i + 1]!); // N-1 edges, one SCC
   if (read) {
