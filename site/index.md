@@ -254,6 +254,12 @@ Each slot carries a `string ⇄ T` codec. With one editable pattern, that's rout
 
 <md-route-params></md-route-params>
 
+The same mechanism scales from string projections to whole syntaxes. One abstract value, four concrete syntaxes — JSON, YAML, TOML, EDN — each a stateful lens whose complement is the concrete document itself: the text, its parse tree, its error spans. Backward writes are span edits against that tree, so each pane's formatting and comments survive edits made in the others.
+
+The complement earns its keep when a pane stops parsing. The parsers are error-tolerant — a syntax error breaks only its own span, not the document — so a broken pane *holds*: it stops writing the hub, but keeps absorbing the other panes' edits by writing *around* its error spans, three-way merged against the last value both sides agreed on. Delete a quote in the JSON, then edit the YAML: the JSON updates everywhere except the span you broke, and any valid edits you'd made alongside the break stay put. Fix the span and the pane publishes again, last writer wins:
+
+<md-syntax-lens></md-syntax-lens>
+
 The same complement mechanism scales to rasters, on the GPU. A `Canvas` carries its pixels as an RGBA float texture in one shared WebGL2 context; the reactive graph compares a monotonic `epoch`, so propagation never touches a pixel and nothing crosses the bus but handles. Every lens is a shader pass into a scratch texture, every backward pass its inverse. Below, a source forks five ways: a transform spine (`brightness(k) ⇌ blur(r) ⇌ grayscale ⇌ invert`, where `grayscale` stores per-pixel chroma), a `flipH` forking into dual projections (`grayscale` keeps luma, `chroma` keeps colour), a `downsample` thumbnail, a region branch (`crop ⇌ meanColor`), and a 1-bit `brighterThan`. Paint any canvas, drag the crop box, flip the exposure bit, or pick a mean colour — every edit flows back through the inverses:
 
 <md-canvas-graph></md-canvas-graph>

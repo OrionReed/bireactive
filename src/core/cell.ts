@@ -1218,8 +1218,18 @@ function propagateSplit(cell: Cell<unknown>, target: unknown, deferred: boolean)
     }
     sc.complement = sc.step(cand, res.complement, false);
     if (!anyWrite) {
-      // Complement-only change (no source moves): mark dirty for a correct next read.
+      // Complement-only change (no source moves): the view may still
+      // differ (an absorbing lens echoes the write back from its
+      // complement), so subscribers must hear about it. Marking Dirty
+      // without propagating would also break the propagate guard's
+      // invariant (Dirty ⇒ subs already notified) and freeze the cell's
+      // subtree out of later source changes.
       cell.flags = F.Mutable | F.Dirty;
+      const subs = cell.subs;
+      if (subs !== undefined) {
+        propagate(subs, runDepth > 0, activeNetwork);
+        if (batchDepth === 0 && !flushing) flush();
+      }
       return;
     }
     sc.lastBwd = cand;
