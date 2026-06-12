@@ -7,33 +7,47 @@ description: A bi-directional reactive programming library.
 
 <md-bireactive></md-bireactive>
 
-Ordinary reactivity flows one way: write an input, everything derived updates. *Bireactive* adds backward edges — write a derived value (a "lens") and change propagates backward.
+## Introduction
 
-Some early docs are available in the [API reference](./api/).
+Ordinary reactive systems (often called "signals") flows one way: write an input, everything derived updates. Reactive systems assure ~4 properties:
 
-A solar system, every planet/moon positioned reactively from a `time` number.
-Each planet/moon chains polar coordinates off `time`; the chain inverts, so dragging any body propagates backward to update `time`.
+1. **Minimality** — only the affected nodes recompute.
+2. **Consistency** — a read is never stale; it always returns the latest value.
+3. **Glitch-freedom** — a write that fans out to N sources and reconverges never shows intermediate/inconsistent state; downstream derived values and side-effects fire exactly once.
+4. **Natural acyclicality** — by requiring dependencies be defined before use, it is _unnatural_ to create cycles in normal use.
 
-```ts
-const angle = time.affine(τ / period, offset);
-const pos   = polar(sun, dist, angle); // drag any body to scrub time
-```
-
-<md-solar-system></md-solar-system>
-
-## Reversible edges
-
-Exact bijections — reflections, rotations, scales, affine maps, polar/cartesian, unit conversions — have closed-form inverses.
-
+Dependencies are implicit, so one need only read a value to subscribe to it.
 
 ```ts
-const a = num(130);
-const b = a.affine(-1, L₁);
-const c = b.affine(-1, L₂);
+const c = cell(20);
+const f = derive(() => c.value * 9/5 + 32);
+const fDouble = derive(() => f.value * 2); // fDouble subscribes to f by reading it.
+
+// side-effect fires exactly once when values change.
+effect(() => console.log(`${c.value}°C = ${f.value}°F = 2×${fDouble.value}`));
+
+c.value = 100; // → 100°C = 212°F
+f.value = 32;  // Error: cannot write to a derived value.
 ```
 
-<md-pulley></md-pulley>
+*Bi-directional reactivity* adds backward edges, allowing us to write a derived value and have the change propagate backward.
+```ts
+const c = cell(20);
+const f = c.lens(c => c * 9/5 + 32, f => (f - 32) * 5/9);
+effect(() => console.log(`${c.value}°C = ${f.value}°F`));
+// 20°C = 68°F
 
+c.value = 100; // → 100°C = 212°F
+f.value = 32;  // → 0°C = 32°F
+```
+
+Bi-directional reactivity maintains the same properties as ordinary reactivity. *Propagation* is still acyclic by treating the backward and forward directions as seperate directed acyclic graphs.
+
+## Lenses & Bi-directional Transformations
+
+// brief intro to bi-directional transformations in general and lenses in particular. and an apology for missapropriating the term lens... in many domains, an exact "canonical inverse" is under-defined...
+
+## Examples
 
 ```ts
 let p = a;
@@ -42,27 +56,13 @@ for (let i = 0; i < N; i++) p = p.rotate(θ, pivot).scale(k, pivot);
 
 <md-invertible></md-invertible>
 
-<md-function></md-function>
-
-
-<md-mirror></md-mirror>
-
-
-<md-conformal-disc></md-conformal-disc>
-
-Gears branch into a tree, each child meshing through `child = parent.scale(−teethₚ / teeth_c)`.
-
-<md-gears></md-gears>
-
-`clamp`, `quantize`, and `snap` discard information idempotently, so the backward direction just projects again:
-
 ```ts
-const t  = num(0.5);
-const tC = t.clamp(lo, hi); // lo, hi can be cells too
-const tQ = tC.quantize(0.1);
+const angle = time.affine(τ / period, offset);
+const pos   = polar(sun, dist, angle); // drag any body to scrub time
 ```
 
-<md-clamp-quantize></md-clamp-quantize>
+<md-solar-system></md-solar-system>
+
 
 Each field is a lens onto one SI-base cell, `si.lens(u.fromBase, u.toBase)`.
 
@@ -81,14 +81,60 @@ Coordinate spaces via a `world.lens(fwd, bwd)`: euclidean, oblique, polar, log-p
 
 <md-coordinate-spaces></md-coordinate-spaces>
 
-A waveform and its spectrum:
-
-<md-fourier></md-fourier>
 
 
-<md-bireactive-eq></md-bireactive-eq>
 
-## Aggregates
+<md-gears></md-gears>
+
+
+
+
+Exact bijections — reflections, rotations, scales, affine maps, polar/cartesian, unit conversions — have closed-form inverses.
+
+
+```ts
+const a = num(130);
+const b = a.affine(-1, L₁);
+const c = b.affine(-1, L₂);
+```
+
+<md-pulley></md-pulley>
+
+
+<md-function></md-function>
+
+<md-mirror></md-mirror>
+
+<md-conformal-disc></md-conformal-disc>
+
+
+## Lossy Transformations
+`clamp`, `quantize`, and `snap` discard information idempotently, so the backward direction just projects again:
+
+```ts
+const t  = num(0.5);
+const tC = t.clamp(lo, hi); // lo, hi can be cells too
+const tQ = tC.quantize(0.1);
+```
+
+<md-clamp-quantize></md-clamp-quantize>
+
+## Transforming between types
+
+An edge's two ends needn't share a type. With a boolean target, forward is a predicate (`v > t`, `box.contains(p)`, `a ≈ b`) and backward nudges the source to satisfy it:
+
+<md-bool-bridges></md-bool-bridges>
+
+
+`(Range, Range) ⇌ AllenRelation` reads two intervals as one of Allen's thirteen relations; setting a relation reshapes the second interval:
+
+<md-allen></md-allen>
+
+same idea but with a `(Box, Box) ⇌ RCC-8` relation.
+
+<md-rcc8></md-rcc8>
+
+## 1-1, N-1, and M-N relationships
 
 A residual edge loses information but keeps the lost part in the source. A centroid reads as the average of its points; writing it moves them all evenly.
 
@@ -120,28 +166,11 @@ const { center, radius }   = bestFitCircle(points);
 <md-traits-cross-domain></md-traits-cross-domain>
 
 
-## Transforming between types
-
-An edge's two ends needn't share a type. With a boolean target, forward is a predicate (`v > t`, `box.contains(p)`, `a ≈ b`) and backward nudges the source to satisfy it:
-
-<md-bool-bridges></md-bool-bridges>
 
 
-`(Range, Range) ⇌ AllenRelation` reads two intervals as one of Allen's thirteen relations; setting a relation reshapes the second interval:
-
-<md-allen></md-allen>
-
-same idea but with a `(Box, Box) ⇌ RCC-8` relation.
-
-<md-rcc8></md-rcc8>
 
 
-`mix(weights, branches)` reads as a weighted sum and writes back split by weight. `select` and `crossfade` are the same lens with control on the weight simplex:
-
-<md-select></md-select>
-
-
-## Structured Values
+## Collections & Hierarchical Values
 
 We can express interactive todo lists as a tree of Tri values (a `true | false | "mixed"` value). Clicking a checkbox propagates upward to update the parent and ancestor nodes, and downward to update the children.
 
@@ -168,7 +197,6 @@ A `Flags` value is one integer with named bits; `flag(name)` is a `Bool` lens ov
 
 <md-budget-tree></md-budget-tree>
 
-## Collections
 
 A `coll(items)` holds stable element handles — records of cells — and each view is a *writable* structural lens.
 
@@ -183,19 +211,11 @@ The predicate that derives the view, `is(c => c.done, false)` runs forward (test
 <md-kanban></md-kanban>
 
 
-<md-skeletal-rig></md-skeletal-rig>
-
-
 <md-containment-forest></md-containment-forest>
 
 
 ## Text
 
-Strings, arrays, and sets can't recover dropped detail from the result alone, so each cell carries a private _complement_ state. Editing any pane updates the source; the detail each projection dropped is recovered via the complement state.
-
-<md-string-pipeline></md-string-pipeline>
-
-`trim` stores the padding, `lowercase` a case mask, `words` the separator runs, and so on.
 
 A `Template` is a multi-parent lens over typed slot cells — `lit₀ slot₀ lit₁ … litₙ` — rendering forward and parsing back. Each slot carries a `string ⇄ T` codec.
 
@@ -204,11 +224,22 @@ A `Template` is a multi-parent lens over typed slot cells — `lit₀ slot₀ li
 
 <md-route-params></md-route-params>
 
+
+Strings, arrays, and sets can't recover dropped detail from the result alone, so each cell carries a private _complement_ state. Editing any pane updates the source; the detail each projection dropped is recovered via the complement state.
+
+<md-string-pipeline></md-string-pipeline>
+
+`trim` stores the padding, `lowercase` a case mask, `words` the separator runs, and so on.
+
 Here is a (slightly broken) attempt to reactively edit multiple syntaxes of JSON, YAML, TOML, and EDN.
 
 The parsers are error-tolerant, so a broken pane stops writing the hub but keeps absorbing the other panes' edits around its error spans.
 
+
+
 <md-syntax-lens></md-syntax-lens>
+
+## Bi-reactivity over large or costly data
 
 While the reactive graph usually propagates concrete values, if we want to work with large or costly data, we can instead propagate "handles" through the graph. A `Canvas` value carries an RGBA float texture while the reactivity graph compares a monotonic `epoch` in the handle. 
 
@@ -525,7 +556,7 @@ The runtime's test suite runs in the browser on a fresh `Anim` driven by `step(d
 
 <md-runtime-tests></md-runtime-tests>
 
-## Misc
+# Misc ~~~~~~~~~~~~~~~~~
 
 Loose demos that may not survive the final cut.
 
@@ -622,3 +653,21 @@ A cubic Bézier reads as `{start, end, startTangent, endTangent}`, putting the h
 <!-- Pushed further, a cubic is four DOF and every spline basis is just a different coordinate system for the same curve, related by a constant matrix. Each net's handles are a `Vec.lens` onto the shared coefficients, so dragging a handle in any basis remaps the others while the curve stays put: -->
 
 <!-- <md-curve-bases></md-curve-bases> -->
+
+
+A waveform and its spectrum:
+
+<md-fourier></md-fourier>
+
+
+<md-bireactive-eq></md-bireactive-eq>
+
+
+
+`mix(weights, branches)` reads as a weighted sum and writes back split by weight. `select` and `crossfade` are the same lens with control on the weight simplex:
+
+<md-select></md-select>
+
+
+<md-skeletal-rig></md-skeletal-rig>
+
