@@ -18,6 +18,8 @@ Ordinary reactive systems (often called "signals") flows one way: write an input
 
 Dependencies are implicit, so one need only read a value to subscribe to it.
 
+<md-propagation></md-propagation>
+
 ```ts
 const c = cell(20);
 const f = derive(() => c.value * 9/5 + 32);
