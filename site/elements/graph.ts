@@ -1,3 +1,23 @@
+// A compact, mostly-monochromatic graph shape — the kind of small directed
+// sketch one scribbles on a whiteboard or typesets into an old b&w CS paper.
+//
+// Construction is terse: the builder receives a node *generator* `n`.
+// Destructure it for fresh nodes (`const [a, b, c] = n`) or mint a batch
+// (`n.take(25)`); a node is itself callable, so `a(b, c)` wires the forward
+// edges `a→b`, `a→c`. Nothing is drawn until layout.
+//
+//     graph(n => { const [a, b, c] = n; a(b, c); }, { positions })
+//
+// Style is one ink colour plus two directional accents — a backward colour
+// and a forward one — since a write propagates backward (to sources) then
+// forward (to dependents) over the *same* edges. Per direction a node is in
+// one of three states: CHANGED (a solid disc — the value flowed through),
+// CUT (a coloured ring — visited and re-evaluated, but equal to before, so
+// propagation stops: the engine's early cutoff), or untouched (a hollow ink
+// ring). A transient glow drives the radius pulse and decays. The changed
+// nodes also draw a translucent convex hull — the "cone of change".
+// Animation surface: `fire`, `cutoff`, `pulseEdge`, `clear`, `decay`.
+
 import {
   type Animator,
   arrow,
@@ -9,6 +29,7 @@ import {
   group,
   type Num,
   num,
+  pathD,
   Shape,
   type Vec,
   vec,
@@ -43,6 +64,10 @@ interface NodeView {
   pos: Writable<Vec>;
   activeF: Writable<Cell<boolean>>;
   activeB: Writable<Cell<boolean>>;
+  /** Visited-but-unchanged (early cutoff) in each direction: recomputed /
+   *  back-applied, equal to before, so propagation stops here. */
+  cutF: Writable<Cell<boolean>>;
+  cutB: Writable<Cell<boolean>>;
   glowF: Writable<Num>;
   glowB: Writable<Num>;
   shape: Shape;
@@ -70,6 +95,9 @@ export interface GraphOpts {
   draggable?: boolean;
   /** Click a node (a press with no drag). */
   onPick?: (id: number) => void;
+  /** Draw the translucent convex-hull "cone of change" per direction.
+   *  Default true. */
+  cones?: boolean;
 }
 
 /** Run the terse builder, collecting node count + forward edges. */
@@ -100,9 +128,49 @@ function rgba(hex: string, a: number): string {
   return `rgba(${r}, ${g}, ${b}, ${a})`;
 }
 
+type Pt = { x: number; y: number };
+
+/** Closed SVG path for the convex hull of `pts`, pushed `pad` px outward
+ *  from the centroid so the polygon clears the node discs. Empty string for
+ *  fewer than 3 non-collinear points (a degenerate hull has no area). */
+function hullPath(pts: Pt[], pad: number): string {
+  if (pts.length < 3) return "";
+  const s = [...pts].sort((a, b) => a.x - b.x || a.y - b.y);
+  const cross = (o: Pt, a: Pt, b: Pt): number =>
+    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const half = (src: Pt[]): Pt[] => {
+    const out: Pt[] = [];
+    for (const p of src) {
+      while (out.length >= 2 && cross(out[out.length - 2]!, out[out.length - 1]!, p) <= 0) out.pop();
+      out.push(p);
+    }
+    out.pop();
+    return out;
+  };
+  const hull = [...half(s), ...half([...s].reverse())];
+  if (hull.length < 3) return "";
+  let cx = 0;
+  let cy = 0;
+  for (const p of hull) {
+    cx += p.x;
+    cy += p.y;
+  }
+  cx /= hull.length;
+  cy /= hull.length;
+  const out = hull.map(p => {
+    const dx = p.x - cx;
+    const dy = p.y - cy;
+    const len = Math.hypot(dx, dy) || 1;
+    return { x: p.x + (dx / len) * pad, y: p.y + (dy / len) * pad };
+  });
+  return `M ${out.map(p => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ")} Z`;
+}
+
 /** Compact directed-graph shape. Mount it like any shape; drive the
- *  animation via `fire(id, dir)` / `pulseEdge(u, v, dir)` / `clear()`, with
- *  `decay()` started on an animator to ease glows back down. */
+ *  animation via `fire(id, dir)` (changed) / `cutoff(id, dir)` (visited but
+ *  unchanged) / `pulseEdge(u, v, dir)` / `clear()`, with `decay()` started on
+ *  an animator to ease glows back down. The per-direction "cone of change"
+ *  (convex hull of the changed nodes) draws itself when `cones` is on. */
 export class GraphShape extends Shape {
   readonly nodes: NodeView[] = [];
   readonly edges: EdgeView[] = [];
@@ -120,34 +188,47 @@ export class GraphShape extends Shape {
       const pos = vec(p.x, p.y);
       const activeF = cell(false);
       const activeB = cell(false);
+      const cutF = cell(false);
+      const cutB = cell(false);
       const glowF = num(0);
       const glowB = num(0);
       const radius = derive(() => r * (1 + 0.85 * Math.max(glowF.value, glowB.value)));
+      // Three states per direction: CHANGED nodes are solid discs (the value
+      // flowed through); CUT nodes (visited but unchanged — early cutoff) are
+      // rings in the direction colour (reached, but propagation stopped);
+      // untouched nodes rest as hollow ink rings.
+      const litF = derive(() => activeF.value || cutF.value || glowF.value > 0.01);
+      const litB = derive(() => activeB.value || cutB.value || glowB.value > 0.01);
       const fill = derive(() => {
         if (activeF.value) return rgba(fwd, 0.92);
         if (activeB.value) return rgba(bwd, 0.92);
-        const gf = glowF.value;
-        const gb = glowB.value;
-        const g = Math.max(gf, gb);
-        return g > 0.01 ? rgba(gf >= gb ? fwd : bwd, g) : HOLLOW;
+        return HOLLOW;
       });
-      const stroke = derive(() => {
-        if (activeF.value || glowF.value > 0.01) return fwd;
-        if (activeB.value || glowB.value > 0.01) return bwd;
-        return INK;
-      });
+      const stroke = derive(() => (litF.value ? fwd : litB.value ? bwd : INK));
       const shape = circle(pos, radius, { fill, stroke, thin: true });
       this.nodes.push({
         id,
         pos,
         activeF,
         activeB,
+        cutF,
+        cutB,
         glowF,
         glowB,
         shape,
         incoming: [],
         outgoing: [],
       });
+    }
+
+    // Cones sit at the very back: a translucent convex hull of the nodes
+    // active in each direction — the "cone of change" widening (forward) or
+    // narrowing (backward) through the written node.
+    if (opts.cones !== false) {
+      const coneLayer = group();
+      this.add(coneLayer);
+      coneLayer.add(this.#cone(n => n.activeB.value, bwd, r));
+      coneLayer.add(this.#cone(n => n.activeF.value, fwd, r));
     }
 
     // Edges sit under the nodes; arrowheads stay ink (monochrome) and point
@@ -199,6 +280,20 @@ export class GraphShape extends Shape {
     }
   }
 
+  /** Mark `id` an early cutoff in `dir`: visited and re-evaluated, but its
+   *  value didn't change, so propagation stops here. Rings, doesn't fill. */
+  cutoff(id: number, dir: Dir): void {
+    const n = this.nodes[id];
+    if (!n) return;
+    if (dir === "fwd") {
+      n.cutF.value = true;
+      n.glowF.value = 1;
+    } else {
+      n.cutB.value = true;
+      n.glowB.value = 1;
+    }
+  }
+
   /** Flash an edge in `dir` — a change just crossed `u→v` that way. */
   pulseEdge(u: number, v: number, dir: Dir): void {
     const e = this.#edgeIndex.get(`${u}->${v}`);
@@ -212,7 +307,25 @@ export class GraphShape extends Shape {
     for (const n of this.nodes) {
       n.activeF.value = false;
       n.activeB.value = false;
+      n.cutF.value = false;
+      n.cutB.value = false;
     }
+  }
+
+  /** A cone shape: the padded convex hull of the nodes matching `pick`,
+   *  recomputed reactively as they activate. Empty until ≥3 are lit. */
+  #cone(pick: (n: NodeView) => boolean, color: string, r: number): Shape {
+    const d = derive(() => {
+      const pts: Array<{ x: number; y: number }> = [];
+      for (const n of this.nodes) if (pick(n)) pts.push(n.pos.value);
+      return hullPath(pts, r * 2.1 + 5);
+    });
+    return pathD(d, {
+      fill: rgba(color, 0.07),
+      stroke: rgba(color, 0.4),
+      thin: true,
+      dasharray: "2 5",
+    });
   }
 
   /** Forward-edge targets of `id`. */

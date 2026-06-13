@@ -9,9 +9,17 @@
 //     the whole affected cone — recomputing dependents.
 //
 // Both passes reuse the same edges (the arrowhead points forward; the
-// backward pass just recolours the line). A node fires once per pass, at its
-// layer — the visual tell of glitch-free reconvergence. Click any node to
-// write there; otherwise it idles, pulsing from a random node.
+// backward pass just recolours the line), and each shades a translucent
+// "cone of change" — the convex hull of the nodes that actually changed.
+//
+// Early cutoff is the star: equality halts propagation in BOTH directions.
+//   • Backward, a lens whose `put` reproduces the value the source already
+//     holds absorbs the edit — the walk stops before the source (a ring, not
+//     a disc), so that branch never commits and never fires forward.
+//   • Forward, a dependent that recomputes to its previous value short-
+//     circuits — its own dependents are never visited.
+// Cut nodes are drawn as coloured rings at the cone's frontier; nothing
+// beyond them lights. Click any node to write there; else it idles.
 
 import { type Animator, cell, cut, Diagram, label, type Mount, untilChange, vec } from "@bireactive";
 import { graph, type GraphShape, layeredDag } from "./graph";
@@ -21,7 +29,9 @@ const H = 460;
 const SEED = 7;
 const STEP = 0.3; // seconds per propagation layer
 const GAP = 0.45; // pause between the backward and forward passes
-const HOLD = 1.6; // seconds the settled wave lingers before the next
+const HOLD = 1.9; // seconds the settled wave lingers before the next
+const CUT_BWD = 0.16; // chance a lens absorbs the back-edit (stops early)
+const CUT_FWD = 0.22; // chance a dependent recomputes unchanged (stops early)
 
 export class MdPropagation extends Diagram {
   protected scene(s: Mount): void {
@@ -64,7 +74,7 @@ export class MdPropagation extends Diagram {
     s(
       label(
         vec(W / 2, H - 12),
-        "a dependency graph · click a node to write it · backward pass (blue) resolves its sources, forward pass (ember) recomputes the cone",
+        "click a node to write it · blue cone resolves its sources, ember cone recomputes dependents · rings are early cutoffs — equal value, propagation stops",
         { size: 10.5, fill: "var(--text-secondary, #8a8a8a)" },
       ),
     );
@@ -107,26 +117,13 @@ export class MdPropagation extends Diagram {
     return cut("click");
   }
 
-  // The two-pass wave. Edges join adjacent layers, so layer index *is*
-  // longest-path depth: the backward pass walks `src`'s ancestor set up its
-  // layers (deepest first), the forward pass floods the sources' descendant
-  // cone down its layers. Each node fires once per pass.
+  // The two-pass wave with early cutoff. Edges join adjacent layers, so layer
+  // index *is* longest-path depth — fire backward by descending layer, forward
+  // by ascending. Each pass partitions touched nodes into CHANGED (the edit
+  // flows on) and CUT (visited, but equal → stop). Re-randomised per pulse:
+  // which branches cut depends on the specific delta.
   *#pulse(g: GraphShape, order: number[], layerOf: number[], src: number): Animator<void> {
     g.clear();
-
-    // Ancestors: reverse-reachable from src (descending layers collects them
-    // in one pass since a parent's layer is always below its child's).
-    const anc = new Set<number>([src]);
-    for (let i = order.length - 1; i >= 0; i--) {
-      const u = order[i]!;
-      if (anc.has(u)) for (const p of g.incoming(u)) anc.add(p);
-    }
-    // The sources reached: ancestors with no incoming (top row only).
-    const roots = [...anc].filter(id => g.incoming(id).length === 0);
-    // Forward cone: everything reachable from those sources.
-    const cone = new Set<number>(roots);
-    for (const u of order) if (cone.has(u)) for (const c of g.outgoing(u)) cone.add(c);
-
     const maxLayer = Math.max(0, ...layerOf);
     const bucket = (ids: Iterable<number>): number[][] => {
       const lv: number[][] = Array.from({ length: maxLayer + 1 }, () => []);
@@ -134,28 +131,77 @@ export class MdPropagation extends Diagram {
       return lv;
     };
 
-    // Backward: src's layer up to the roots.
-    const up = bucket(anc);
+    // ── Backward: walk up from src. A non-source ancestor may absorb the
+    // edit (CUT) — then the walk doesn't continue past it. Sources commit.
+    const computeBack = (cuts: boolean): { changed: Set<number>; cutSet: Set<number> } => {
+      const changed = new Set<number>([src]);
+      const cutSet = new Set<number>();
+      for (let i = order.length - 1; i >= 0; i--) {
+        const u = order[i]!;
+        if (!changed.has(u)) continue;
+        for (const p of g.incoming(u)) {
+          if (changed.has(p) || cutSet.has(p)) continue;
+          if (cuts && g.incoming(p).length > 0 && Math.random() < CUT_BWD) cutSet.add(p);
+          else changed.add(p);
+        }
+      }
+      return { changed, cutSet };
+    };
+    let { changed: bChanged, cutSet: bCut } = computeBack(true);
+    let roots = [...bChanged].filter(id => g.incoming(id).length === 0);
+    // Every branch absorbed before a source ⇒ the write resolves to nothing.
+    // Fall back to a no-cutoff walk so at least one source commits.
+    if (roots.length === 0) {
+      ({ changed: bChanged, cutSet: bCut } = computeBack(false));
+      roots = [...bChanged].filter(id => g.incoming(id).length === 0);
+    }
+
+    const up = bucket(new Set([...bChanged, ...bCut]));
     for (let L = up.length - 1; L >= 0; L--) {
       const lvl = up[L]!;
       if (!lvl.length) continue;
       for (const v of lvl) {
-        g.fire(v, "bwd");
-        for (const p of g.incoming(v)) if (anc.has(p)) g.pulseEdge(p, v, "bwd");
+        if (bChanged.has(v)) {
+          g.fire(v, "bwd");
+          for (const p of g.incoming(v)) {
+            if (bChanged.has(p) || bCut.has(p)) g.pulseEdge(p, v, "bwd");
+          }
+        } else {
+          g.cutoff(v, "bwd");
+        }
       }
       yield STEP;
     }
 
     yield GAP;
 
-    // Forward: roots down through the whole affected cone.
-    const down = bucket(cone);
+    // ── Forward: from the committed sources down. A dependent is visited iff
+    // some parent changed; if it recomputes unchanged (CUT) it stops the wave.
+    const fChanged = new Set<number>(roots);
+    const fCut = new Set<number>();
+    for (const u of order) {
+      if (fChanged.has(u)) continue;
+      let hit = false;
+      for (const p of g.incoming(u)) {
+        if (fChanged.has(p)) {
+          hit = true;
+          break;
+        }
+      }
+      if (!hit) continue;
+      if (Math.random() < CUT_FWD) fCut.add(u);
+      else fChanged.add(u);
+    }
+
+    const down = bucket(new Set([...fChanged, ...fCut]));
     for (let L = 0; L < down.length; L++) {
       const lvl = down[L]!;
       if (!lvl.length) continue;
       for (const v of lvl) {
-        g.fire(v, "fwd");
-        if (L > 0) for (const u of g.incoming(v)) if (cone.has(u)) g.pulseEdge(u, v, "fwd");
+        const changed = fChanged.has(v);
+        if (changed) g.fire(v, "fwd");
+        else g.cutoff(v, "fwd");
+        for (const u of g.incoming(v)) if (fChanged.has(u)) g.pulseEdge(u, v, "fwd");
       }
       yield STEP;
     }
