@@ -399,14 +399,14 @@ function disposeAllDepsInReverse(sub: ReactiveNode): void {
 export type MergeFold<T> = (values: readonly T[]) => T;
 
 class MergeNode<T> {
-  readonly parent: Cell<T>;
   readonly foldFn: MergeFold<T> | undefined;
   /** Contributions gathered as this merge's cone resolves; folded and cleared
-   *  in `foldMerge` (the merge-owned buffer, mutated in place). */
+   *  in `foldMerge` (the merge-owned buffer, mutated in place). The parent it
+   *  writes to is just `b.parent` (a merge's `b.parent` IS its fold target), so
+   *  this node carries only the policy + buffer — no duplicate edge. */
   contributions: T[] = [];
 
-  constructor(parent: Cell<T>, fold: MergeFold<T> | undefined) {
-    this.parent = parent;
+  constructor(fold: MergeFold<T> | undefined) {
     this.foldFn = fold;
   }
 }
@@ -448,27 +448,26 @@ class BwdSpec {
 class StatefulCore {
   /** Engine-owned memory the view discards. */
   complement: unknown;
-  /** Forward projection `fwd(sources, complement) → view`. */
-  // biome-ignore lint/suspicious/noExplicitAny: opaque fwd shape
-  fwd: (sources: any, complement: any) => any;
-  /** Advance the complement: `step(sources, complement, external)`. */
+  /** Advance the complement: `step(sources, complement, external)`. (The
+   *  forward projection `fwd` is captured directly in the getter closure — it
+   *  is only ever read there — so it costs no slot here.) */
   // biome-ignore lint/suspicious/noExplicitAny: opaque step shape
   step: (sources: any, complement: any, external: boolean) => any;
-  /** Source values last written back (own-vs-external test); `undefined`
-   *  until the first back-write. */
-  lastBwd: unknown[] | undefined = undefined;
-  /** Reused scratch for reading sources during a back-write (the pure `step`/
-   *  `bwd` consume it synchronously and never retain it); lazily sized. */
-  vals: unknown[] | undefined = undefined;
+  /** Sources this lens last committed back (the own-vs-external test compares
+   *  live sources against these); `undefined` until the first back-write.
+   *  Double-buffered with `scratch`: a back-write reads sources into `scratch`,
+   *  builds the committed candidate in place, then swaps it in as `last` while
+   *  the prior `last` buffer rotates back to `scratch` — so steady-state
+   *  back-writes touch the complement path with zero allocation. */
+  last: unknown[] | undefined = undefined;
+  /** Free buffer rotated with `last` (see above). */
+  scratch: unknown[] | undefined = undefined;
   constructor(
     complement: unknown,
-    // biome-ignore lint/suspicious/noExplicitAny: opaque fwd shape
-    fwd: (sources: any, complement: any) => any,
     // biome-ignore lint/suspicious/noExplicitAny: opaque step shape
     step: (sources: any, complement: any, external: boolean) => any,
   ) {
     this.complement = complement;
-    this.fwd = fwd;
     this.step = step;
   }
 }
@@ -719,7 +718,7 @@ export class Cell<T = unknown> implements ReactiveNode {
     cell.getter = (): T => parent.value;
     const b = (cell._bwd = new BwdSpec());
     b.parent = parent as Cell<unknown>;
-    b.merge = new MergeNode<T>(parent, fold) as MergeNode<unknown>;
+    b.merge = new MergeNode<T>(fold) as MergeNode<unknown>;
     return cell as Cell<T>;
   }
 
@@ -984,11 +983,8 @@ function buildStateful<C extends Cell<any>>(
   const b = (cell._bwd = new BwdSpec());
   const seed = new Array<unknown>(n);
   for (let i = 0; i < n; i++) seed[i] = parents[i]!.peek();
-  const sc = (b.stateful = new StatefulCore(
-    spec.init(seed),
-    spec.fwd as (s: unknown, c: unknown) => unknown,
-    spec.step,
-  ));
+  const sc = (b.stateful = new StatefulCore(spec.init(seed), spec.step));
+  const fwd = spec.fwd as (s: unknown, c: unknown) => unknown;
   b.put = spec.bwd as (t: unknown, c?: unknown) => unknown;
   b.parent = parents;
   cell.getter = (() => {
@@ -996,7 +992,7 @@ function buildStateful<C extends Cell<any>>(
     // External unless the live sources still equal this lens's own last
     // back-write.
     let external = true;
-    const lb = sc.lastBwd;
+    const lb = sc.last;
     if (lb !== undefined) {
       external = false;
       for (let i = 0; i < n; i++) {
@@ -1007,7 +1003,7 @@ function buildStateful<C extends Cell<any>>(
       }
     }
     sc.complement = sc.step(vals, sc.complement, external);
-    return sc.fwd(vals, sc.complement);
+    return fwd(vals, sc.complement);
   }) as () => never;
   return cell;
 }
@@ -1027,20 +1023,17 @@ function buildStateful1<C extends Cell<any>>(
   const cell = new Cls();
   cell.flags = F.Mutable | F.Dirty;
   const b = (cell._bwd = new BwdSpec());
-  const sc = (b.stateful = new StatefulCore(
-    spec.init([parent.peek()]),
-    spec.fwd as (s: unknown, c: unknown) => unknown,
-    spec.step,
-  ));
+  const sc = (b.stateful = new StatefulCore(spec.init([parent.peek()]), spec.step));
+  const fwd = spec.fwd as (s: unknown, c: unknown) => unknown;
   b.put = spec.bwd as (t: unknown, c?: unknown) => unknown;
   b.parent = [parent];
   const vals: unknown[] = [undefined];
   cell.getter = (() => {
     const v = (vals[0] = parent.value);
-    const lb = sc.lastBwd;
+    const lb = sc.last;
     const external = lb === undefined || lb[0] !== v;
     sc.complement = sc.step(vals, sc.complement, external);
-    return sc.fwd(vals, sc.complement);
+    return fwd(vals, sc.complement);
   }) as () => never;
   return cell;
 }
@@ -1178,27 +1171,24 @@ function markDown(start: Cell<unknown>): void {
       // intermediate (≠ start) has its subtree marked — stop (diamond dedup).
       if (node !== start) node.flags |= F.BackPending;
       linkBack(node); // register the reverse edge lazily, on first back-write
-      const b = node._bwd!;
-      if (b.merge !== undefined) {
-        next = b.merge.parent as Cell<unknown>;
-      } else {
-        const parent = b.parent;
-        if (parent !== undefined) {
-          if (Array.isArray(parent)) {
-            const multi = parent.length > 1;
-            for (let i = 0; i < parent.length; i++) {
-              const p = parent[i]!;
-              if (isReadOnlyDerived(p)) {
-                // A split routes around it; a sole parent can't.
-                if (!multi) throw new TypeError("Cannot write through to a computed");
-              } else if (next === undefined) next = p;
-              else (stack ??= []).push(p);
-            }
-          } else if (isReadOnlyDerived(parent)) {
-            throw new TypeError("Cannot write through to a computed");
-          } else {
-            next = parent;
+      // `b.parent` is the back-target for EVERY mode (a merge's fold target is
+      // just its single, always-writable parent), so one descent covers all.
+      const parent = node._bwd!.parent;
+      if (parent !== undefined) {
+        if (Array.isArray(parent)) {
+          const multi = parent.length > 1;
+          for (let i = 0; i < parent.length; i++) {
+            const p = parent[i]!;
+            if (isReadOnlyDerived(p)) {
+              // A split routes around it; a sole parent can't.
+              if (!multi) throw new TypeError("Cannot write through to a computed");
+            } else if (next === undefined) next = p;
+            else (stack ??= []).push(p);
           }
+        } else if (isReadOnlyDerived(parent)) {
+          throw new TypeError("Cannot write through to a computed");
+        } else {
+          next = parent;
         }
       }
     }
@@ -1246,7 +1236,7 @@ function resolveCone(node: Cell<unknown>): void {
     }
   }
   node.flags &= ~F.BackPending; // resolved (idempotent with `writeBack`'s clear)
-  if (merge !== undefined) foldMerge(merge); // every contributor is in → fold once
+  if (merge !== undefined) foldMerge(b!.parent as Cell<unknown>, merge); // contributors in → fold once
 }
 
 /** PULL entry for a back-marked `start`. A read must reflect every pending
@@ -1274,8 +1264,7 @@ function backResolve(start: Cell<unknown>): void {
       for (;;) {
         let next: Cell<unknown> | undefined;
         const b = node._bwd;
-        const parent =
-          b !== undefined ? (b.merge !== undefined ? b.merge.parent : b.parent) : undefined;
+        const parent = b !== undefined ? b.parent : undefined; // merge's parent IS b.parent
         if (parent !== undefined) {
           if (Array.isArray(parent)) {
             for (let i = 0; i < parent.length; i++) {
@@ -1365,31 +1354,33 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
     let out: ReadonlyArray<unknown>;
     const sc = b.stateful;
     if (sc !== undefined) {
-      const vals = (sc.vals ??= new Array<unknown>(n));
-      for (let i = 0; i < n; i++) vals[i] = parent[i]!.value;
+      const scratch = (sc.scratch ??= new Array<unknown>(n));
+      for (let i = 0; i < n; i++) scratch[i] = parent[i]!.value;
       // Bring the complement to the current sources before `bwd` (the dual of
       // the forward getter's step) so it measures devs/fracs from a prior
       // sibling write, not a stale snapshot. External unless the sources still
       // equal this lens's own last back-write.
-      let external = true;
-      const lb = sc.lastBwd;
-      if (lb !== undefined) {
-        external = false;
+      const last = sc.last;
+      let external = last === undefined;
+      if (last !== undefined) {
         for (let i = 0; i < n; i++)
-          if (vals[i] !== lb[i]) {
+          if (scratch[i] !== last[i]) {
             external = true;
             break;
           }
       }
-      sc.complement = sc.step(vals, sc.complement, external);
+      sc.complement = sc.step(scratch, sc.complement, external);
       const res = (
         b.put as (t: unknown, s: unknown, c: unknown) => StatefulBwd<unknown[], unknown>
-      )(target, vals, sc.complement);
+      )(target, scratch, sc.complement);
       const upd = res.updates as ReadonlyArray<unknown>;
-      const cand = new Array<unknown>(n);
-      for (let i = 0; i < n; i++) cand[i] = upd[i] === undefined ? vals[i] : upd[i];
-      sc.complement = sc.step(cand, res.complement, false);
-      sc.lastBwd = cand;
+      // Build the committed candidate IN `scratch` (its source reads are spent),
+      // then rotate: the candidate becomes `last`, the prior `last` buffer (or
+      // `undefined` on the first write) returns to `scratch` for the next read.
+      for (let i = 0; i < n; i++) if (upd[i] !== undefined) scratch[i] = upd[i];
+      sc.complement = sc.step(scratch, res.complement, false);
+      sc.last = scratch;
+      sc.scratch = last;
       out = upd;
     } else {
       out = (b.put as (t: unknown) => ReadonlyArray<unknown>)(target);
@@ -1423,7 +1414,7 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
  *  from `resolveCone` once every contributor has cascaded in — fan-in is the one
  *  non-dual ingredient. Runs untracked (`backResolve` already cleared
  *  `activeSub`). */
-function foldMerge(mn: MergeNode<unknown>): void {
+function foldMerge(parent: Cell<unknown>, mn: MergeNode<unknown>): void {
   const vals = mn.contributions;
   const fold = mn.foldFn;
   let folded: unknown;
@@ -1431,7 +1422,7 @@ function foldMerge(mn: MergeNode<unknown>): void {
   else if (vals.length > 0) folded = vals[vals.length - 1];
   else return; // last-writer-wins with no contributor: leave the parent
   vals.length = 0; // reuse the merge-owned buffer in place (fold must not retain it)
-  writeBack(mn.parent as Cell<unknown>, folded);
+  writeBack(parent, folded);
 }
 
 /** Writable source; passes an existing `Writable` through (idempotent). */
