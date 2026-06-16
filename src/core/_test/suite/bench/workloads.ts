@@ -73,6 +73,72 @@ export function bwdFan(rx: Reactive, width: number): Tick {
   };
 }
 
+/** Affine 1→1 chain of `depth`; write the top view but NEVER read the
+ *  graph. Isolates pure write-through cost: an unobserved write need not
+ *  run the put-chain at all under demand-gating, whereas eager pays the
+ *  full walk + commit every tick. */
+export function bwdChainBlind(rx: Reactive, depth: number): Tick {
+  const source = rx.signal(0);
+  let cur: View<number> = source;
+  for (let i = 0; i < depth; i++) {
+    cur = rx.lens(
+      cur,
+      x => x + 1,
+      v => v - 1,
+    );
+  }
+  const top = cur;
+  return i => {
+    top.write(i);
+    return i;
+  };
+}
+
+/** Affine 1→1 chain of `depth`; write the top view `writes` times, then
+ *  read the source once. Isolates write-coalescing: demand-gating resolves
+ *  once (last-write-wins), eager pays every intermediate write. */
+export function bwdCoalesce(rx: Reactive, depth: number, writes: number): Tick {
+  const source = rx.signal(0);
+  let cur: View<number> = source;
+  for (let i = 0; i < depth; i++) {
+    cur = rx.lens(
+      cur,
+      x => x + 1,
+      v => v - 1,
+    );
+  }
+  const top = cur;
+  return i => {
+    for (let w = 0; w < writes; w++) top.write(i + w);
+    return source.read();
+  };
+}
+
+/** `n` independent source→chain→top views; write every top each tick but
+ *  read only chain 0's source. Isolates partial observation: demand-gating
+ *  resolves the one observed chain, eager resolves all `n`. */
+export function bwdChainsPartial(rx: Reactive, n: number, depth: number): Tick {
+  const sources: Source<number>[] = [];
+  const tops: View<number>[] = [];
+  for (let c = 0; c < n; c++) {
+    const source = rx.signal(0);
+    let cur: View<number> = source;
+    for (let i = 0; i < depth; i++) {
+      cur = rx.lens(
+        cur,
+        x => x + 1,
+        v => v - 1,
+      );
+    }
+    sources.push(source);
+    tops.push(cur);
+  }
+  return i => {
+    for (const top of tops) top.write(i);
+    return sources[0]!.read();
+  };
+}
+
 /** A fan-in view with a live downstream effect, written every tick —
  *  the "drag the midpoint while something observes it" workload. Returns
  *  the observed total so the effect can't be optimized away. */

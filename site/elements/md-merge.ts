@@ -1,5 +1,6 @@
-// `cell.merge(policy)`: N backward contributors folded into one source by a
-// monoid policy, order-independent. Four policies, one mechanism.
+// `cell.merge(fold)`: N backward contributors folded into one source, the
+// fold handed every live push at once, order-independent. Four folds, one
+// mechanism.
 
 import {
   Anchor,
@@ -52,22 +53,19 @@ const busCombine = (a: Bus, b: Bus): Bus => {
   return a === b ? a : "X";
 };
 
-interface Policy<T> {
-  identity: T;
-  combine: (acc: T, x: T) => T;
-  remove?: (acc: T, x: T) => T;
-}
-
-/** Fold N reactive `proposals` into one source via `cell.merge(policy)`,
- *  re-asserting every contributor each settle so the fold sees the full
- *  set. Returns the folded source (read its `.value`). */
+/** Fold N reactive `proposals` into one source via `cell.merge(fold)`.
+ *  The effect is just the proposal→port bridge: each contributor is a live
+ *  port whose last contribution persists, so the demand-gated fold sees the
+ *  full set on its own (one fold per settle, lazy). Returns the folded
+ *  source (read its `.value`). */
 function mergeOf<T>(
-  policy: Policy<T>,
+  init: T,
+  fold: (values: readonly T[]) => T,
   proposals: readonly Cell<T>[],
   equals?: (a: T, b: T) => boolean,
 ): Cell<T> {
-  const target = cell<T>(policy.identity, equals ? { equals } : undefined);
-  const m = target.merge(policy) as Writable<Cell<T>>;
+  const target = cell<T>(init, equals ? { equals } : undefined);
+  const m = target.merge(fold) as Writable<Cell<T>>;
   const ports = proposals.map(() =>
     m.lens(
       v => v,
@@ -121,10 +119,12 @@ export class MdMerge extends Diagram {
       derive((): Iv => ({ lo: cx.value - HALF, hi: cx.value + HALF })),
     );
     const meet = mergeOf<Iv>(
-      {
-        identity: { lo: -1e9, hi: 1e9 },
-        combine: (a, b) => ({ lo: Math.max(a.lo, b.lo), hi: Math.min(a.hi, b.hi) }),
-      },
+      { lo: -1e9, hi: 1e9 },
+      vals =>
+        vals.reduce((a, b) => ({ lo: Math.max(a.lo, b.lo), hi: Math.min(a.hi, b.hi) }), {
+          lo: -1e9,
+          hi: 1e9,
+        }),
       proposals,
       (a, b) => a.lo === b.lo && a.hi === b.hi,
     );
@@ -193,7 +193,8 @@ export class MdMerge extends Diagram {
       return derive((): Reg => ({ ts: ts.value, v: t.value, who: i }));
     });
     const reg = mergeOf<Reg>(
-      { identity: { ts: -1, v: 0.5, who: -1 }, combine: (a, b) => (b.ts > a.ts ? b : a) },
+      { ts: -1, v: 0.5, who: -1 },
+      vals => vals.reduce((a, b) => (b.ts > a.ts ? b : a)),
       proposals,
       (a, b) => a.ts === b.ts && a.v === b.v && a.who === b.who,
     );
@@ -252,7 +253,7 @@ export class MdMerge extends Diagram {
         return x < 1 / 3 ? "Z" : x < 2 / 3 ? "0" : "1";
       });
     });
-    const bus = mergeOf<Bus>({ identity: "Z", combine: busCombine }, proposals);
+    const bus = mergeOf<Bus>("Z", vals => vals.reduce(busCombine, "Z"), proposals);
     const col = derive(() => BUS_COLOR[bus.value]);
 
     s(
@@ -292,10 +293,7 @@ export class MdMerge extends Diagram {
       this.knob(slider, railY, color);
       return derive(() => (t.value - 0.5) * 6);
     });
-    const sum = mergeOf<number>(
-      { identity: 0, combine: (a, b) => a + b, remove: (a, b) => a - b },
-      proposals,
-    );
+    const sum = mergeOf<number>(0, vals => vals.reduce((a, b) => a + b, 0), proposals);
     const p = derive(() => 1 / (1 + Math.exp(-sum.value)));
 
     const barY = railY + 22;

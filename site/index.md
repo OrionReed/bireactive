@@ -572,10 +572,10 @@ const tokyo = time.affine(1, 9 * 3600);   // a second timezone
 
 <md-clock></md-clock>
 
-`merge` — many writers fold into one source through a monoid policy. An idempotent meet, a last-writer join, tri-state bus resolution, a sum:
+`merge` — many writers fold into one source. The fold is handed every live push at once (omit it for last-writer-wins): an idempotent meet, a last-writer join, tri-state bus resolution, a sum:
 
 ```ts
-const bus = source.merge({ identity: "Z", combine });
+const bus = source.merge(vals => vals.reduce(combine, "Z"));
 ```
 
 <md-merge></md-merge>

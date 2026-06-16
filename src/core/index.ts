@@ -54,18 +54,18 @@ export { Bool, bool } from "./values/bool";
 export * as BoxMath from "./values/box";
 export { Box, box } from "./values/box";
 export { Canvas, canvas, type Raster, stamp as canvasStamp } from "./values/canvas";
+export * as ColorMath from "./values/color";
+export { Color, rgb, rgba } from "./values/color";
 export {
   type ColorStop,
   Colour,
   Field,
-  field,
   type FieldVal,
+  field,
   type Kind as FieldKind,
   Scalar,
   Vector,
 } from "./values/field";
-export * as ColorMath from "./values/color";
-export { Color, rgb, rgba } from "./values/color";
 export { Flags, flags } from "./values/flags";
 export {
   blit as gpuBlit,

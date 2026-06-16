@@ -46,7 +46,12 @@ describe("argminVec — IK arms", () => {
       }),
       [1, 1],
     );
-    for (let i = 0; i < 80; i++) tip.value = { x: 0, y: 150 };
+    // Each Newton step must be OBSERVED: a back-write is demand-gated, so
+    // reading the tip between writes is what resolves (steps) the joints.
+    for (let i = 0; i < 80; i++) {
+      tip.value = { x: 0, y: 150 };
+      void tip.value;
+    }
     expect(tip.value.x).toBeCloseTo(0, 0);
     expect(tip.value.y).toBeCloseTo(150, 0);
   });
@@ -64,7 +69,10 @@ describe("argminVec — IK arms", () => {
       }),
       [1, 1, 1],
     );
-    for (let i = 0; i < 100; i++) tip.value = { x: 120, y: 80 };
+    for (let i = 0; i < 100; i++) {
+      tip.value = { x: 120, y: 80 };
+      void tip.value;
+    }
     expect(tip.value.x).toBeCloseTo(120, 0);
     expect(tip.value.y).toBeCloseTo(80, 0);
   });
@@ -80,7 +88,10 @@ describe("argminVec — IK arms", () => {
       }),
       [1, 1],
     );
-    for (let i = 0; i < 200; i++) tip.value = { x: 500, y: 0 };
+    for (let i = 0; i < 200; i++) {
+      tip.value = { x: 500, y: 0 };
+      void tip.value;
+    }
     expect(Number.isFinite(tip.value.x)).toBe(true);
     expect(Number.isFinite(tip.value.y)).toBe(true);
     expect(Math.hypot(tip.value.x, tip.value.y)).toBeLessThanOrEqual(200 + 1e-6);

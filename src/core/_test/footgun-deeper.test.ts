@@ -27,8 +27,9 @@ describe("footgun: field on top of a structural lens", () => {
 
     expect(x.value).toBe(1);
     (x as unknown as { value: number }).value = 99;
-    expect(bwdCalls).toBe(1); // lens bwd participated
+    // The put is demand-driven: it runs once, when the source is pulled.
     expect(root.value).toEqual({ a: { x: 99, y: 2 } });
+    expect(bwdCalls).toBe(1); // lens bwd participated, exactly once
   });
 
   it("two fields on a structural lens: deeper path composes through one bwd", () => {
@@ -48,8 +49,9 @@ describe("footgun: field on top of a structural lens", () => {
 
     const y = Cell.fieldOf(mLens, "y", Num);
     (y as unknown as { value: number }).value = 99;
-    expect(bwdCalls).toBe(1);
+    // The put is demand-driven: it runs once, when the source is pulled.
     expect(root.value).toEqual({ vals: { x: 1, y: 99 } });
+    expect(bwdCalls).toBe(1);
   });
 });
 
