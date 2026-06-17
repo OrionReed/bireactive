@@ -113,6 +113,25 @@ function isReadOnlyDerived(c: Cell<unknown>): boolean {
   return !isSource(c) && !isWritable(c);
 }
 
+/** The forward primal a source-reading `bwd` linearizes at, read WITHOUT a
+ *  cascading recompute — the lazy dual of reverse-mode AD reusing a STORED
+ *  linearization point instead of rematerializing it.
+ *
+ *  - SOURCE → its staged/live truth (`.value`): cheap (no cone), and lets a
+ *    sibling co-writer's staged value compose within the transaction.
+ *  - REALIZED derived (not `Dirty`) → its last-settled `currentValue`: no
+ *    recompute. PutGet holds for ANY source state, so a stale primal still
+ *    round-trips; the last *observed* state is also the one GetPut and lazy
+ *    coalescing (PutPut "all at once") want.
+ *  - UNREALIZED derived (`Dirty`: never computed / threw / unwatched, so
+ *    `currentValue` is not a trustworthy primal) → realize ONCE via `.value`,
+ *    seeding `currentValue` for subsequent back-writes. This happens lazily, on
+ *    the write that needs it; the normal forward path pays nothing. */
+function backPrimal(c: Cell<unknown>): unknown {
+  if (c.getter === undefined || c.flags & F.Dirty) return c.value;
+  return c.currentValue;
+}
+
 /** Register `node` on each backward parent's `_lensSubs` (the reverse edge
  *  `resolveCone` ascends), ONCE, lazily on the first back-write — so a lens only
  *  ever read forward never allocates that adjacency. Idempotent via `BackLinked`;
@@ -628,7 +647,11 @@ export class Cell<T = unknown> implements ReactiveNode {
   _update(): boolean {
     if (this.getter !== undefined) {
       this.depsTail = undefined;
-      this.flags = F.Mutable | F.RecursedCheck;
+      // Preserve `BackLinked`: the reverse-edge registration (`_lensSubs`) is a
+      // PERMANENT structural fact, independent of forward dirty state. Wiping it
+      // on every recompute makes `linkBack` re-push a duplicate on the next
+      // back-write — an unbounded `_lensSubs` leak.
+      this.flags = F.Mutable | F.RecursedCheck | (this.flags & F.BackLinked);
       const prev = activeSub;
       activeSub = this;
       let threw = true;
@@ -640,7 +663,9 @@ export class Cell<T = unknown> implements ReactiveNode {
         return !this._equals(old, next);
       } finally {
         activeSub = prev;
-        this.flags = threw ? F.Mutable | F.Dirty : this.flags & ~F.RecursedCheck;
+        this.flags = threw
+          ? F.Mutable | F.Dirty | (this.flags & F.BackLinked)
+          : this.flags & ~F.RecursedCheck;
         purgeDeps(this);
       }
     }
@@ -659,7 +684,7 @@ export class Cell<T = unknown> implements ReactiveNode {
 
   _unwatched(): void {
     if (this.getter !== undefined && this.depsTail !== undefined) {
-      this.flags = F.Mutable | F.Dirty;
+      this.flags = F.Mutable | F.Dirty | (this.flags & F.BackLinked); // keep the permanent reverse-edge bit
       disposeAllDepsInReverse(this);
       return;
     }
@@ -896,9 +921,11 @@ function buildLens1<C extends Cell<any>>(
   cell.flags = F.Mutable | F.Dirty;
   cell.getter = (() => fwd(parent.value)) as () => never;
   const b = (cell._bwd = new BwdSpec());
-  // Source-reading lenses read the current source at walk time (untracked,
-  // pre-write) so the engine always calls the 1-arg form (no arity branch).
-  b.put = readsSource ? (t: unknown): unknown => bwd(t, parent.value) : bwd;
+  // Source-reading lenses linearize at the parent's primal (`backPrimal`: the
+  // last-settled value for a derived, the staged truth for a source) so the
+  // engine always calls the 1-arg form (no arity branch) and never recomputes a
+  // derived parent's cone just to read it back.
+  b.put = readsSource ? (t: unknown): unknown => bwd(t, backPrimal(parent)) : bwd;
   b.parent = parent;
   return cell;
 }
@@ -923,13 +950,13 @@ function buildLensN<C extends Cell<any>>(
   const b = (cell._bwd = new BwdSpec());
   b.parent = parents;
   if (readsSource) {
-    // Own reused buffer, NOT the getter's `vals`: the walk reads each parent
-    // untracked and pre-write, so a separate array avoids aliasing the getter's.
+    // Own reused buffer, NOT the getter's `vals`: the walk reads each parent's
+    // primal (`backPrimal`), so a separate array avoids aliasing the getter's.
     // `bwd` consumes it synchronously and must not retain it (same as `fwd`);
     // re-entry through the same lens is impossible (the lens graph is a DAG).
     const args = new Array<unknown>(n);
     b.put = (target: unknown): unknown => {
-      for (let i = 0; i < n; i++) args[i] = parents[i]!.value;
+      for (let i = 0; i < n; i++) args[i] = backPrimal(parents[i]!);
       return bwd(target, args);
     };
   } else {
