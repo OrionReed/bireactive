@@ -7,13 +7,23 @@ import { describe, expect, it } from "vitest";
 import { type Cell, cell, type Writable } from "../../core/cell";
 import {
   addField,
+  each,
+  headField,
+  inField,
+  into,
+  mapElems,
   mapField,
   nestFields,
   type Obj,
   pipe,
+  recurse,
   removeField,
   renameField,
+  renameV,
+  seq,
   splitField,
+  toStep,
+  wrapField,
 } from "../lens";
 
 const src = (v: Obj) => cell<Obj>(v);
@@ -140,6 +150,105 @@ describe("mapField — lossy enum collapse (the trap case)", () => {
   });
 });
 
+describe("wrapField — scalar ⇄ array (Cambria Appendix III)", () => {
+  it("an old scalar client conserves the tail it can't see", () => {
+    const a = src({ assignee: "Alice" });
+    const arr = wrapField("assignee", "assignees")(a);
+    expect(arr.value).toEqual({ assignees: ["Alice"] });
+
+    // The new (array) client assigns three people.
+    arr.value = { assignees: ["Alice", "Bob", "Charlie"] };
+    expect(a.value).toEqual({ assignee: "Alice" }); // old client still sees the head
+
+    // The old client renames the single assignee it can see.
+    a.value = { assignee: "Eve" };
+    // Cambria's defective head/wrap would clobber or drop Bob & Charlie; here
+    // the tail is conserved in the complement.
+    expect(arr.value).toEqual({ assignees: ["Eve", "Bob", "Charlie"] });
+  });
+});
+
+describe("inField — a sub-migration inside a nested object (Cambria `in`)", () => {
+  it("renames a field nested under `user`, leaving siblings untouched", () => {
+    const a = src({ user: { id: 7, login: "octocat", avatar: "x.gif" } });
+    const lens = inField("user", seq(renameV("login", "handle")))(a);
+    expect(lens.value).toEqual({ user: { id: 7, handle: "octocat", avatar: "x.gif" } });
+
+    lens.value = { user: { id: 7, handle: "monalisa", avatar: "x.gif" } };
+    expect(a.value).toEqual({ user: { id: 7, login: "monalisa", avatar: "x.gif" } });
+  });
+});
+
+describe("mapElems — keyed array element migration", () => {
+  it("migrates every element and round-trips inserts/edits", () => {
+    const a = src({
+      items: [
+        { id: 1, name: "first" },
+        { id: 2, name: "second" },
+      ],
+    });
+    const view = mapElems("items", e => e.id, renameV("name", "title"))(a);
+    expect(view.value).toEqual({
+      items: [
+        { id: 1, title: "first" },
+        { id: 2, title: "second" },
+      ],
+    });
+
+    // Edit one title and append a new element through the view.
+    view.value = {
+      items: [
+        { id: 1, title: "FIRST" },
+        { id: 2, title: "second" },
+        { id: 3, title: "third" },
+      ],
+    };
+    expect(a.value).toEqual({
+      items: [
+        { id: 1, name: "FIRST" },
+        { id: 2, name: "second" },
+        { id: 3, name: "third" },
+      ],
+    });
+  });
+});
+
+describe("recurse — rename a field at every depth (Cambria recursive schemas)", () => {
+  const deepRename = toStep(
+    recurse(self => seq(renameV("name", "title"), into("subtasks", each(self)))),
+  );
+
+  it("renames recursively and writes edits back at any depth", () => {
+    const a = src({
+      name: "root",
+      subtasks: [
+        { name: "a", subtasks: [{ name: "a1", subtasks: [] }] },
+        { name: "b", subtasks: [] },
+      ],
+    });
+    const view = deepRename(a);
+    expect(view.value).toEqual({
+      title: "root",
+      subtasks: [
+        { title: "a", subtasks: [{ title: "a1", subtasks: [] }] },
+        { title: "b", subtasks: [] },
+      ],
+    });
+
+    // Edit a deeply-nested title; it lands on the source's `name`.
+    view.value = {
+      title: "root",
+      subtasks: [
+        { title: "a", subtasks: [{ title: "DEEP", subtasks: [] }] },
+        { title: "b", subtasks: [] },
+      ],
+    };
+    expect(((a.value as Obj).subtasks as Obj[])[0]!.subtasks).toEqual([
+      { name: "DEEP", subtasks: [] },
+    ]);
+  });
+});
+
 // ── the demo's actual branching migration ─────────────────────────────
 
 type State = "todo" | "doing" | "done";
@@ -168,26 +277,38 @@ const narrowState = mapField<{ open: State }>("state", {
       : { src: c.open, complement: c },
 });
 
-const splitOwner = splitField("owner", ["firstName", "lastName"], {
-  split: whole => {
-    const i = whole.lastIndexOf(" ");
-    return i < 0 ? [whole, ""] : [whole.slice(0, i), whole.slice(i + 1)];
+type Urg = "low" | "med" | "high";
+const band = (n: number): Urg => (n <= 2 ? "low" : n === 3 ? "med" : "high");
+const repNum = (u: Urg): number => (u === "low" ? 2 : u === "med" ? 3 : 4);
+
+// 1–5 priority ⇄ low/med/high urgency; the exact level is remembered per band.
+const priorityToUrgency = mapField<{ seen: Partial<Record<Urg, number>> }>("priority", {
+  rename: "urgency",
+  init: n => {
+    const v = Number(n) || 1;
+    return { seen: { [band(v)]: v } };
   },
-  join: (a, b) => (b ? `${a} ${b}` : a),
+  step: (n, c) => {
+    const v = Number(n) || 1;
+    return { seen: { ...c.seen, [band(v)]: v } };
+  },
+  fwd: n => band(Number(n) || 1),
+  bwd: (u, _src, c) => {
+    const urg = u as Urg;
+    const v = c.seen[urg] ?? repNum(urg);
+    return { src: v, complement: { seen: { ...c.seen, [urg]: v } } };
+  },
 });
 
-const arrayAsString = mapField<{ text: string }>("tags", {
-  rename: "labels",
-  init: arr => ({ text: (arr as string[]).join(", ") }),
-  fwd: arr => (arr as string[]).join(", "),
-  bwd: labels => ({
-    src: String(labels)
-      .split(",")
-      .map(s => s.trim())
-      .filter(Boolean),
-    complement: { text: String(labels) },
-  }),
-});
+const nameSplit = {
+  split: (whole: string): [string, string] => {
+    const m = whole.match(/^(.*\S)(\s+)(\S.*)$/);
+    return m ? [m[1] as string, m[3] as string] : [whole, ""];
+  },
+  join: (a: string, b: string) => (b ? `${a} ${b}` : a),
+};
+
+const CREW = ["Ada Lovelace", "Grace Hopper", "Linus Torvalds"];
 
 function scenario(): {
   A: Writable<Cell<Obj>>;
@@ -195,29 +316,32 @@ function scenario(): {
   C: Writable<Cell<Obj>>;
   D: Writable<Cell<Obj>>;
 } {
-  const A = cell<Obj>({ text: "Ship it", done: false, tags: ["demo", "writing"] });
+  const A = cell<Obj>({ text: "Ship it", done: false, owner: "Ada Lovelace" });
   const B = pipe(
     renameField("text", "title"),
     widenDone,
-    addField("owner", "Ada Lovelace"),
-    addField("priority", 2),
+    wrapField("owner", "assignees"),
+    addField("priority", 3),
   )(A);
   const C = pipe(
     renameField("title", "label"),
-    splitOwner,
-    nestFields(["firstName", "lastName"], "assignee"),
+    renameField("assignees", "crew"),
     nestFields(["state", "priority"], "meta"),
-    addField("starred", false),
+    addField("pinned", false),
   )(B);
   const D = pipe(
     renameField("title", "summary"),
     narrowState,
-    renameField("owner", "assignedTo"),
-    arrayAsString,
+    headField("assignees", "lead"),
+    splitField("lead", ["firstName", "lastName"], nameSplit),
+    priorityToUrgency,
   )(B);
-  // Realize every complement before interacting.
+  // Realize complements, then seed a crew the single-owner schema can't hold.
   void A.value;
   void B.value;
+  void C.value;
+  void D.value;
+  B.value = { ...(B.value as Obj), assignees: [...CREW] };
   void C.value;
   void D.value;
   return { A, B, C, D };
@@ -225,27 +349,26 @@ function scenario(): {
 
 describe("branching migration A–B–{C,D}", () => {
   it("forward shapes are correct at every version", () => {
-    const { B, C, D } = scenario();
+    const { A, B, C, D } = scenario();
+    expect(A.value).toEqual({ text: "Ship it", done: false, owner: "Ada Lovelace" });
     expect(B.value).toEqual({
       title: "Ship it",
       state: "todo",
-      tags: ["demo", "writing"],
-      owner: "Ada Lovelace",
-      priority: 2,
+      assignees: CREW,
+      priority: 3,
     });
     expect(C.value).toEqual({
       label: "Ship it",
-      meta: { state: "todo", priority: 2 },
-      tags: ["demo", "writing"],
-      assignee: { firstName: "Ada", lastName: "Lovelace" },
-      starred: false,
+      crew: CREW,
+      meta: { state: "todo", priority: 3 },
+      pinned: false,
     });
     expect(D.value).toEqual({
       summary: "Ship it",
       closed: false,
-      labels: "demo, writing",
-      assignedTo: "Ada Lovelace",
-      priority: 2,
+      firstName: "Ada",
+      lastName: "Lovelace",
+      urgency: "med",
     });
   });
 
@@ -256,21 +379,45 @@ describe("branching migration A–B–{C,D}", () => {
     expect((D.value as Obj).summary).toBe("Renamed in mobile");
   });
 
-  it("an ambiguous name split set in C round-trips to D's flat owner", () => {
+  it("reordering the crew moves the lead everywhere, conserving the rest", () => {
+    const { A, C, D } = scenario();
+    // Promote Grace to lead via Mobile's crew list.
+    C.value = { ...(C.value as Obj), crew: ["Grace Hopper", "Ada Lovelace", "Linus Torvalds"] };
+    expect((A.value as Obj).owner).toBe("Grace Hopper"); // single-owner view tracks head
+    expect((D.value as Obj).firstName).toBe("Grace");
+    expect((D.value as Obj).lastName).toBe("Hopper");
+    // The rest of the crew is conserved, not dropped.
+    expect((C.value as Obj).crew).toEqual(["Grace Hopper", "Ada Lovelace", "Linus Torvalds"]);
+  });
+
+  it("editing the lead's name in D writes the head, conserving the tail", () => {
+    const { A, C, D } = scenario();
+    D.value = { ...(D.value as Obj), firstName: "Mary Anne", lastName: "Smith" };
+    expect((A.value as Obj).owner).toBe("Mary Anne Smith"); // head replaced
+    expect((C.value as Obj).crew).toEqual(["Mary Anne Smith", "Grace Hopper", "Linus Torvalds"]);
+    // The chosen split is preserved (not re-guessed).
+    expect((D.value as Obj).firstName).toBe("Mary Anne");
+    expect((D.value as Obj).lastName).toBe("Smith");
+  });
+
+  it("priority quantizes to urgency but the exact level returns per band", () => {
     const { C, D } = scenario();
-    C.value = { ...(C.value as Obj), assignee: { firstName: "Mary Anne", lastName: "Smith" } };
-    expect((D.value as Obj).assignedTo).toBe("Mary Anne Smith");
-    // The chosen split is preserved (not re-guessed to "Mary Anne"/"Smith" vs other).
-    expect((C.value as Obj).assignee).toEqual({ firstName: "Mary Anne", lastName: "Smith" });
+    // Slide priority to 5 in Mobile → Web shows "high".
+    C.value = { ...(C.value as Obj), meta: { state: "todo", priority: 5 } };
+    expect((D.value as Obj).urgency).toBe("high");
+    // Drop to "low" in Web → priority becomes a representative low (2).
+    D.value = { ...(D.value as Obj), urgency: "low" };
+    expect((C.value as Obj).meta).toMatchObject({ priority: 2 });
+    // Back to "high" → the original 5 is restored from the complement.
+    D.value = { ...(D.value as Obj), urgency: "high" };
+    expect((C.value as Obj).meta).toMatchObject({ priority: 5 });
   });
 
   it("two branches collapse the enum independently, each keeping its nuance", () => {
     const { A, C, D } = scenario();
-    // Set the rich state to "doing" via C.
-    C.value = { ...(C.value as Obj), meta: { state: "doing", priority: 2 } };
+    C.value = { ...(C.value as Obj), meta: { state: "doing", priority: 3 } };
     expect((D.value as Obj).closed).toBe(false); // D sees "not done"
 
-    // Close it from D, then reopen from D: D remembers "doing".
     D.value = { ...(D.value as Obj), closed: true };
     expect((C.value as Obj).meta).toMatchObject({ state: "done" });
     expect((A.value as Obj).done).toBe(true);
@@ -280,18 +427,11 @@ describe("branching migration A–B–{C,D}", () => {
 
   it("branch-private fields stay on their branch", () => {
     const { A, B, C, D } = scenario();
-    C.value = { ...(C.value as Obj), starred: true };
-    // `starred` exists only on the C branch — A, B, D never see it.
-    expect("starred" in (A.value as Obj)).toBe(false);
-    expect("starred" in (B.value as Obj)).toBe(false);
-    expect("starred" in (D.value as Obj)).toBe(false);
-    expect((C.value as Obj).starred).toBe(true);
-  });
-
-  it("D's array⇄string edit flows back to the tags array everywhere", () => {
-    const { A, C, D } = scenario();
-    D.value = { ...(D.value as Obj), labels: "demo, writing, urgent" };
-    expect((A.value as Obj).tags).toEqual(["demo", "writing", "urgent"]);
-    expect((C.value as Obj).tags).toEqual(["demo", "writing", "urgent"]);
+    C.value = { ...(C.value as Obj), pinned: true };
+    // `pinned` exists only on the C branch — A, B, D never see it.
+    expect("pinned" in (A.value as Obj)).toBe(false);
+    expect("pinned" in (B.value as Obj)).toBe(false);
+    expect("pinned" in (D.value as Obj)).toBe(false);
+    expect((C.value as Obj).pinned).toBe(true);
   });
 });
