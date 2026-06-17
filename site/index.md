@@ -18,8 +18,6 @@ Ordinary reactive systems (often called "signals") flows one way: write an input
 
 Dependencies are implicit, so one need only read a value to subscribe to it.
 
-<md-propagation></md-propagation>
-
 ```ts
 const c = cell(20);
 const f = derive(() => c.value * 9/5 + 32);
@@ -240,6 +238,20 @@ The parsers are error-tolerant, so a broken pane stops writing the hub but keeps
 
 
 <md-syntax-lens></md-syntax-lens>
+
+## Schema Evolution
+
+A schema migration is a `pipe` of small, individually-trivial lenses — `renameField`, `addField`, `nestFields`, `splitField`, a value-level `mapField` — and because each step carries a private *complement* holding whatever it dropped, the whole composition round-trips even where individual steps are lossy. Were this a stateless lossy migration, it would need to fabricate the discarded detail on the way back in a way that breaks composition.
+
+```ts
+const toV2 = pipe(
+  renameField("text", "title"),
+  mapField("done", widenToTriState), // boolean ⇄ "todo"|"doing"|"done"
+  addField("owner", "Ada Lovelace"), // a field older schemas can't represent
+);
+```
+
+<md-schema-evolution></md-schema-evolution>
 
 ## Bi-reactivity over large or costly data
 
@@ -673,3 +685,4 @@ A waveform and its spectrum:
 
 <md-skeletal-rig></md-skeletal-rig>
 
+<md-propagation></md-propagation>
