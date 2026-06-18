@@ -391,6 +391,23 @@ Nothing here is geometry-specific. Three numbers and one `generic` solve `a² + 
 
 <md-equation></md-equation>
 
+## Learning
+
+Backpropagation is the lens pattern: each layer is a forward map (compute the activation) paired with a backward map (pull a gradient back and deposit gradients on the weights), and composing layers composes their backward passes in reverse — reverse-mode autodiff *is* lens composition, the `pipe` of the schema kit over differentiable maps. The activation a layer caches for its backward pass is its *complement*. The net below is a small MLP; training is a discrete dynamical system on the weights, stepped by a clock only while you hold **train**.
+
+A 2D classifier you can watch learn. The background is the predicted class probability over the whole plane, so the decision boundary *forms* as it trains; ringed points are held-out test data, so generalisation is visible (green = correct). Drag, add, or flip points and re-train to watch it adapt.
+
+```ts
+const net = mlp([2, 16, 16, 1]);        // a pipe of parametric lenses
+for (const _ of frames) trainStep(net, data); // gradient flow = the backward pass
+```
+
+<md-classify-points></md-classify-points>
+
+The same net, wider, on raw pixels. Draw a shape and the bar is the live P(circle); the training data is an endless stream of procedurally-generated shapes, so the label is whatever the generator drew. **dream** runs the net backward — gradient-ascending the input pixels toward a class to paint the prototype it associates with "circle".
+
+<md-classify-pixels></md-classify-pixels>
+
 ## Animation
 
 Before the bireactive experiments took off, this started as a tiny generator-based animation runtime — which I was very excited about, and still am. The idea is all based around _generators_. Generators yield control up; the runtime passes `dt` back down as the resume value:
