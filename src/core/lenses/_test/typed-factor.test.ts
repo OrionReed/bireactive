@@ -12,8 +12,13 @@ const { near, vnear } = approxWithin(1e-4);
 const mkPoints = (...pts: [number, number][]): Writable<Vec>[] => pts.map(([x, y]) => vec(x, y));
 
 function iter<T>(cell: Writable<{ value: T; peek(): T }>, target: T, n = 8): void {
-  // Iterate writes to converge non-linear Newton-step bwds.
-  for (let i = 0; i < n; i++) (cell as unknown as { value: T }).value = target;
+  // Iterate writes to converge non-linear Newton-step bwds. Each back-write
+  // is demand-gated, so the interleaved read is what resolves (steps) it —
+  // a Newton iteration must observe each iterate.
+  for (let i = 0; i < n; i++) {
+    (cell as unknown as { value: T }).value = target;
+    (cell as unknown as { peek(): T }).peek();
+  }
 }
 
 type V = { x: number; y: number };

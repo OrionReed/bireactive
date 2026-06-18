@@ -63,6 +63,37 @@ describe("backward soundness: targeted breakers", () => {
   });
 });
 
+describe("backward soundness: overlapping writers on a shared source", () => {
+  // A multi-out lens `V=[a,b]` and a 1→1 lens `L` both write source `b`. Arming
+  // both leaves two unresolved writers on `b` (the 1→1 setter doesn't peek, so
+  // it can't pre-resolve V the way a multi-out arm does). Reading the SIBLING
+  // source `a` resolves only V and — via `_writeSource` — clears `b`'s pending
+  // marker. The granular engine must keep `b` pullable while `L` is still
+  // unresolved; otherwise reading `b` returns V's value and L's write is
+  // silently lost (a regression the per-source registry could introduce vs. the
+  // old replay-everything drain).
+  it("reading a shared source after a sibling still pulls the other writer", () => {
+    const a = cell(0);
+    const b = cell(0);
+    const V = lens(
+      [a, b] as const,
+      ([x, y]) => x + y,
+      (t: number) => [t, t] as const,
+    );
+    const L = lens(
+      b,
+      (x: number) => x,
+      (t: number) => t,
+    );
+
+    V.value = 5; // arms a=5, b=5
+    L.value = 9; // arms b=9 (L is the later writer to the shared b)
+
+    expect(a.value).toBe(5); // resolves V; clears b's marker — but L is still armed
+    expect(b.value).toBe(9); // must re-resolve through L, not strand it
+  });
+});
+
 describe("backward soundness: PutGet fuzz over random anchor-style DAGs", () => {
   it("zero lost writes across all topologies", () => {
     const N = 4000;

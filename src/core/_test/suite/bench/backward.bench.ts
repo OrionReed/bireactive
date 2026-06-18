@@ -6,9 +6,16 @@
 
 import { group } from "mitata";
 import { bireactive } from "../adapters/bireactive";
-import { reconcile } from "../adapters/reconcile";
 import { reg } from "./runner";
-import { bwdChain, bwdFan, fwdChain, fwdFan } from "./workloads";
+import {
+  bwdChain,
+  bwdChainBlind,
+  bwdChainsPartial,
+  bwdCoalesce,
+  bwdFan,
+  fwdChain,
+  fwdFan,
+} from "./workloads";
 
 group("chain depth 50: source-edit vs view-edit", () => {
   reg("forward (write source)", fwdChain(bireactive, 50));
@@ -20,12 +27,17 @@ group("fan width 50: source-edit vs view-edit", () => {
   reg("backward (write fan-in view)", bwdFan(bireactive, 50));
 });
 
-group("backward chain depth 50: bireactive vs reconcile", () => {
-  reg("bireactive", bwdChain(bireactive, 50));
-  reg("reconcile", bwdChain(reconcile, 50));
+// Laziness isolation — the cases demand-gating should actually move
+// (the paired write+read benches above cannot show it). Eager bireactive
+// is the "before"; demand-gated bireactive is the "after".
+group("laziness: unobserved write (chain depth 50)", () => {
+  reg("bireactive", bwdChainBlind(bireactive, 50));
 });
 
-group("backward fan-in width 50: bireactive vs reconcile", () => {
-  reg("bireactive", bwdFan(bireactive, 50));
-  reg("reconcile", bwdFan(reconcile, 50));
+group("laziness: 10 writes per read (chain depth 50)", () => {
+  reg("bireactive", bwdCoalesce(bireactive, 50, 10));
+});
+
+group("laziness: write 20 chains, read 1 (depth 50)", () => {
+  reg("bireactive", bwdChainsPartial(bireactive, 20, 50));
 });
