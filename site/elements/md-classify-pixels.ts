@@ -4,23 +4,26 @@
 // ties proc-gen (the data engine) to learning. Training is user-invoked
 // (Train toggle); drawing and "dream" are the only other per-frame work.
 //
-// "Dream" runs the net backward: gradient-ascend the input pixels toward a
-// class. That's the lens' backward leg doing inference-time inversion — paint
-// the prototype the net most associates with "circle".
+// Training is a backward write: each example pins the input, reads the
+// prediction, then writes the output cotangent to the logits cell — the engine
+// backpropagates onto every weight cell. "Dream" is the *same* lens run with
+// the weights frozen: the cotangent flows past the (fixed) weights to the input
+// cell, so gradient-ascending the pixels paints the prototype the net most
+// associates with "circle". Fitting and inverting are one backward map.
 
 import { cell, effect } from "@bireactive";
 import {
-  accuracy,
+  accuracyOf,
   inputGradient,
-  type MLP,
-  mlp,
-  predict,
+  type LensNet,
+  lensNet,
+  probsOf,
   rasterShape,
   rng,
   type Sample,
   type ShapeKind,
   shapeBatch,
-  trainStep,
+  trainEpoch,
 } from "@bireactive/learn";
 
 const G = 12; // grid is G×G
@@ -42,7 +45,7 @@ export class MdClassifyPixels extends HTMLElement {
   private dreamRaf = 0;
   private seed = 1;
 
-  private net!: MLP;
+  private net!: LensNet;
   private grid = new Float64Array(N);
   private trainRng: () => number = rng(1);
   private testSet: Sample[] = [];
@@ -166,11 +169,11 @@ export class MdClassifyPixels extends HTMLElement {
   private reset(): void {
     this.stop();
     this.stopDream();
-    this.net = mlp([N, 24, 1], { seed: this.seed, hidden: "tanh", lr: 0.01 });
+    this.net = lensNet([N, 24, 1], { seed: this.seed, hidden: "tanh", lr: 0.05 });
     this.trainRng = rng(1000 + this.seed);
     this.testSet = shapeBatch(G, 300, rng(7));
     this.epoch.value = 0;
-    this.testAcc.value = accuracy(this.net, this.testSet);
+    this.testAcc.value = accuracyOf(this.net, this.testSet);
     this.renderExamples();
     this.renderDraw();
     this.predictNow();
@@ -182,9 +185,10 @@ export class MdClassifyPixels extends HTMLElement {
     this.training.value = true;
     let n = 0;
     const tick = (): void => {
-      for (let i = 0; i < 4; i++) trainStep(this.net, shapeBatch(G, BATCH, this.trainRng));
+      for (let i = 0; i < 4; i++)
+        trainEpoch(this.net, shapeBatch(G, BATCH, this.trainRng), this.trainRng);
       this.epoch.value = this.epoch.peek() + 4;
-      if (++n % 4 === 0) this.testAcc.value = accuracy(this.net, this.testSet);
+      if (++n % 4 === 0) this.testAcc.value = accuracyOf(this.net, this.testSet);
       this.predictNow();
       this.raf = requestAnimationFrame(tick);
     };
@@ -196,7 +200,7 @@ export class MdClassifyPixels extends HTMLElement {
     this.raf = 0;
     if (this.training.peek()) {
       this.training.value = false;
-      this.testAcc.value = accuracy(this.net, this.testSet);
+      this.testAcc.value = accuracyOf(this.net, this.testSet);
     }
   }
 
@@ -205,11 +209,13 @@ export class MdClassifyPixels extends HTMLElement {
     this.dreamRaf = 0;
   }
 
-  // Inference-time inversion: carve the input pixels toward a class by
-  // gradient ascent (cls=1, circle) or descent (cls=0) on the circle logit.
-  // Starts from noise and regularises each step (gradient normalisation +
-  // mild decay + periodic blur) so it paints a coherent prototype rather than
-  // an adversarial blob. A finite, user-invoked animation.
+  // Inference-time inversion: the net's backward map with the weights frozen.
+  // Each step writes a unit cotangent on the circle logit; with the weights
+  // held fixed the gradient flows past them to the input cell, giving dL/dx,
+  // which we ascend (cls=1, circle) or descend (cls=0). Starts from noise and
+  // regularises each step (gradient normalisation + mild decay + periodic blur)
+  // so it paints a coherent prototype rather than an adversarial blob. A
+  // finite, user-invoked animation.
   private dream(cls: number): void {
     this.stop();
     this.stopDream();
@@ -219,7 +225,8 @@ export class MdClassifyPixels extends HTMLElement {
     const run = (): void => {
       const g = inputGradient(this.net, this.grid, 0);
       const k = rms(g);
-      for (let i = 0; i < N; i++) this.grid[i] = clamp01(this.grid[i]! * 0.9 + (dir * 0.18 * g[i]!) / k);
+      for (let i = 0; i < N; i++)
+        this.grid[i] = clamp01(this.grid[i]! * 0.9 + (dir * 0.18 * g[i]!) / k);
       if (step % 3 === 2) blurInto(this.grid);
       this.renderDraw();
       this.predictNow();
@@ -230,7 +237,7 @@ export class MdClassifyPixels extends HTMLElement {
   }
 
   private predictNow(): void {
-    this.prob.value = predict(this.net, this.grid)[0]!;
+    this.prob.value = probsOf(this.net, this.grid)[0]!;
   }
 
   private renderDraw(): void {

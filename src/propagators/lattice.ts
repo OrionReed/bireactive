@@ -139,10 +139,7 @@ export function set<E>(universe: Iterable<E>): Lattice<ReadonlySet<E>> {
 
 /** Candidate-set cell over `universe`, seeded with `init` (defaults to
  *  the whole universe). */
-export function setCell<E>(
-  universe: Iterable<E>,
-  init?: Iterable<E>,
-): LatticeCell<ReadonlySet<E>> {
+export function setCell<E>(universe: Iterable<E>, init?: Iterable<E>): LatticeCell<ReadonlySet<E>> {
   const lat = set(universe);
   return latticeCell(lat, init === undefined ? lat.top : new Set(init));
 }

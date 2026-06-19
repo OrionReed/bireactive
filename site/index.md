@@ -394,18 +394,23 @@ Nothing here is geometry-specific. Three numbers and one `generic` solve `a² + 
 
 ## Learning
 
-Backpropagation is the lens pattern: each layer is a forward map (compute the activation) paired with a backward map (pull a gradient back and deposit gradients on the weights), and composing layers composes their backward passes in reverse — reverse-mode autodiff *is* lens composition, the `pipe` of the schema kit over differentiable maps. The activation a layer caches for its backward pass is its *complement*. The net below is a small MLP; training is a discrete dynamical system on the weights, stepped by a clock only while you hold **train**.
+Backpropagation *is* the lens pattern, taken literally. Each layer is a lens over its weight cell: the forward map computes the activation `act(W·x + b)`; the backward map takes the cotangent `dL/da`, deposits a gradient step on the weight cell, and passes `dL/dx` up to the previous layer. Stack the layers and you have a lens DAG `input → layer → … → logits` — and composing layers composes their backward passes in reverse, which is exactly reverse-mode autodiff: the `pipe` of the schema kit, over differentiable maps.
+
+So there is no optimiser object and no hand-written training loop inside the net. **One gradient step is a single backward write:**
+
+```ts
+const net = lensNet([2, 16, 16, 1]); // input cell → layer lenses → logits cell
+net.input.value = x;                 // forward: read the prediction
+net.logits.value = prediction - y;   // backward: the engine backprops onto every weight cell
+```
+
+Writing the output cotangent to `logits` makes the engine run backprop down the whole chain and land an SGD update on each weight source — training is just bireactivity pointed at the parameters. (Finite-difference checks in the test-suite confirm the engine's backward write equals the true gradient on every layer.)
 
 A 2D classifier you can watch learn. The background is the predicted class probability over the whole plane, so the decision boundary *forms* as it trains; ringed points are held-out test data, so generalisation is visible (green = correct). Drag, add, or flip points and re-train to watch it adapt.
 
-```ts
-const net = mlp([2, 16, 16, 1]);        // a pipe of parametric lenses
-for (const _ of frames) trainStep(net, data); // gradient flow = the backward pass
-```
-
 <md-classify-points></md-classify-points>
 
-The same net, wider, on raw pixels. Draw a shape and the bar is the live P(circle); the training data is an endless stream of procedurally-generated shapes, so the label is whatever the generator drew. **dream** runs the net backward — gradient-ascending the input pixels toward a class to paint the prototype it associates with "circle".
+The same net, wider, on raw pixels. Draw a shape and the bar is the live P(circle); the training data is an endless stream of procedurally-generated shapes, so the label is whatever the generator drew. **dream** is the *same lens run with the weights frozen*: the cotangent flows past the fixed weights to the input cell, so gradient-ascending the pixels paints the prototype the net associates with "circle". Fitting and inverting are one backward map.
 
 <md-classify-pixels></md-classify-pixels>
 

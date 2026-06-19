@@ -18,18 +18,18 @@ export {
   xor,
 } from "./data";
 export {
-  type Activation,
-  accuracy,
-  classify,
-  forward,
-  gaussian,
+  accuracyOf,
+  classifyOf,
   inputGradient,
-  type MLP,
-  meanLoss,
-  mlp,
-  predict,
-  rng,
-  type Sample,
-  softmax,
-  trainStep,
-} from "./mlp";
+  type LayerParams,
+  type LensLayer,
+  type LensNet,
+  type LensNetCfg,
+  lensNet,
+  logitsOf,
+  meanLossOf,
+  probsOf,
+  trainEpoch,
+  trainExample,
+} from "./lens-net";
+export { type Activation, gaussian, rng, type Sample } from "./mlp";

@@ -141,7 +141,8 @@ function hullPath(pts: Pt[], pad: number): string {
   const half = (src: Pt[]): Pt[] => {
     const out: Pt[] = [];
     for (const p of src) {
-      while (out.length >= 2 && cross(out[out.length - 2]!, out[out.length - 1]!, p) <= 0) out.pop();
+      while (out.length >= 2 && cross(out[out.length - 2]!, out[out.length - 1]!, p) <= 0)
+        out.pop();
       out.push(p);
     }
     out.pop();

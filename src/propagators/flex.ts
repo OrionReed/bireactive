@@ -150,7 +150,9 @@ function line(c: Box, rawItems: readonly Item[], opts: FlexOpts, main: "x" | "y"
     // Phase 2 — resolution. Distribute slack from the basis sizes,
     // weighted by grow (free > 0) / shrink (free < 0), clamped into the
     // feasible band each pass and redistributed.
-    const base = items.map((it, i) => clamp(it.basis ?? mainSize(it.box).value, mins[i]!, maxs[i]!));
+    const base = items.map((it, i) =>
+      clamp(it.basis ?? mainSize(it.box).value, mins[i]!, maxs[i]!),
+    );
     const sizes = distribute(base, items, mins, maxs, content);
 
     let cursor = mainPos(c).value + pad;

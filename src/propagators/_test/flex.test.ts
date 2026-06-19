@@ -34,7 +34,14 @@ describe("row: fit + distribution", () => {
     const a = box();
     const b = box();
     const s = solve(
-      row(c, [{ box: a, max: 100, basis: 0 }, { box: b, basis: 0 }], { gap: 0 }),
+      row(
+        c,
+        [
+          { box: a, max: 100, basis: 0 },
+          { box: b, basis: 0 },
+        ],
+        { gap: 0 },
+      ),
     );
     expect(a.w.value).toBeCloseTo(100);
     expect(b.w.value).toBeCloseTo(500);
@@ -46,7 +53,14 @@ describe("row: fit + distribution", () => {
     const a = box();
     const b = box();
     const s = solve(
-      row(c, [{ box: a, grow: 1, basis: 0 }, { box: b, grow: 2, basis: 0 }], { gap: 0 }),
+      row(
+        c,
+        [
+          { box: a, grow: 1, basis: 0 },
+          { box: b, grow: 2, basis: 0 },
+        ],
+        { gap: 0 },
+      ),
     );
     expect(a.w.value).toBeCloseTo(100);
     expect(b.w.value).toBeCloseTo(200);
@@ -80,10 +94,7 @@ describe("nested: col of rows composes through the reactive graph", () => {
     const bottom = box();
     const a = box();
     const b = box();
-    const s = solve(
-      col(root, [top, bottom], { gap: 0 }),
-      row(top, [a, b], { gap: 0 }),
-    );
+    const s = solve(col(root, [top, bottom], { gap: 0 }), row(top, [a, b], { gap: 0 }));
     // top fills width 400, height 100; a/b split 200 each.
     expect(top.w.value).toBeCloseTo(400);
     expect(a.w.value).toBeCloseTo(200);

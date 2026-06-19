@@ -60,11 +60,17 @@ export class MdPartial extends Diagram {
       const hi = derive(() => (Number.isFinite(sc.value[1]) ? xOf(sc.value[1]) : X1));
       s(
         line(vec(X0, rowY(i)), vec(X1, rowY(i)), { thin: true, opacity: 0.15 }),
-        rect(lo, derive(() => rowY(i) - 9), derive(() => hi.value - lo.value), 18, {
-          fill: SENSOR[i]!,
-          opacity: derive(() => (shown.value ? 0.4 : 0)),
-          corner: 3,
-        }),
+        rect(
+          lo,
+          derive(() => rowY(i) - 9),
+          derive(() => hi.value - lo.value),
+          18,
+          {
+            fill: SENSOR[i]!,
+            opacity: derive(() => (shown.value ? 0.4 : 0)),
+            corner: 3,
+          },
+        ),
         label(vec(X0 - 14, rowY(i)), `m${i + 1}`, { size: 11, fill: SENSOR[i]! }),
       );
     });
@@ -75,11 +81,17 @@ export class MdPartial extends Diagram {
     const bad = derive(() => isContradiction(est));
     s(
       line(vec(X0, estY), vec(X1, estY), { thin: true, opacity: 0.25 }),
-      rect(eLo, estY - 12, derive(() => Math.max(0, eHi.value - eLo.value)), 24, {
-        fill: derive(() => (bad.value ? BAD : OK)),
-        opacity: derive(() => (bad.value ? 0.15 : 0.55)),
-        corner: 4,
-      }),
+      rect(
+        eLo,
+        estY - 12,
+        derive(() => Math.max(0, eHi.value - eLo.value)),
+        24,
+        {
+          fill: derive(() => (bad.value ? BAD : OK)),
+          opacity: derive(() => (bad.value ? 0.15 : 0.55)),
+          corner: 4,
+        },
+      ),
       label(vec(X0 - 18, estY), "est", { size: 11, bold: true }),
       label(
         Vec.derive(() => ({ x: bad.value ? (X0 + X1) / 2 : eHi.value + 30, y: estY })),

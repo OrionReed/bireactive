@@ -65,6 +65,7 @@ export type TraitKey = keyof TraitDict<unknown>;
  *      function spring<T>(sig: Traits<T, "linear" | "metric">, target: Val<T>)
  *      function tween<T>(sig: Traits<T, "lerp">, target: T, dur: Val<number>) */
 export type Traits<T, K extends TraitKey = never> = {
+  /** @internal Phantom slot; never accessed at runtime. */
   readonly _t: { [P in K]-?: NonNullable<TraitDict<T>[P]> } & TraitDict<T>;
 };
 

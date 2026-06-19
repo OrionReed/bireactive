@@ -2,7 +2,7 @@
 // derived points are lenses (`mean`) instead of propagators. No network:
 // each derived point IS a value, and its backward policy is the drag.
 
-import { Diagram, handle, label, line, mean, type Mount, vec } from "@bireactive";
+import { Diagram, handle, label, line, type Mount, mean, vec } from "@bireactive";
 
 const VERT = "#5b8def";
 const CENT = "#f5a623";

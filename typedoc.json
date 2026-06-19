@@ -6,6 +6,9 @@
   "cleanOutputDir": true,
   "name": "bireactive",
   "includeVersion": true,
+  "excludeInternal": true,
+  "excludePrivate": true,
+  "excludeProtected": true,
   "navigationLinks": {
     "Demo": "https://orionreed.github.io/bireactive/",
     "GitHub": "https://github.com/OrionReed/bireactive"

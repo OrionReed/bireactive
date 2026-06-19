@@ -2,8 +2,8 @@
 
 import { describe, expect, it } from "vitest";
 import { num } from "../../core";
-import { row } from "../flex";
 import { attach, box, centerInside, follow, grid, inset, lockSize, pinEdge, solve } from "..";
+import { row } from "../flex";
 
 describe("grid", () => {
   it("2x2 grid", () => {

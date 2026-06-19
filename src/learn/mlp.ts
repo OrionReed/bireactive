@@ -112,7 +112,8 @@ export function mlp(
   };
 }
 
-function applyAct(act: Activation, z: number): number {
+/** Pointwise activation `a = σ(z)`. */
+export function applyAct(act: Activation, z: number): number {
   switch (act) {
     case "tanh":
       return Math.tanh(z);
@@ -125,8 +126,8 @@ function applyAct(act: Activation, z: number): number {
   }
 }
 
-// Activation derivative given the *output* `a` (cheap for tanh/sigmoid).
-function actGrad(act: Activation, a: number): number {
+/** Activation derivative `σ'`, given the *output* `a` (cheap for tanh/sigmoid). */
+export function actGrad(act: Activation, a: number): number {
   switch (act) {
     case "tanh":
       return 1 - a * a;

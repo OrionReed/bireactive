@@ -597,49 +597,42 @@ export interface CellOptions<T = unknown> {
 }
 
 export class Cell<T = unknown> implements ReactiveNode {
+  /** @internal */
   flags: number;
+  /** @internal */
   subs: Link | undefined;
+  /** @internal */
   subsTail: Link | undefined;
+  /** @internal */
   deps: Link | undefined;
+  /** @internal */
   depsTail: Link | undefined;
 
-  /** Forward derivation (computed/lens/merge). `undefined` ⇒ source. */
+  /** @internal Forward derivation (computed/lens/merge). `undefined` ⇒ source. */
   getter: (() => T) | undefined;
 
-  /** Per-instance equality, always defined (defaults to `Object.is` at
-   *  construction) so hot paths call it without an `undefined` branch. */
+  /** @internal Per-instance equality; always defined (defaults to `Object.is`). */
   _equals: (a: T, b: T) => boolean;
-  /** First-subscriber / last-subscriber lifecycle hooks. */
+  /** @internal First-subscriber / last-subscriber lifecycle hooks. */
   _watched: (() => void) | undefined;
+  /** @internal */
   _unwatchedHook: (() => void) | undefined;
 
-  /** Source: `currentValue` = committed, `pendingValue` = staged write.
-   *  Getter cell: `currentValue` = last derived cache; `pendingValue` unused. */
+  /** @internal Source: committed value + staged write. */
   currentValue: T;
+  /** @internal */
   pendingValue: T;
 
-  /** Backward sidecar: target(s) + lens closures, or `undefined` for a
-   *  read-only cell (source or computed). Allocated only for writable derived
-   *  cells, keeping the common node lean. Writability is exactly
-   *  `_bwd !== undefined`. See `BwdSpec`. */
+  /** @internal Backward sidecar; `undefined` iff read-only. Writability is `_bwd !== undefined`. */
   _bwd: BwdSpec | undefined;
 
-  /** Backward dual of `subs`: this cell's direct lens-children — every
-   *  writable view that declares it as a parent (`_bwd.parent`). The transpose
-   *  of `_bwd.parent`, registered LAZILY on a child's first back-write (`linkBack`,
-   *  deduped by `_linkedBack`) and never mutated again — so a cell only ever read
-   *  forward never allocates it. `resolveCone` ascends it (gated by `BACK_MARKED`)
-   *  exactly as forward `checkDirty` ascends `deps`, so a read resolves only its
-   *  own back-cone — no per-write registry, dedup, or emptying. */
+  /** @internal Backward dual of `subs`: direct lens-children for back-write cone traversal. */
   _lensSubs: Cell<unknown>[] | undefined;
 
-  /** Backward flag word (`BF`), the dual of forward `flags` (see header for why
-   *  it's a separate word). Cell-only; effects/networks carry no backward state. */
+  /** @internal Backward flag word (`BF`), dual of forward `flags`. */
   bflags: number;
 
-  /** Whether this lens is already registered on its parents' `_lensSubs`. A field
-   *  rather than a `bflags` bit so a forward recompute can't clear it and let
-   *  `linkBack` re-push a duplicate (an unbounded leak). */
+  /** @internal Guards against `linkBack` re-registering a duplicate in `_lensSubs`. */
   _linkedBack: boolean;
 
   // Every slot is assigned exactly once below, in declaration order, for a stable
@@ -674,10 +667,7 @@ export class Cell<T = unknown> implements ReactiveNode {
   // settable regardless.
   declare readonly value: T;
 
-  /** Source write (alien's signal setter). Self-excludes the active
-   *  network so a body writing its own dep doesn't re-trigger itself. Backward
-   *  writes stage here too (`writeBack` → `_writeSource`), so this is the single
-   *  point where truth mutates. */
+  /** @internal Single write-commit point; self-excludes the active network. */
   _writeSource(next: T): void {
     // A forward write to a source with an unresolved back-write demand resolves
     // it FIRST, so the later forward write wins (LWW).
@@ -695,6 +685,7 @@ export class Cell<T = unknown> implements ReactiveNode {
     }
   }
 
+  /** @internal */
   _update(): boolean {
     if (this.getter !== undefined) {
       this.depsTail = undefined;
@@ -725,8 +716,10 @@ export class Cell<T = unknown> implements ReactiveNode {
     return !this._equals(prevV, this.currentValue);
   }
 
+  /** @internal */
   _notify(): void {}
 
+  /** @internal */
   _unwatched(): void {
     if (this.getter !== undefined && this.depsTail !== undefined) {
       this.flags = F.Mutable | F.Dirty;

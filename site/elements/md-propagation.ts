@@ -21,8 +21,17 @@
 // Cut nodes are drawn as coloured rings at the cone's frontier; nothing
 // beyond them lights. Click any node to write there; else it idles.
 
-import { type Animator, cell, cut, Diagram, label, type Mount, untilChange, vec } from "@bireactive";
-import { graph, type GraphShape, layeredDag } from "./graph";
+import {
+  type Animator,
+  cell,
+  cut,
+  Diagram,
+  label,
+  type Mount,
+  untilChange,
+  vec,
+} from "@bireactive";
+import { type GraphShape, graph, layeredDag } from "./graph";
 
 const W = 680;
 const H = 460;
@@ -41,7 +50,16 @@ export class MdPropagation extends Diagram {
     // is the propagation cone.
     const { count, edges, positions, layerOf } = layeredDag(
       { w: W, h: H, padX: 28, top: 18, bottom: 30 },
-      { seed: SEED, layers: 7, topWidth: 4, midWidth: 8, bottomWidth: 4, jitter: 1, branch: 0.5, spread: 1.4 },
+      {
+        seed: SEED,
+        layers: 7,
+        topWidth: 4,
+        midWidth: 8,
+        bottomWidth: 4,
+        jitter: 1,
+        branch: 0.5,
+        spread: 1.4,
+      },
     );
 
     let requested = -1;

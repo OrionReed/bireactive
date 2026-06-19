@@ -4,21 +4,24 @@
 // drag/add/flip points and re-train to see it adapt. Training is user-invoked
 // (Train toggle / Step) — nothing runs on a clock unless you ask.
 //
-// The net itself is the plain `@bireactive/learn` MLP (a pipe of parametric
-// lenses); the reactive layer here is the metrics — `epoch`, `loss`,
-// `trainAcc`, `testAcc` are cells the readout observes via `effect`.
+// The net is the `@bireactive/learn` lens DAG: every layer is a lens over its
+// weight cell, and one training step is literally `logits.value = cotangent` —
+// a backward write the engine backpropagates onto every weight source. The
+// reactive layer here is the metrics — `epoch`, `loss`, `trainAcc`, `testAcc`
+// are cells the readout observes via `effect`.
 
 import { cell, effect } from "@bireactive";
 import {
-  accuracy,
-  type MLP,
-  meanLoss,
-  mlp,
+  accuracyOf,
+  type LensNet,
+  lensNet,
+  meanLossOf,
   type PointsKind,
   points,
-  predict,
+  probsOf,
+  rng,
   type Sample,
-  trainStep,
+  trainEpoch,
 } from "@bireactive/learn";
 
 interface Pt {
@@ -48,7 +51,8 @@ export class MdClassifyPoints extends HTMLElement {
   private disposers: Array<() => void> = [];
   private raf = 0;
 
-  private net!: MLP;
+  private net!: LensNet;
+  private trainRng: () => number = rng(7);
   private data: Pt[] = [];
   private kind: PointsKind = "moons";
   private seed = 1;
@@ -113,10 +117,10 @@ export class MdClassifyPoints extends HTMLElement {
     train.addEventListener("click", () => (this.training.value ? this.stop() : this.start()));
 
     const step = document.createElement("button");
-    step.textContent = "step ×20";
+    step.textContent = "step ×5";
     step.addEventListener("click", () => {
       this.stop();
-      this.steps(20);
+      this.steps(5);
     });
 
     const reset = document.createElement("button");
@@ -202,7 +206,8 @@ export class MdClassifyPoints extends HTMLElement {
 
   private reset(regen: boolean): void {
     this.stop();
-    this.net = mlp([2, 16, 16, 1], { seed: this.seed, hidden: "tanh", lr: 0.03 });
+    this.net = lensNet([2, 16, 16, 1], { seed: this.seed, hidden: "tanh", lr: 0.08 });
+    this.trainRng = rng(7);
     if (regen || this.data.length === 0) {
       const raw: Sample[] = points(this.kind, 180, { seed: 5, noise: undefined });
       this.data = raw.map((s, i) => {
@@ -219,7 +224,7 @@ export class MdClassifyPoints extends HTMLElement {
     if (this.raf) return;
     this.training.value = true;
     const tick = (): void => {
-      this.steps(3, false);
+      this.steps(1, false);
       this.render();
       this.raf = requestAnimationFrame(tick);
     };
@@ -232,12 +237,13 @@ export class MdClassifyPoints extends HTMLElement {
     if (this.training.peek()) this.training.value = false;
   }
 
-  // Run `n` gradient steps on the training split; refresh metrics + render
-  // once unless told otherwise (the live loop renders itself).
+  // Run `n` training passes on the training split — each pass is one shuffled
+  // sweep of backward writes (`logits.value = cotangent`). Refresh metrics +
+  // render once unless told otherwise (the live loop renders itself).
   private steps(n: number, draw = true): void {
     const train = this.data.filter(p => !p.test).map(toSample);
     if (train.length === 0) return;
-    for (let i = 0; i < n; i++) trainStep(this.net, train);
+    for (let i = 0; i < n; i++) trainEpoch(this.net, train, this.trainRng);
     this.epoch.value = this.epoch.peek() + n;
     this.refreshMetrics();
     if (draw) this.render();
@@ -246,9 +252,9 @@ export class MdClassifyPoints extends HTMLElement {
   private refreshMetrics(): void {
     const train = this.data.filter(p => !p.test).map(toSample);
     const test = this.data.filter(p => p.test).map(toSample);
-    this.loss.value = train.length ? meanLoss(this.net, train) : 0;
-    this.trainAcc.value = accuracy(this.net, train);
-    this.testAcc.value = test.length ? accuracy(this.net, test) : 0;
+    this.loss.value = train.length ? meanLossOf(this.net, train) : 0;
+    this.trainAcc.value = accuracyOf(this.net, train);
+    this.testAcc.value = test.length ? accuracyOf(this.net, test) : 0;
   }
 
   private render(): void {
@@ -258,7 +264,7 @@ export class MdClassifyPoints extends HTMLElement {
       const py = ((gy + 0.5) / GR) * 2 * R - R;
       for (let gx = 0; gx < GR; gx++) {
         const px = ((gx + 0.5) / GR) * 2 * R - R;
-        const p = predict(this.net, [px, py])[0]!;
+        const p = probsOf(this.net, [px, py])[0]!;
         const idx = (gy * GR + gx) * 4;
         // Lerp blue→red by P(class 1); darken the margin band into a boundary.
         const margin = 1 - Math.exp(-((p - 0.5) * (p - 0.5)) / 0.01);
@@ -284,7 +290,7 @@ export class MdClassifyPoints extends HTMLElement {
       ctx.fill();
       ctx.lineWidth = 2;
       if (p.test) {
-        const ok = (predict(this.net, [p.x, p.y])[0]! >= 0.5 ? 1 : 0) === p.label;
+        const ok = (probsOf(this.net, [p.x, p.y])[0]! >= 0.5 ? 1 : 0) === p.label;
         ctx.strokeStyle = ok ? "#5fd07a" : "#ff5b6e";
         ctx.lineWidth = 2.5;
         ctx.beginPath();
