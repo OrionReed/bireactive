@@ -380,10 +380,17 @@ function checkDirty(startLink: Link, startSub: ReactiveNode): boolean {
     while (checkDepth--) {
       l = stack!.value;
       stack = stack!.prev;
-      if (dirty) {
+      // `dirty` tracks change down THIS branch, but a node may have been marked
+      // `F.Dirty` independently — `shallowPropagate` fires when a lazy back-write
+      // commits its source mid-`checkDirty` (a hazard a forward-only engine never
+      // sees, since sources commit before the pull). Honor that bit too, else we'd
+      // clear its `F.Pending` below without recomputing — stranding a `Dirty` node
+      // whose observers never re-run.
+      if (dirty || sub.flags & F.Dirty) {
         const subs = sub.subs!;
         if (sub._update()) {
           if (subs.nextSub !== undefined) shallowPropagate(subs);
+          dirty = true;
           sub = l.sub;
           continue;
         }
