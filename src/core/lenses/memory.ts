@@ -16,7 +16,7 @@
 //                view never tears at a branch cut. Covers the eigenvector
 //                angle of bestFitLine; the primitive behind winding.
 
-import { type Cell, type Linear, Num, type Traits, type Writable } from "../index";
+import { type Cell, type Linear, Num, SKIP, type Skip, type Traits, type Writable } from "../index";
 
 /** Options for {@link remember}. `anchor` is the fixed point sources scale
  *  about (a pivot, or the live centroid); `feature` is the writable scalar
@@ -88,7 +88,7 @@ export function remember<T, S extends Cell<T> & Traits<T, "linear">>(
       // Magnitude is lossy (|−f| = f): a same-magnitude target re-projects
       // to the current feature, so the cluster is left put.
       if (magnitude && Math.abs(target) === f) {
-        return { updates: vals.map(() => undefined), complement: c };
+        return { updates: vals.map(() => SKIP), complement: c };
       }
       if (f > eps) {
         const k = target / f;
@@ -110,7 +110,7 @@ export interface ContinuousOpts<T> {
   raw: (vals: readonly T[]) => { value: number; defined: boolean };
   /** Realize `target` (already unwrapped, absolute) onto the sources,
    *  given the `current` unwrapped reading (for a delta). */
-  apply: (target: number, vals: readonly T[], current: number) => readonly (T | undefined)[];
+  apply: (target: number, vals: readonly T[], current: number) => readonly (T | Skip)[];
 }
 
 /** Continuous (winding-aware) lens over a cyclic reading. The complement
@@ -142,7 +142,7 @@ export function continuous<T>(
     },
     bwd: (target: number, vals: readonly T[], c: C) => {
       const r = raw(vals);
-      if (!r.defined) return { updates: vals.map(() => undefined), complement: { prev: target } };
+      if (!r.defined) return { updates: vals.map(() => SKIP), complement: { prev: target } };
       const current = unwrap(r.value, c.prev);
       return { updates: apply(target, vals, current), complement: { prev: target } };
     },

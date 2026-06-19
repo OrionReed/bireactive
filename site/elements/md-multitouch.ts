@@ -10,6 +10,7 @@ import {
   line,
   type Mount,
   num,
+  SKIP,
   Vec,
   vec,
   type Writable,
@@ -44,11 +45,11 @@ export class MdMultitouch extends Diagram {
         const aHeld = hA.dragging.peek();
         const bHeld = hB.dragging.peek();
         // Both pinned → midpoint can't move; refuse the write.
-        if (aHeld && bHeld) return [undefined, undefined];
+        if (aHeld && bHeld) return [SKIP, SKIP];
         // One pinned → the free endpoint absorbs the whole move so the
         // midpoint lands on `target`.
-        if (bHeld) return [{ x: 2 * target.x - bv.x, y: 2 * target.y - bv.y }, undefined];
-        if (aHeld) return [undefined, { x: 2 * target.x - av.x, y: 2 * target.y - av.y }];
+        if (bHeld) return [{ x: 2 * target.x - bv.x, y: 2 * target.y - bv.y }, SKIP];
+        if (aHeld) return [SKIP, { x: 2 * target.x - av.x, y: 2 * target.y - av.y }];
         // Nothing pinned → translate both rigidly.
         const dx = target.x - (av.x + bv.x) / 2;
         const dy = target.y - (av.y + bv.y) / 2;
@@ -84,7 +85,7 @@ export class MdMultitouch extends Diagram {
         const dy = bv.y - av.y;
         const len2 = dx * dx + dy * dy || 1;
         const tt = ((fx - av.x) * dx + (fy - av.y) * dy) / len2;
-        return [undefined, undefined, Math.max(0, Math.min(1, tt))];
+        return [SKIP, SKIP, Math.max(0, Math.min(1, tt))];
       },
     );
 

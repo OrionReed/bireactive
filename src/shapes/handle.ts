@@ -5,6 +5,7 @@ import {
   cell,
   mean,
   polar as polarLens,
+  SKIP,
   type Val,
   Vec,
   type Writable,
@@ -91,7 +92,7 @@ const scaleHandle = (shape: AnyShape & Has<"scale">, radius = 40, opts?: HandleO
     vals => ({ x: vals[0].x + radius * vals[1].x, y: vals[0].y }),
     (target, vals) => {
       const k = Math.max(0.05, Math.abs(target.x - vals[0].x) / radius);
-      return [undefined, { x: k, y: k }];
+      return [SKIP, { x: k, y: k }];
     },
   );
   return handleFn(pos, { cursor: "ew-resize", ...opts });

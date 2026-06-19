@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { Cell, fieldLens } from "../cell";
-import { cell, derive, effect, lens, Num, num, transform, Vec, vec } from "../index";
+import { cell, derive, effect, lens, Num, num, SKIP, settle, transform, Vec, vec } from "../index";
 
 void vec;
 
@@ -127,6 +127,7 @@ describe("footgun: effect cleanup across field-fast-path", () => {
     ];
     fires1 = fires2 = 0;
     x.value = 5;
+    settle();
     expect(fires1).toBe(1);
     expect(fires2).toBe(1);
     for (const s of stops) s();
@@ -147,8 +148,10 @@ describe("footgun: reactive args in field chains", () => {
     });
     expect(observed).toEqual([2]);
     a.value = 5;
+    settle();
     expect(observed).toEqual([2, 10]);
     k.value = 3;
+    settle();
     expect(observed).toEqual([2, 10, 15]);
     stop();
   });
@@ -198,11 +201,7 @@ describe("footgun: multi-parent short-circuit with a DERIVED parent", () => {
       ([b, f]) => ({ x: b.x + 0.5 * b.w + f.dx, y: b.y + 0.5 * b.h + f.dy }),
       (target, [b, f, tNow]) => {
         const cur = { x: b.x + 0.5 * b.w + f.dx, y: b.y + 0.5 * b.h + f.dy };
-        return [
-          undefined,
-          undefined,
-          { x: tNow.x + (target.x - cur.x), y: tNow.y + (target.y - cur.y) },
-        ];
+        return [SKIP, SKIP, { x: tNow.x + (target.x - cur.x), y: tNow.y + (target.y - cur.y) }];
       },
     );
 
@@ -222,7 +221,7 @@ describe("footgun: multi-parent short-circuit with a DERIVED parent", () => {
     const sum = Num.lens(
       [a, b] as const,
       ([av, bv]) => Math.floor(av + bv),
-      t => [t - b.peek(), undefined],
+      t => [t - b.peek(), SKIP],
     );
     expect(sum.value).toBe(7);
     a.value = 3.4; // a+b = 7.4 → floor still 7 (view unchanged)

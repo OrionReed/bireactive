@@ -12,6 +12,8 @@ import {
   type Init,
   reader,
   readNow,
+  SKIP,
+  type Skip,
   type Val,
   type Writable,
 } from "../cell";
@@ -274,35 +276,31 @@ export function polar(
   // angle jumps discontinuously, breaking lenses that read it directly.
   // Source-reading lens: each policy returns per-parent updates over
   // [center, r, a].
-  type Updates = readonly [V?, number?, number?];
+  type Updates = readonly [V | Skip, number | Skip, number | Skip];
   let bwd: (p: V, vals: readonly [V, number, number]) => Updates;
   switch (policy) {
     case "rotate":
       bwd = (p, [cv, , av]) => {
         const dx = p.x - cv.x;
         const dy = p.y - cv.y;
-        return [undefined, Math.hypot(dx, dy), nearestAngle(Math.atan2(dy, dx), av)];
+        return [SKIP, Math.hypot(dx, dy), nearestAngle(Math.atan2(dy, dx), av)];
       };
       break;
     case "translate":
       bwd = (p, [cv, rv, av]) => {
         const f = project(cv, rv, av);
-        return [{ x: cv.x + (p.x - f.x), y: cv.y + (p.y - f.y) }, undefined, undefined];
+        return [{ x: cv.x + (p.x - f.x), y: cv.y + (p.y - f.y) }, SKIP, SKIP];
       };
       break;
     case "radial":
       bwd = (p, [cv, , av]) => {
         const dx = p.x - cv.x;
         const dy = p.y - cv.y;
-        return [undefined, dx * Math.cos(av) + dy * Math.sin(av), undefined];
+        return [SKIP, dx * Math.cos(av) + dy * Math.sin(av), SKIP];
       };
       break;
     case "circular":
-      bwd = (p, [cv, , av]) => [
-        undefined,
-        undefined,
-        nearestAngle(Math.atan2(p.y - cv.y, p.x - cv.x), av),
-      ];
+      bwd = (p, [cv, , av]) => [SKIP, SKIP, nearestAngle(Math.atan2(p.y - cv.y, p.x - cv.x), av)];
       break;
   }
   return Vec.lens([cSig, rSig, aSig] as const, ([c, rv, av]) => project(c, rv, av), bwd);

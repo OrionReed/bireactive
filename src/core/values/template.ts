@@ -21,7 +21,7 @@
 // rejects the whole edit. Adjacent slots with no literal between them are
 // ambiguous to split — avoid empty inter-slot literals.
 
-import type { Read, Writable } from "../cell";
+import { type Read, SKIP, type Skip, type Writable } from "../cell";
 import { type Num, num } from "./num";
 import { Str, str } from "./str";
 
@@ -91,10 +91,10 @@ const parse = (
   literals: readonly string[],
   slots: readonly Slot<unknown>[],
   edited: string,
-): (unknown | undefined)[] => {
+): (unknown | Skip)[] => {
   const k = slots.length;
-  const reject = (): undefined[] => new Array(k).fill(undefined);
-  const updates: (unknown | undefined)[] = reject();
+  const reject = (): Skip[] => new Array(k).fill(SKIP);
+  const updates: (unknown | Skip)[] = reject();
   const lit0 = literals[0] ?? "";
   if (!edited.startsWith(lit0)) return updates;
   let pos = lit0.length;
@@ -131,7 +131,7 @@ export function template(
   const lensN = Str.lens.bind(Str) as unknown as (
     parents: readonly unknown[],
     fwd: (vals: readonly unknown[]) => string,
-    bwd: (edited: string) => (unknown | undefined)[],
+    bwd: (edited: string) => (unknown | Skip)[],
   ) => Writable<Str>;
   return lensN(
     cells,

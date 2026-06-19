@@ -1,7 +1,7 @@
 // geometry.ts — geometric lens building blocks over the N-input
 // `Cls.lens` / `Cls.derive` forms. All are a few lines on top of the engine.
 
-import type { Cell, Read, Writable } from "../cell";
+import { type Cell, type Read, SKIP, type Writable } from "../cell";
 import { Num } from "../values/num";
 import { Vec } from "../values/vec";
 import { rotateAbout } from "./closed-form-policies";
@@ -45,7 +45,7 @@ export function reflection(point: Cell<V>, axisStart: Cell<V>, axisEnd: Cell<V>)
   return Vec.lens(
     [point, axisStart, axisEnd] as const,
     vals => reflect(vals[0], vals[1], vals[2]),
-    (target, vals) => [reflect(target, vals[1], vals[2]), undefined, undefined] as never,
+    (target, vals) => [reflect(target, vals[1], vals[2]), SKIP, SKIP] as never,
   );
 }
 
@@ -62,7 +62,7 @@ export function vecLerp(a: Cell<V>, b: Cell<V>, t: Cell<number>): Writable<Vec> 
       const [av, bv, tv] = vals;
       const dx = target.x - (av.x + (bv.x - av.x) * tv);
       const dy = target.y - (av.y + (bv.y - av.y) * tv);
-      return [{ x: av.x + dx, y: av.y + dy }, { x: bv.x + dx, y: bv.y + dy }, undefined];
+      return [{ x: av.x + dx, y: av.y + dy }, { x: bv.x + dx, y: bv.y + dy }, SKIP];
     },
   );
 }
@@ -103,24 +103,22 @@ export function clampedMean(parents: readonly Num[], lo: number, hi: number): Wr
   const n = parents.length;
   const inv = 1 / n;
   return Num.lens(
-    parents as never,
+    parents,
     vals => {
-      const arr = vals as readonly number[];
       let s = 0;
-      for (let i = 0; i < n; i++) s += arr[i]!;
+      for (let i = 0; i < n; i++) s += vals[i]!;
       const m = s * inv;
       return m < lo ? lo : m > hi ? hi : m;
     },
     (target, vals) => {
-      const arr = vals as readonly number[];
       const clamped = target < lo ? lo : target > hi ? hi : target;
       let s = 0;
-      for (let i = 0; i < n; i++) s += arr[i]!;
+      for (let i = 0; i < n; i++) s += vals[i]!;
       const cur = s * inv;
       const delta = clamped - cur;
       const out = new Array<number>(n);
-      for (let i = 0; i < n; i++) out[i] = arr[i]! + delta;
-      return out as never;
+      for (let i = 0; i < n; i++) out[i] = vals[i]! + delta;
+      return out;
     },
   );
 }

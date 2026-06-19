@@ -7,14 +7,14 @@
 // identity on a real change). The spoke:
 //
 //   bwd   — parse the written text. Clean ⇒ push the recovered value to
-//           the hub. Errors ⇒ `updates: [undefined]` (hub untouched),
+//           the hub. Errors ⇒ `updates: [SKIP]` (hub untouched),
 //           but the complement keeps the broken text so the view echoes
 //           it back instead of trampling the editor.
 //   step  — when the hub moved away from `synced`, absorb it by
 //           three-way surgical merge around any error regions.
 //   fwd   — the complement's text.
 
-import { type Cell, cell, lens, type Writable } from "../core/cell";
+import { type Cell, cell, lens, SKIP, type Writable } from "../core/cell";
 import {
   deepEqual,
   type FormatAdapter,
@@ -68,7 +68,7 @@ export function formatSpoke(
         return { updates: [v] as const, complement: { text: target, tree, errors, synced: v } };
       }
       return {
-        updates: [undefined] as const,
+        updates: [SKIP] as const,
         complement: { text: target, tree, errors, synced: c.synced },
       };
     },

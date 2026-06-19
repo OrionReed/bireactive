@@ -2,7 +2,7 @@
 // surface (`Cls.lens([...], ...)` / `Cls.derive([...], ...)`).
 
 import { describe, expect, it } from "vitest";
-import { cell, effect, Num, num } from "../index";
+import { cell, effect, Num, num, SKIP, settle } from "../index";
 
 describe("N-input lens: reactive args inside fwd", () => {
   it("fwd reads an external cell: tracked, re-fires on its change", () => {
@@ -16,8 +16,10 @@ describe("N-input lens: reactive args inside fwd", () => {
     });
     expect(observed).toBe(3); // 1 + 2*1
     k.value = 10;
+    settle();
     expect(observed).toBe(21); // 1 + 2*10
     a.value = 5;
+    settle();
     expect(observed).toBe(25); // 5 + 2*10
     stop();
   });
@@ -32,9 +34,11 @@ describe("N-input lens: reactive args inside fwd", () => {
     });
     expect(observed).toBe(1);
     k.value = 100;
+    settle();
     expect(observed).toBe(1); // FOOTGUN: stale!
 
     a.value = 5;
+    settle();
     expect(observed).toBe(105); // re-eval triggered by parent change
     stop();
   });
@@ -96,19 +100,35 @@ describe("N-input lens: writable bwd with writeable parent that's itself a lens"
   });
 });
 
-describe("N-input lens: bwd that returns wrong-length array", () => {
-  it("FOOTGUN: bwd returning fewer elements: missing parents stay unchanged", () => {
+describe("N-input lens: short / SKIP'd bwd arrays", () => {
+  it("a short array skips the trailing parents (leaves them unchanged)", () => {
+    // A bwd may return fewer slots than parents; the trailing ones are skipped
+    // (left unchanged) — no `SKIP` padding needed. `undefined` stays a
+    // first-class value, NOT overloaded as a skip sentinel.
     const a = num(1);
     const b = num(2);
     const sum = Num.lens(
       [a, b] as const,
       vals => vals[0] + vals[1],
-      // biome-ignore lint/suspicious/noExplicitAny: testing bad usage
-      (target, vals) => [target - vals[1]] as any,
+      (target, vals) => [target - vals[1]],
     );
     (sum as unknown as { value: number }).value = 100;
     expect(a.value).toBe(98);
-    expect(b.value).toBe(2);
+    expect(b.value).toBe(2); // slot 1 omitted ⇒ skipped, unchanged
+    expect(sum.value).toBe(100);
+  });
+
+  it("SKIP leaves a non-trailing declined parent untouched", () => {
+    const a = num(1);
+    const b = num(2);
+    const sum = Num.lens(
+      [a, b] as const,
+      vals => vals[0] + vals[1],
+      (target, vals) => [target - vals[1], SKIP],
+    );
+    (sum as unknown as { value: number }).value = 100;
+    expect(a.value).toBe(98);
+    expect(b.value).toBe(2); // SKIP ⇒ unchanged
     expect(sum.value).toBe(100);
   });
 });

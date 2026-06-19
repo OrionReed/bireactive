@@ -51,12 +51,12 @@ export class MdPulley extends Diagram {
     const p1h = Vec.lens(
       [p1, p2] as const,
       ([a]) => a,
-      (t, [, b]) => [{ x: clamp(t.x, 40 + R + 10, b.x - 120), y: PY }, undefined] as never,
+      (t, [, b]) => [{ x: clamp(t.x, 40 + R + 10, b.x - 120), y: PY }],
     );
     const p2h = Vec.lens(
       [p2, p1] as const,
       ([a]) => a,
-      (t, [, b]) => [{ x: clamp(t.x, b.x + 120, W - 40 - R - 10), y: PY }, undefined] as never,
+      (t, [, b]) => [{ x: clamp(t.x, b.x + 120, W - 40 - R - 10), y: PY }],
     );
 
     // Conservation chain: each pulley is one invertible affine edge.
@@ -71,17 +71,17 @@ export class MdPulley extends Diagram {
     const aPos = Vec.lens(
       [aDrop, p1] as const,
       ([d, P1]) => ({ x: P1.x - R, y: PY + d }),
-      t => [clamp(t.y - PY, M, L1 - M), undefined] as never,
+      t => [clamp(t.y - PY, M, L1 - M)],
     );
     const cPos = Vec.lens(
       [cDrop, p2] as const,
       ([d, P2]) => ({ x: P2.x + R, y: PY + d }),
-      t => [clamp(t.y - PY, M, L2 - M), undefined] as never,
+      t => [clamp(t.y - PY, M, L2 - M)],
     );
     const bPos = Vec.lens(
       [bDrop, p1, p2] as const,
       ([d, P1, P2]) => ({ x: (P1.x + P2.x) / 2, y: PY + d }),
-      t => [clamp(t.y - PY, M, L1 - M), undefined, undefined] as never,
+      t => [clamp(t.y - PY, M, L1 - M)],
     );
 
     s(line(vec(40, GY), vec(W - 40, GY), { strokeWidth: 3 }));

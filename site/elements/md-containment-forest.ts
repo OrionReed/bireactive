@@ -16,6 +16,8 @@ import {
   line,
   type Mount,
   rect,
+  SKIP,
+  type Skip,
   Vec,
   vec,
   type Writable,
@@ -214,9 +216,9 @@ export class MdContainmentForest extends Diagram {
           const dx = tx - (ci.x + cw);
           const dy = ty - (ci.y + ch);
           const sub = subtreeOf(i, computeParents(vs));
-          return vs.map((b, kk) =>
-            sub.has(kk) ? { x: b.x + dx, y: b.y + dy, w: b.w, h: b.h } : undefined,
-          ) as never;
+          return vs.map((b, kk): BoxV | Skip =>
+            sub.has(kk) ? { x: b.x + dx, y: b.y + dy, w: b.w, h: b.h } : SKIP,
+          );
         },
       );
       const r = rect(

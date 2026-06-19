@@ -4,7 +4,18 @@
 // mins and the layout reports "infeasible" instead of silently
 // overflowing.
 
-import { box, cell, Diagram, derive, handle, label, type Mount, rect, Vec } from "@bireactive";
+import {
+  box,
+  cell,
+  Diagram,
+  derive,
+  handle,
+  label,
+  type Mount,
+  rect,
+  SKIP,
+  Vec,
+} from "@bireactive";
 import { col, row, solve } from "@bireactive/propagators";
 
 const PANE = ["#5b8def", "#e25c5c", "#f5a623"];
@@ -41,7 +52,7 @@ export class MdFlex extends Diagram {
       ([x, w, y, h]) => ({ x: x + w, y: y + h / 2 }),
       (v, [x]) => {
         const nw = v.x - x;
-        return nw > 40 ? [undefined, nw] : [];
+        return nw > 40 ? [SKIP, nw, SKIP, SKIP] : [SKIP, SKIP, SKIP, SKIP];
       },
     );
 

@@ -11,6 +11,7 @@ import {
   label,
   line,
   type Mount,
+  SKIP,
   Vec,
   vec,
 } from "@bireactive";
@@ -47,7 +48,7 @@ export class MdBestFit extends Diagram {
     const rotHandle = Vec.lens(
       [point, direction] as const,
       ([p, θ]) => ({ x: p.x + 90 * Math.cos(θ), y: p.y + 90 * Math.sin(θ) }),
-      (t, [p]) => [undefined, Math.atan2(t.y - p.y, t.x - p.x)] as never,
+      (t, [p]) => [SKIP, Math.atan2(t.y - p.y, t.x - p.x)],
     );
 
     // Perpendicular to the line direction so it doesn't overlap rotHandle.
@@ -61,7 +62,7 @@ export class MdBestFit extends Diagram {
         const dx = t.x - c.x;
         const dy = t.y - c.y;
         const proj = -dx * Math.sin(θ) + dy * Math.cos(θ);
-        return [undefined, Math.max(0, proj), undefined] as never;
+        return [SKIP, Math.max(0, proj)];
       },
     );
 

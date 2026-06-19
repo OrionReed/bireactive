@@ -11,6 +11,7 @@ import {
   line,
   type Mount,
   pathD,
+  SKIP,
   Vec,
   vec,
 } from "@bireactive";
@@ -31,12 +32,12 @@ export class MdBezierGestalt extends Diagram {
     const startTanHandle = Vec.lens(
       [start, startTangent] as const,
       ([a, t]) => ({ x: a.x + t.x, y: a.y + t.y }),
-      (target, [a]) => [undefined, { x: target.x - a.x, y: target.y - a.y }] as never,
+      (target, [a]) => [SKIP, { x: target.x - a.x, y: target.y - a.y }],
     );
     const endTanHandle = Vec.lens(
       [end, endTangent] as const,
       ([a, t]) => ({ x: a.x + t.x, y: a.y + t.y }),
-      (target, [a]) => [undefined, { x: target.x - a.x, y: target.y - a.y }] as never,
+      (target, [a]) => [SKIP, { x: target.x - a.x, y: target.y - a.y }],
     );
 
     const d = derive(() => {

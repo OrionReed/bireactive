@@ -13,6 +13,7 @@ import {
   label,
   type Mount,
   rect,
+  SKIP,
   Vec,
   vec,
   type Writable,
@@ -127,7 +128,7 @@ export class MdRcc8 extends Diagram {
     const rel = Rcc.lens(
       [A, B] as const,
       ([a, b]) => classify(a, b, EPS),
-      (target, [a, b]) => [undefined, realize(target, a, b)],
+      (target, [a, b]) => [SKIP, realize(target, a, b)],
     );
 
     const drawBox = (Bx: Writable<Box>, fill: string, stroke: string, labelText: string) => {

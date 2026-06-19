@@ -2,7 +2,7 @@
 // `Cls.derive([...], ...)`.
 
 import { describe, expect, it } from "vitest";
-import { effect, Num, num, Vec, vec } from "../index";
+import { effect, Num, num, SKIP, settle, Vec, vec } from "../index";
 
 describe("N-input lens: read-only (Cls.derive([...], fn))", () => {
   it("sum of two nums", () => {
@@ -92,7 +92,7 @@ describe("N-input lens: writable (Cls.lens([...], fwd, bwd))", () => {
         const [xv, yv, kv] = vals;
         const cur = xv + kv * yv;
         const delta = target - cur;
-        return [xv + delta / 2, yv + delta / (2 * kv), undefined];
+        return [xv + delta / 2, yv + delta / (2 * kv), SKIP];
       },
     );
     r.value = 10;
@@ -122,6 +122,7 @@ describe("N-input lens: writable (Cls.lens([...], fwd, bwd))", () => {
     });
     fires = 0;
     sum.value = 100;
+    settle();
     expect(fires).toBe(1);
     expect(sum.value).toBe(100);
     stop();

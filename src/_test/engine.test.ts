@@ -8,7 +8,7 @@
 //   - isCell brand: prototype-based, not structural
 //   - readNow() unwraps reactives without footgunning plain {value: …}
 
-import { Cell, cell, derive, effect, isCell, Num, readNow } from "@bireactive/core";
+import { Cell, cell, derive, effect, isCell, Num, readNow, SKIP, settle } from "@bireactive/core";
 import { describe, expect, it } from "vitest";
 
 describe("engine", () => {
@@ -19,6 +19,7 @@ describe("engine", () => {
       effectVal = s.value;
     });
     s.value = 42;
+    settle();
     expect(s.peek(), "peek after write returns new value").toBe(42);
     expect(effectVal, "effect saw new value").toBe(42);
     stop();
@@ -37,9 +38,11 @@ describe("engine", () => {
     });
     expect(s.value, "initial computed via effect").toBe(20);
     a.value = 5;
+    settle();
     expect(s.value, "auto-updates on a change").toBe(50);
     stop();
     a.value = 99;
+    settle();
     expect(s.value, "after dispose, no update").toBe(50);
   });
 
@@ -51,10 +54,12 @@ describe("engine", () => {
     });
     expect(t.value, "initial sync").toBe(100);
     src.value = 200;
+    settle();
     expect(t.value, "auto-updates").toBe(200);
     t.value = 999;
     expect(t.value, "manual write takes effect").toBe(999);
     src.value = 50;
+    settle();
     expect(t.value, "next src change overwrites manual").toBe(50);
     stop();
   });
@@ -67,7 +72,7 @@ describe("engine", () => {
         Num.lens(
           [cell(0)] as const,
           ([n]) => n,
-          () => [undefined] as const,
+          () => [SKIP] as const,
         ),
       ),
       "isCell(lens)",

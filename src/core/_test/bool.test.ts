@@ -1,7 +1,7 @@
 // Bool runtime + lens laws.
 
 import { describe, expect, it } from "vitest";
-import { cell, effect, isLens } from "../cell";
+import { cell, effect, isLens, settle } from "../cell";
 import { Bool, bool } from "../values/bool";
 import { box } from "../values/box";
 import { Num, num } from "../values/num";
@@ -37,8 +37,10 @@ describe("bool() factory", () => {
     });
     fires = 0;
     b.value = true; // no change
+    settle();
     expect(fires).toBe(0);
     b.value = false;
+    settle();
     expect(fires).toBe(1);
     dispose();
   });
@@ -323,9 +325,11 @@ describe("Bool — effect tracking", () => {
     });
     fires = 0;
     b.value = true;
+    settle();
     expect(last).toBe(true);
     expect(fires).toBe(1);
     b.value = false;
+    settle();
     expect(fires).toBe(2);
     dispose();
   });
@@ -341,6 +345,7 @@ describe("Bool — effect tracking", () => {
     });
     fires = 0;
     b.value = true;
+    settle();
     expect(last).toBe(false);
     expect(fires).toBe(1);
     dispose();
@@ -359,9 +364,11 @@ describe("Bool — effect tracking", () => {
     });
     fires = 0;
     c.value = false;
+    settle();
     expect(last).toBe(false);
     expect(fires).toBe(1);
     c.value = true;
+    settle();
     expect(last).toBe(true);
     dispose();
   });
@@ -407,6 +414,7 @@ describe("Bool — stress", () => {
       }
     });
     b.value = true;
+    settle();
     expect(fires).toBeLessThan(100);
     expect(b.value).toBe(false);
     dispose();

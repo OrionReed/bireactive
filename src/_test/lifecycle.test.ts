@@ -1,7 +1,7 @@
 // lifecycle.test.ts — disposal, dispose-fn idempotence, equals-skip,
 // large-scale unwatch.
 
-import { cell, effect, vec } from "@bireactive/core";
+import { cell, effect, settle, vec } from "@bireactive/core";
 import { describe, expect, it } from "vitest";
 
 describe("lifecycle", () => {
@@ -27,9 +27,11 @@ describe("lifecycle", () => {
       observed = t.value;
     });
     src.value = 10;
+    settle();
     expect(observed, "effect observes through mirror").toBe(10);
     stop();
     src.value = 20;
+    settle();
     expect(observed, "after dispose, no propagation").toBe(10);
     stopE();
   });
@@ -58,8 +60,10 @@ describe("lifecycle", () => {
       fires++;
     });
     v.value = { x: 1, y: 2 };
+    settle();
     expect(fires, "equals skips no-op write").toBe(1);
     v.value = { x: 1, y: 3 };
+    settle();
     expect(fires, "real change fires").toBe(2);
     stop();
   });

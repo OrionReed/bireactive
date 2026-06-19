@@ -1,6 +1,6 @@
 // Chain of rigid bars linked by revolute joints.
 
-import { circle, Diagram, label, type Mount, rect, Vec } from "@bireactive";
+import { circle, Diagram, label, type Mount, rect, SKIP, Vec } from "@bireactive";
 import { animate, type Body, body, dragBody, joint, world } from "@bireactive/constraints";
 
 const N = 18;
@@ -64,7 +64,7 @@ export class MdRigidRope extends Diagram {
           const sn = Math.sin(angle);
           return { x: p.x + c * (-LINK_W / 2) - sn * 0, y: p.y + sn * (-LINK_W / 2) + c * 0 };
         },
-        () => [undefined, undefined] as const,
+        () => [SKIP, SKIP] as const,
       );
       s(circle(pivot, 1.6, { fill: "#fff", thin: true }));
     }

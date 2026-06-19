@@ -16,6 +16,7 @@
 // `bundle()` is the 1→M case: `factor()` over a single typed source.
 
 import type { Cell, Inner, Pack, Read, Traits, Writable } from "../index";
+import { SKIP, type Skip } from "../index";
 import { solveSPD } from "../linalg";
 
 /** Input cell: writable cell whose value class declares the `pack`
@@ -155,7 +156,7 @@ export function factor<
     channelIdx: number, // which named output is being written
     target: unknown,
     vals: ReadonlyArray<unknown>,
-  ): (unknown | undefined)[] => {
+  ): (unknown | Skip)[] => {
     // 1. Pack current inputs → flatIn
     for (let k = 0; k < inputCount; k++) {
       inputPacks[k]!.read(vals[k], flatIn as unknown as Float64Array, inputOffsets[k]!);
@@ -239,12 +240,12 @@ export function factor<
 
     // 6. Solve A · k = δy in place (LDLᵀ; `dy` is overwritten with k).
     if (!solveSPD(A, dy, M)) {
-      return vals.map(() => undefined);
+      return vals.map(() => SKIP);
     }
 
     // 7. δx = W J^T k, applied to flatIn → produces new flat input vector.
     //    Then unpack per-input to typed updates.
-    const updates = new Array<unknown | undefined>(inputCount);
+    const updates = new Array<unknown | Skip>(inputCount);
     for (let k = 0; k < inputCount; k++) {
       const baseOff = inputOffsets[k]!;
       const dim = inputDims[k]!;
@@ -261,7 +262,7 @@ export function factor<
       }
       updates[k] = anyChange
         ? inputPacks[k]!.write(flatIn as unknown as Float64Array, baseOff)
-        : undefined;
+        : SKIP;
     }
     return updates;
   };
@@ -287,7 +288,7 @@ export function factor<
       for (let it = 0; it < maxIters; it++) {
         const updates = computeBwd(idx, target, cur);
         for (let i = 0; i < cur.length; i++) {
-          if (updates[i] !== undefined) cur[i] = updates[i];
+          if (updates[i] !== SKIP) cur[i] = updates[i];
         }
         outPack.read(spec.fwd(cur as never) as never, currentBuf as unknown as Float64Array, 0);
         let sumSq = 0;

@@ -5,7 +5,7 @@
 // never per contributor write, and not at all while unobserved.
 
 import { describe, expect, it, vi } from "vitest";
-import { batch, type Cell, cell, derive, effect } from "../index";
+import { batch, type Cell, cell, derive, effect, settle } from "../index";
 
 /** Fold N reactive `proposals` into one source via `cell.merge(fold)`,
  *  re-asserting every contributor each settle so the fold sees the full
@@ -63,6 +63,7 @@ describe("cell.merge — fold policies", () => {
     a.value = 0;
     b.value = 2;
     c.value = 4;
+    settle();
     // [-5,5] ∩ [-3,7] ∩ [-1,9] = [-1,5]
     expect(meet.value).toEqual({ lo: -1, hi: 5 });
   });
@@ -77,6 +78,7 @@ describe("cell.merge — fold policies", () => {
     );
     expect(reg.value.who).toBe(2); // highest ts wins
     props[0]!.value = { ts: 9, v: 99, who: 0 };
+    settle();
     expect(reg.value.who).toBe(0);
     expect(reg.value.v).toBe(99);
   });
@@ -87,6 +89,7 @@ describe("cell.merge — fold policies", () => {
     e[0]!.value = 1;
     e[1]!.value = 2;
     e[2]!.value = -0.5;
+    settle();
     expect(sum.value).toBeCloseTo(2.5, 9);
   });
 
@@ -98,11 +101,13 @@ describe("cell.merge — fold policies", () => {
     a[0]!.value = 3;
     a[2]!.value = 7;
     a[1]!.value = 5;
+    settle();
     const b = mk();
     const sb = mergeOf(0, fold, b);
     b[2]!.value = 7;
     b[1]!.value = 5;
     b[0]!.value = 3;
+    settle();
     expect(sa.value).toBe(sb.value);
     expect(sa.value).toBe(15);
   });
@@ -112,11 +117,7 @@ describe("cell.merge — minimality", () => {
   it("folds once per settle, not once per contributor write", () => {
     const combine = vi.fn((a: number, b: number) => a + b);
     const props = [0, 1, 2].map(() => cell(0));
-    const sum = mergeOf(
-      0,
-      vals => vals.reduce(combine, 0),
-      props,
-    );
+    const sum = mergeOf(0, vals => vals.reduce(combine, 0), props);
     void sum.value; // settle initial
     combine.mockClear();
     // One batched settle that moves all three contributors.

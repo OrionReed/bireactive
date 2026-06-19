@@ -6,7 +6,7 @@
 // (`(target) => updates`) skips the peek loop on the hot path;
 // stateful-bwd (`(target, vals) => updates`) reads the scratch.
 
-import type { Writable } from "../cell";
+import { SKIP, type Skip, type Writable } from "../cell";
 import { Num } from "../values/num";
 import { Vec } from "../values/vec";
 
@@ -80,10 +80,10 @@ export function argminNum(
   const n = inputs.length;
   // Pre-allocated to avoid per-write allocations.
   const J = new Array<number>(n);
-  const out = new Array<number | undefined>(n);
+  const out = new Array<number | Skip>(n);
   return Num.lens(
-    inputs as never,
-    vals => forward(vals as readonly number[]),
+    inputs,
+    vals => forward(vals),
     (target, vals) => {
       const xs = vals as number[];
       const y0 = forward(xs);
@@ -99,12 +99,12 @@ export function argminNum(
       const k = dy / denom;
       for (let i = 0; i < n; i++) {
         if (weights[i] === 0) {
-          out[i] = undefined;
+          out[i] = SKIP;
         } else {
           out[i] = xs[i]! + weights[i]! * J[i]! * k;
         }
       }
-      return out as never;
+      return out;
     },
   );
 }
@@ -128,10 +128,10 @@ export function argminVec(
   // Pre-allocated to avoid per-write allocations.
   const Jx = new Array<number>(n);
   const Jy = new Array<number>(n);
-  const out = new Array<number | undefined>(n);
+  const out = new Array<number | Skip>(n);
   return Vec.lens(
-    inputs as never,
-    vals => forward(vals as readonly number[]),
+    inputs,
+    vals => forward(vals),
     (rawTarget, vals) => {
       const xs = vals as number[];
       const target = clamp ? clamp(rawTarget, xs) : rawTarget;
@@ -159,8 +159,8 @@ export function argminVec(
       const det = a * c - b * b;
       if (Math.abs(det) < 1e-14) {
         // Singular; leave inputs unchanged.
-        for (let i = 0; i < n; i++) out[i] = undefined;
-        return out as never;
+        for (let i = 0; i < n; i++) out[i] = SKIP;
+        return out;
       }
       const invA = c / det;
       const invB = -b / det;
@@ -170,12 +170,12 @@ export function argminVec(
       for (let i = 0; i < n; i++) {
         const w = weights[i]!;
         if (w === 0) {
-          out[i] = undefined;
+          out[i] = SKIP;
         } else {
           out[i] = xs[i]! + w * (Jx[i]! * kx + Jy[i]! * ky);
         }
       }
-      return out as never;
+      return out;
     },
   );
 }

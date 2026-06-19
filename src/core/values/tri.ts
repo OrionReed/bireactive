@@ -4,7 +4,7 @@
 // fixed under negation. Strong-Kleene AND/OR follow the partial-info
 // reading (`mixed AND false` → `false`, `mixed AND true` → `mixed`).
 
-import { Cell, type Init, type Writable } from "../cell";
+import { Cell, type Init, SKIP, type Writable } from "../cell";
 import type { TraitDict } from "../traits";
 import type { Bool } from "./bool";
 
@@ -63,7 +63,7 @@ export class Tri extends Cell<V> {
         return anyT;
       },
       (target, _vs) => {
-        if (target === "mixed") return parents.map(() => undefined) as never;
+        if (target === "mixed") return parents.map(() => SKIP) as never;
         return parents.map(() => target) as never;
       },
     );
@@ -88,7 +88,7 @@ export class Tri extends Cell<V> {
         return "mixed";
       },
       (target, _vs) => {
-        if (target === "mixed") return parents.map(() => undefined) as never;
+        if (target === "mixed") return parents.map(() => SKIP) as never;
         return parents.map(() => target) as never;
       },
     );

@@ -16,6 +16,7 @@ import {
   Num,
   num,
   rect,
+  SKIP,
   vec,
   type Writable,
 } from "@bireactive";
@@ -269,22 +270,22 @@ export class MdBoolBridges extends Diagram {
         [a6, b6] as const,
         ([pa, pb]) => overlapping(pa, pb),
         (target, [pa, pb]) => {
-          if (overlapping(pa, pb) === target) return [undefined, undefined];
+          if (overlapping(pa, pb) === target) return [SKIP, SKIP];
           const dx = pb.x - pa.x;
           const dy = pb.y - pa.y;
           if (target) {
             // Pull B in: clamp each axis so the boxes overlap minimally.
             const nx = Math.abs(dx) >= 2 * HW ? pa.x + Math.sign(dx || 1) * (2 * HW - EPS) : pb.x;
             const ny = Math.abs(dy) >= 2 * HH ? pa.y + Math.sign(dy || 1) * (2 * HH - EPS) : pb.y;
-            return [undefined, { x: nx, y: ny }];
+            return [SKIP, { x: nx, y: ny }];
           }
           // Push B out along the min-penetration axis.
           const penX = 2 * HW - Math.abs(dx);
           const penY = 2 * HH - Math.abs(dy);
           if (penX <= penY) {
-            return [undefined, { x: pa.x + Math.sign(dx || 1) * (2 * HW + EPS), y: pb.y }];
+            return [SKIP, { x: pa.x + Math.sign(dx || 1) * (2 * HW + EPS), y: pb.y }];
           }
-          return [undefined, { x: pb.x, y: pa.y + Math.sign(dy || 1) * (2 * HH + EPS) }];
+          return [SKIP, { x: pb.x, y: pa.y + Math.sign(dy || 1) * (2 * HH + EPS) }];
         },
       );
       const boxRect = (c: typeof a6, fill: string, stroke: string) =>

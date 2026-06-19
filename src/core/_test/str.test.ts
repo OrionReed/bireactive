@@ -1,7 +1,7 @@
 // Str runtime + symmetric lens laws.
 
 import { describe, expect, it } from "vitest";
-import { effect, isLens } from "../cell";
+import { effect, isLens, settle } from "../cell";
 import { Num } from "../values/num";
 import {
   applyCaseMask,
@@ -615,6 +615,7 @@ describe("Effects subscribe to symmetric chains", () => {
     });
     fires = 0;
     s.value = "  bye  ";
+    settle();
     expect(last).toBe("bye");
     expect(fires).toBe(1);
     dispose();
@@ -632,6 +633,7 @@ describe("Effects subscribe to symmetric chains", () => {
     });
     fires = 0;
     lo.value = "world";
+    settle();
     expect(last).toBe("world");
     expect(fires).toBe(1);
     dispose();

@@ -3,7 +3,7 @@
 // over-firing effects, source mutated on read, or cross-lens complement corruption.
 
 import { describe, expect, it } from "vitest";
-import { effect, network, untracked } from "../cell";
+import { effect, network, settle, untracked } from "../cell";
 import { bestFitCircle, bestFitLine, scaleAbout } from "../lenses/closed-form-policies";
 import { bbox } from "../lenses/decompositions";
 import { spread as spreadView } from "../lenses/domain-aggregates";
@@ -87,6 +87,7 @@ describe("multiple concurrent readers", () => {
       }),
     );
     spread.value = 9;
+    settle();
     expect(readings[0]).toEqual(readings[1]);
     expect(readings[1]).toEqual(readings[2]);
     expect(readings[0]).toBeCloseTo(9, 9);
@@ -109,6 +110,7 @@ describe("multiple concurrent readers", () => {
       }),
     );
     spread.value = 7;
+    settle();
     // Each effect fires once on init + once on write.
     for (const f of fires) expect(f).toBe(2);
     ds.forEach(d => d());

@@ -10,6 +10,7 @@ import {
   type Mount,
   Pose,
   pose,
+  SKIP,
   type TreeNode,
   treeNode,
   Vec,
@@ -112,12 +113,12 @@ function bone(name: string, localPose: PoseV, parent: Bone | null): Bone {
         return { x: w.x, y: w.y };
       },
       (target, vals) => {
-        const [pw, l] = vals as readonly [PoseV, PoseV];
+        const [pw, l] = vals;
         const currentWorld = compose(pw, l);
         // Preserve current world theta (drag translates only).
         const newWorld: PoseV = { x: target.x, y: target.y, theta: currentWorld.theta };
         const newLocal = decompose(newWorld, pw);
-        return [undefined, newLocal] as never;
+        return [SKIP, newLocal];
       },
     );
     rotThumb = Vec.lens(
@@ -131,11 +132,11 @@ function bone(name: string, localPose: PoseV, parent: Bone | null): Bone {
         };
       },
       (target, vals) => {
-        const [pw, l] = vals as readonly [PoseV, PoseV];
+        const [pw, l] = vals;
         const w = compose(pw, l);
         const newWorldTheta = Math.atan2(target.y - w.y, target.x - w.x);
         const newLocalTheta = newWorldTheta - pw.theta;
-        return [undefined, { x: l.x, y: l.y, theta: newLocalTheta }] as never;
+        return [SKIP, { x: l.x, y: l.y, theta: newLocalTheta }];
       },
     );
   }

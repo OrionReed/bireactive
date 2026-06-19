@@ -174,4 +174,5 @@ out
 .yarn/install-state.gz
 .pnp.\*
 
-.cursor/
+.cursor
+.scratch/

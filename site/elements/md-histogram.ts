@@ -13,6 +13,8 @@ import {
   Num,
   num,
   rect,
+  SKIP,
+  type Skip,
   Vec,
   vec,
   type Writable,
@@ -39,11 +41,11 @@ const INIT = [
 
 /** Backward pass: move the fewest samples across the nearest boundary so
  *  bin `i` ends up with ~`target` samples. Returns per-sample updates. */
-function transport(vals: readonly number[], i: number, target: number): (number | undefined)[] {
+function transport(vals: readonly number[], i: number, target: number): (number | Skip)[] {
   const bw = 1 / K;
   const lo = i * bw;
   const hi = (i + 1) * bw;
-  const out = vals.map(() => undefined as number | undefined);
+  const out = vals.map((): number | Skip => SKIP);
   const cur = vals.filter(v => binOf(v) === i).length;
   const diff = Math.round(Math.max(0, target)) - cur;
 
@@ -87,7 +89,7 @@ export class MdHistogram extends Diagram {
       Num.lens(
         samples,
         (vs: readonly number[]) => vs.filter(v => binOf(v) === i).length,
-        (target, vs) => transport(vs as readonly number[], i, target) as never,
+        (target, vs) => transport(vs, i, target),
       ),
     );
 

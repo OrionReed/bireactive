@@ -2,7 +2,7 @@
 // the full hub-and-spoke write-around scenario.
 
 import { describe, expect, it } from "vitest";
-import { effect } from "../../core/cell";
+import { effect, settle } from "../../core/cell";
 import {
   deepEqual,
   type FormatAdapter,
@@ -402,9 +402,11 @@ describe("hub and spokes", () => {
     });
 
     json.value = '{"a": 1, "b": oops}'; // broken — hub unmoved
+    settle();
     expect(seen[seen.length - 1]).toBe('{"a": 1, "b": oops}');
 
     yaml.value = "a: 9\nb: 2\n"; // external change while broken
+    settle();
     expect(seen[seen.length - 1]).toContain('"a": 9');
     expect(seen[seen.length - 1]).toContain('"b": oops');
     dispose();

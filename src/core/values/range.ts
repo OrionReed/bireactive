@@ -15,6 +15,7 @@ import {
   isReadonly,
   reader,
   readNow,
+  SKIP,
   type Val,
   type Writable,
   type WritableBrand,
@@ -153,7 +154,7 @@ export class Range extends Cell<V> {
       ([r, tv]) => sample(r, tv),
       (v, [r]) => {
         const w = r.hi - r.lo;
-        return [undefined, w === 0 ? 0 : (v - r.lo) / w];
+        return [SKIP, w === 0 ? 0 : (v - r.lo) / w];
       },
     );
   }
@@ -172,8 +173,8 @@ export class Range extends Cell<V> {
           (vals: readonly [V, number]) => contains(vals[0], vals[1]),
           (target, vals) => {
             const [r, n] = vals as readonly [V, number];
-            if (contains(r, n) === target) return [undefined, undefined] as never;
-            return [undefined, target ? clamp(r, n) : eject(r, n)] as never;
+            if (contains(r, n) === target) return [SKIP, SKIP] as never;
+            return [SKIP, target ? clamp(r, n) : eject(r, n)] as never;
           },
         ) as never;
       }

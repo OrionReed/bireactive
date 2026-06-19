@@ -14,6 +14,7 @@ import {
   Num,
   type Read,
   reader,
+  SKIP,
   type Traits,
   type Val,
   Vec,
@@ -41,7 +42,7 @@ export function mean<S extends Traits<any, "linear">>(inputs: readonly Writable<
   const inv = 1 / n;
   // biome-ignore lint/suspicious/noExplicitAny: variance escape on Cls.lens
   return (Cls as any).lens(
-    inputs as never,
+    inputs,
     // biome-ignore lint/suspicious/noExplicitAny: variance escape
     (vals: any) => {
       let acc = vals[0];
@@ -56,7 +57,7 @@ export function mean<S extends Traits<any, "linear">>(inputs: readonly Writable<
       const delta = lin.sub(target, cur);
       const out: unknown[] = new Array(n);
       for (let i = 0; i < n; i++) out[i] = lin.add(vals[i], delta);
-      return out as never;
+      return out;
     },
   );
 }
@@ -113,18 +114,18 @@ export function mix<S extends Traits<any, "linear">>(
 
   // biome-ignore lint/suspicious/noExplicitAny: variance escape on Cls.lens
   return (Cls as any).lens(
-    branches as never,
+    branches,
     // biome-ignore lint/suspicious/noExplicitAny: variance escape
     (vals: any) => combine(vals, readW().w),
     // biome-ignore lint/suspicious/noExplicitAny: variance escape
     (target: any, vals: any) => {
       const { w, sumSq } = readW();
       const delta = lin.sub(target, combine(vals, w));
-      if (sumSq < 1e-12) return vals.map(() => undefined) as never;
+      if (sumSq < 1e-12) return vals.map(() => SKIP);
       const inv = 1 / sumSq;
       return vals.map((v: unknown, i: number) =>
-        w[i] === 0 ? undefined : lin.add(v, lin.scale(delta, w[i]! * inv)),
-      ) as never;
+        w[i] === 0 ? SKIP : lin.add(v, lin.scale(delta, w[i]! * inv)),
+      );
     },
   );
 }
@@ -210,7 +211,7 @@ export function meanSpread<
   S extends Cell<T> & Traits<T, "linear" | "metric">,
 >(colors: readonly Writable<S>[]): { mean: Writable<S>; spread: Writable<Num> } {
   return {
-    mean: mean(colors as never) as Writable<S>,
+    mean: mean(colors),
     spread: spread(colors as never),
   };
 }
@@ -264,14 +265,14 @@ export function bezierGestalt(
     [p0, p1] as const,
     (vals: readonly V[]) => ({ x: vals[1]!.x - vals[0]!.x, y: vals[1]!.y - vals[0]!.y }),
     (target: V, vals: readonly V[]) =>
-      [undefined, { x: vals[0]!.x + target.x, y: vals[0]!.y + target.y }] as never,
+      [SKIP, { x: vals[0]!.x + target.x, y: vals[0]!.y + target.y }] as never,
   );
 
   const endTangent = Vec.lens(
     [p2, p3] as const,
     (vals: readonly V[]) => ({ x: vals[1]!.x - vals[0]!.x, y: vals[1]!.y - vals[0]!.y }),
     (target: V, vals: readonly V[]) =>
-      [{ x: vals[1]!.x - target.x, y: vals[1]!.y - target.y }, undefined] as never,
+      [{ x: vals[1]!.x - target.x, y: vals[1]!.y - target.y }, SKIP] as never,
   );
 
   return { start, end, startTangent, endTangent };
@@ -294,7 +295,7 @@ export function timeSeries(values: readonly Writable<Num>[]): {
   if (N < 2) throw new Error("timeSeries: need ≥ 2 values");
 
   const mean = Num.lens(
-    values as never,
+    values,
     (vals: readonly number[]) => {
       let s = 0;
       for (let i = 0; i < N; i++) s += vals[i]!;
@@ -305,7 +306,7 @@ export function timeSeries(values: readonly Writable<Num>[]): {
       for (let i = 0; i < N; i++) s += vals[i]!;
       const cur = s / N;
       const delta = target - cur;
-      return vals.map(v => v + delta) as never;
+      return vals.map(v => v + delta);
     },
   );
 
@@ -320,7 +321,7 @@ export function timeSeries(values: readonly Writable<Num>[]): {
   }
 
   const slope = Num.lens(
-    values as never,
+    values,
     (vals: readonly number[]) => {
       let valMean = 0;
       for (let i = 0; i < N; i++) valMean += vals[i]!;
@@ -333,7 +334,7 @@ export function timeSeries(values: readonly Writable<Num>[]): {
       let valMean = 0;
       for (let i = 0; i < N; i++) valMean += vals[i]!;
       valMean /= N;
-      return vals.map((_, i) => valMean + (i - idxMean) * target) as never;
+      return vals.map((_, i) => valMean + (i - idxMean) * target);
     },
   );
 

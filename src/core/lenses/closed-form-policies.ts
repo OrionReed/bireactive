@@ -17,6 +17,7 @@ import {
   Num,
   type Pivotal,
   type Read,
+  SKIP,
   type Traits,
   Vec,
   type Writable,
@@ -41,7 +42,7 @@ function pivotalOf<T>(input: Writable<any>): Pivotal<T> {
 /** Writable centroid; on write, translates every point by the delta.
  *  The Vec-specific group-action reading of `mean`. */
 export function rigidTranslate(points: readonly Writable<Vec>[]): Writable<Vec> {
-  return mean(points as never) as Writable<Vec>;
+  return mean(points);
 }
 
 /** Writable angle from `pivot` to `points[0]`; write rotates every input
@@ -70,7 +71,7 @@ export function rotateAbout<T extends { x: number; y: number }>(
       const rx0 = vals[0]!.x - p.x;
       const ry0 = vals[0]!.y - p.y;
       if (rx0 * rx0 + ry0 * ry0 < 1e-24) {
-        return vals.map(() => undefined) as never;
+        return vals.map(() => SKIP) as never;
       }
       const oldθ = Math.atan2(ry0, rx0);
       const dθ = target - oldθ;
@@ -125,10 +126,10 @@ export function scaleAbout<T extends { x: number; y: number }>(
       // Lossy magnitude view: |−r| = r, so a same-magnitude target
       // re-projects to the current radius and is absorbed (sources put).
       const rNow = Math.hypot(vals[0]!.x - p.x, vals[0]!.y - p.y);
-      if (Math.abs(target) === rNow) return { updates: vals.map(() => undefined), complement: c };
+      if (Math.abs(target) === rNow) return { updates: vals.map(() => SKIP), complement: c };
       const d0 = c.devs[0]!;
       const r0 = Math.hypot(d0.x, d0.y);
-      if (r0 < 1e-12) return { updates: vals.map(() => undefined), complement: c };
+      if (r0 < 1e-12) return { updates: vals.map(() => SKIP), complement: c };
       const k = target / r0;
       const out = vals.map((v, i) => ({
         ...v,
@@ -163,7 +164,7 @@ export function scaleAboutXY(points: readonly Writable<Vec>[], pivot: Read<V>): 
     }));
   };
 
-  return Vec.lens(points as readonly Writable<Vec>[], {
+  return Vec.lens(points, {
     init: (vals: readonly V[]): C => {
       const p = pivot.peek();
       const ox = vals[0]!.x - p.x;
@@ -251,7 +252,7 @@ export function bestFitLine(points: readonly Writable<Vec>[]): {
     return { cx, cy, rawθ: dominantAxisAngle(cxx, cxy, cyy), degenerate: false };
   };
 
-  const direction = continuous(points as readonly Writable<Vec>[], {
+  const direction = continuous(points, {
     period: Math.PI,
     raw: (vals: readonly V[]) => {
       const { rawθ, degenerate } = axisOf(vals);
@@ -369,11 +370,11 @@ export function pca(points: readonly Writable<Vec>[]): {
   };
 
   const rotation = Num.lens(
-    points as never,
+    points,
     (vals: readonly V[]) => decompose(vals)?.θ ?? 0,
     (target: number, vals: readonly V[]) => {
       const d = decompose(vals);
-      if (!d) return vals.map(() => undefined) as never;
+      if (!d) return vals.map((): typeof SKIP => SKIP);
       const dθ = target - d.θ;
       const cos = Math.cos(dθ);
       const sin = Math.sin(dθ);
@@ -383,7 +384,7 @@ export function pca(points: readonly Writable<Vec>[]): {
         const ry = vals[i]!.y - d.cy;
         out[i] = { x: d.cx + cos * rx - sin * ry, y: d.cy + sin * rx + cos * ry };
       }
-      return out as never;
+      return out;
     },
   );
 
@@ -454,7 +455,7 @@ export function pca(points: readonly Writable<Vec>[]): {
       return { uX: ux, uY: uy, vX: vx, vY: vy, lenThis, lenOther, projThis, projOther };
     };
 
-    return Num.lens(points as readonly Writable<Vec>[], {
+    return Num.lens(points, {
       init: (vals: readonly V[]): AxisC => {
         const seed: AxisC = {
           uX: 1,
@@ -480,7 +481,7 @@ export function pca(points: readonly Writable<Vec>[]): {
           // Lossy magnitude view: a same-magnitude target re-projects to
           // the current axis length and is absorbed (cluster left put).
           if (Math.abs(target) === c.lenThis)
-            return { updates: vals.map(() => undefined), complement: c };
+            return { updates: vals.map((): typeof SKIP => SKIP), complement: c };
           // Non-degenerate fast path: scale current cluster along axis.
           const k = target / c.lenThis;
           return { updates: scaleAlongAxis(vals, d.cx, d.cy, c.uX, c.uY, k), complement: c };

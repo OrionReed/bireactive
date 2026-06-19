@@ -1,7 +1,7 @@
 // lifecycle.test.ts — `each`, `when`.
 
 import { describe, expect, it } from "vitest";
-import { cell, each } from "../index";
+import { cell, each, settle } from "../index";
 import { when as whenLifecycle } from "../lifecycle";
 
 describe("each — reactive collection lifecycle", () => {
@@ -21,10 +21,12 @@ describe("each — reactive collection lifecycle", () => {
     expect(removed).toEqual([]);
 
     items.value = [e1, e2, e3];
+    settle();
     expect(built).toEqual([e1, e2, e3]);
     expect(removed).toEqual([]);
 
     items.value = [e1, e3];
+    settle();
     expect(built).toEqual([e1, e2, e3]);
     expect(removed).toEqual([e2]);
 
@@ -52,6 +54,7 @@ describe("each — reactive collection lifecycle", () => {
     // Replace e1 with e1Copy: structurally identical, but different ref.
     // Body should rebuild for the new ref; cleanup the old.
     items.value = [e1Copy];
+    settle();
     expect(builds).toBe(2);
     expect(cleanups).toBe(1);
     handle.dispose();
@@ -82,12 +85,15 @@ describe("when — boolean lifecycle", () => {
     expect(active).toBe(0);
 
     flag.value = true;
+    settle();
     expect(active).toBe(1);
 
     flag.value = false;
+    settle();
     expect(active).toBe(0);
 
     flag.value = true;
+    settle();
     expect(active).toBe(1);
 
     handle.dispose();
@@ -108,13 +114,16 @@ describe("when — boolean lifecycle", () => {
 
     // Re-write same truthy value (no-op for `===` equality).
     flag.value = true;
+    settle();
     expect(builds).toBe(1);
     expect(cleanups).toBe(0);
 
     flag.value = false;
+    settle();
     expect(cleanups).toBe(1);
 
     flag.value = true;
+    settle();
     expect(builds).toBe(2);
 
     handle.dispose();

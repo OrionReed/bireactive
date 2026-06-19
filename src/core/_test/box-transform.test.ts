@@ -8,6 +8,7 @@ import {
   isLens,
   isReadonly,
   num,
+  settle,
   Transform,
   transform,
   Vec,
@@ -128,7 +129,9 @@ describe("Transform", () => {
       xs.push(tr.translate.x.value);
     });
     tr.translate.x.value = 10;
+    settle();
     tr.translate.x.value = 20;
+    settle();
     expect(xs).toEqual([0, 10, 20]);
   });
 });

@@ -3,7 +3,7 @@
 // because unit deviations live in the complement, not the collapsed source).
 
 import { describe, expect, it } from "vitest";
-import { cell, effect, lens } from "../index";
+import { cell, effect, lens, settle } from "../index";
 import { Num, num } from "../values/num";
 import { vec } from "../values/vec";
 
@@ -213,10 +213,12 @@ describe("backward pass is untracked", () => {
 
     // An external edit to the lens's source must NOT re-run the effect.
     b.value = 55;
+    settle();
     expect(runs).toBe(1);
 
     // The real dependency still drives re-runs (and the back-write again).
     a.value = 7;
+    settle();
     expect(runs).toBe(2);
     expect(b.peek()).toBe(7);
 

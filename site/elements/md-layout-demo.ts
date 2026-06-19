@@ -1,4 +1,15 @@
-import { arrange, Diagram, handle, label, type Mount, num, rect, spring, Vec } from "@bireactive";
+import {
+  arrange,
+  Diagram,
+  handle,
+  label,
+  type Mount,
+  num,
+  rect,
+  SKIP,
+  spring,
+  Vec,
+} from "@bireactive";
 
 const WIDTHS = [72, 68, 80, 60, 76];
 const HEIGHTS = [52, 44, 60, 48, 56];
@@ -29,7 +40,7 @@ export class MdLayoutDemo extends Diagram {
       const pos = Vec.lens(
         [handleX, card.translate] as const,
         ([hx, t]) => ({ x: hx, y: t.y + h / 2 }),
-        p => [p.x],
+        p => [p.x, SKIP],
       );
       return s(handle(pos, { cursor: "ew-resize", r: 5 }));
     });

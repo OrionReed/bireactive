@@ -15,6 +15,7 @@ import {
   type Range,
   range,
   rect,
+  SKIP,
   vec,
   type Writable,
 } from "@bireactive";
@@ -134,7 +135,7 @@ export class MdAllen extends Diagram {
     const rel = Allen.lens(
       [A, B] as const,
       ([a, b]) => classify(a, b, EPS),
-      (target, [a, b]) => [undefined, realize(target, a, b)],
+      (target, [a, b]) => [SKIP, realize(target, a, b)],
     );
 
     // The bar drags the whole interval; endpoint handles resize. Each

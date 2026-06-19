@@ -7,7 +7,7 @@
 // write lands in O(K). For the generic numerical N→M escape hatch (when
 // no closed form fits) see `factor` in `typed-factor.ts`.
 
-import { Num, Vec, type Writable } from "../index";
+import { Num, SKIP, Vec, type Writable } from "../index";
 
 // meanDiff — M=2 isomorphism baseline.
 //
@@ -59,7 +59,7 @@ export function procrustes(points: readonly Writable<Vec>[]): {
   type V = { x: number; y: number };
 
   const centroid = Vec.lens(
-    points as never,
+    points,
     (vals: readonly V[]) => {
       let sx = 0;
       let sy = 0;
@@ -80,12 +80,12 @@ export function procrustes(points: readonly Writable<Vec>[]): {
       const dy = target.y - sy / K;
       const out = new Array<V>(K);
       for (let i = 0; i < K; i++) out[i] = { x: vals[i]!.x + dx, y: vals[i]!.y + dy };
-      return out as never;
+      return out;
     },
   );
 
   const rotation = Num.lens(
-    points as never,
+    points,
     (vals: readonly V[]) => {
       let sx = 0;
       let sy = 0;
@@ -110,7 +110,7 @@ export function procrustes(points: readonly Writable<Vec>[]): {
       const ry0 = vals[0]!.y - cy;
       if (rx0 * rx0 + ry0 * ry0 < 1e-24) {
         // Collapsed cluster; no angle to rotate from.
-        return vals.map(() => undefined) as never;
+        return vals.map((): typeof SKIP => SKIP);
       }
       const oldθ = Math.atan2(ry0, rx0);
       const dθ = target - oldθ;
@@ -122,7 +122,7 @@ export function procrustes(points: readonly Writable<Vec>[]): {
         const ry = vals[i]!.y - cy;
         out[i] = { x: cx + cos * rx - sin * ry, y: cy + sin * rx + cos * ry };
       }
-      return out as never;
+      return out;
     },
   );
 
@@ -150,7 +150,7 @@ export function procrustes(points: readonly Writable<Vec>[]): {
     });
   };
 
-  const scale = Num.lens(points as readonly Writable<Vec>[], {
+  const scale = Num.lens(points, {
     init: (vals: readonly V[]): C => {
       const c = centroidOf(vals);
       return { devs: vals.map(v => ({ x: v.x - c.x, y: v.y - c.y })) };
@@ -164,7 +164,7 @@ export function procrustes(points: readonly Writable<Vec>[]): {
       const cen = centroidOf(vals);
       const d0 = c.devs[0]!;
       const r0 = Math.hypot(d0.x, d0.y);
-      if (r0 < 1e-12) return { updates: vals.map(() => undefined), complement: c };
+      if (r0 < 1e-12) return { updates: vals.map((): typeof SKIP => SKIP), complement: c };
       const k = target / r0;
       const out = c.devs.map(d => ({ x: cen.x + k * d.x, y: cen.y + k * d.y }));
       return { updates: out, complement: c };
@@ -213,7 +213,7 @@ export function bbox(points: readonly Writable<Vec>[]): {
   };
 
   const center = Vec.lens(
-    points as never,
+    points,
     (vals: readonly V[]) => {
       const b = computeBox(vals);
       return { x: b.cx, y: b.cy };
@@ -224,7 +224,7 @@ export function bbox(points: readonly Writable<Vec>[]): {
       const dy = target.y - b.cy;
       const out = new Array<V>(K);
       for (let i = 0; i < K; i++) out[i] = { x: vals[i]!.x + dx, y: vals[i]!.y + dy };
-      return out as never;
+      return out;
     },
   );
 
@@ -243,7 +243,7 @@ export function bbox(points: readonly Writable<Vec>[]): {
     }));
   };
 
-  const size = Vec.lens(points as readonly Writable<Vec>[], {
+  const size = Vec.lens(points, {
     init: (vals: readonly V[]): C => {
       const b = computeBox(vals);
       const halfX0 = b.sx > 1e-12 ? b.sx / 2 : 1;

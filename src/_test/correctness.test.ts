@@ -5,7 +5,17 @@
 //   4.2  vec(reactiveX, reactiveY) glitches without batching
 // Plus the Symbol.toPrimitive footgun guard.
 
-import { batch, cell, derive, effect, type Inner, num, type Vec, vec } from "@bireactive/core";
+import {
+  batch,
+  cell,
+  derive,
+  effect,
+  type Inner,
+  num,
+  settle,
+  type Vec,
+  vec,
+} from "@bireactive/core";
 import { describe, expect, it } from "vitest";
 
 describe("correctness", () => {
@@ -47,8 +57,10 @@ describe("correctness", () => {
     const initial = runs;
     expect(initial, "initial run").toBe(1);
     v.value = { x: 1, y: 2 };
+    settle();
     expect(runs, "structurally-equal write does not re-fire downstream").toBe(initial);
     v.value = { x: 5, y: 5 };
+    settle();
     expect(runs, "real change fires").toBe(initial + 1);
   });
 
@@ -61,8 +73,10 @@ describe("correctness", () => {
     });
     expect(runs, "baseline run").toBe(1);
     s.value = 0.005;
+    settle();
     expect(runs, "epsilon-equal write skipped").toBe(1);
     s.value = 0.5;
+    settle();
     expect(runs, "real change fires").toBe(2);
   });
 

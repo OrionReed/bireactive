@@ -5,7 +5,7 @@
 // fluent claim builder, intervals(), and firstOf event ordering.
 
 import { Anim, type Animator, spring, tween } from "@bireactive/animation";
-import { cell, derive, num } from "@bireactive/core";
+import { cell, derive, num, settle } from "@bireactive/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   activeRecorder,
@@ -194,10 +194,13 @@ describe("latch — invariant & liveness", () => {
     const safe = latch(inRange(x, [0, 10]), true);
     expect(safe.value).toBe(true);
     x.value = 7;
+    settle();
     expect(safe.value).toBe(true);
     x.value = 100;
+    settle();
     expect(safe.value).toBe(false);
     x.value = 5; // no rearm without scope
+    settle();
     expect(safe.value).toBe(false);
   });
 
@@ -206,10 +209,13 @@ describe("latch — invariant & liveness", () => {
     const reaches = latch(inRange(x, [10, 20]), false);
     expect(reaches.value).toBe(false);
     x.value = 5;
+    settle();
     expect(reaches.value).toBe(false);
     x.value = 15;
+    settle();
     expect(reaches.value).toBe(true);
     x.value = 0; // sticky
+    settle();
     expect(reaches.value).toBe(true);
   });
 
@@ -218,12 +224,17 @@ describe("latch — invariant & liveness", () => {
     const open = cell(false);
     const safe = latch(inRange(x, [0, 1]), true, open);
     open.value = true;
+    settle();
     expect(safe.value).toBe(true);
     x.value = 100;
+    settle();
     expect(safe.value).toBe(false);
     open.value = false;
+    settle();
     x.value = 0; // restore predicate before re-arm
+    settle();
     open.value = true;
+    settle();
     expect(safe.value).toBe(true);
   });
 
@@ -232,10 +243,14 @@ describe("latch — invariant & liveness", () => {
     const open = cell(false);
     const safe = latch(inRange(x, [0, 1]), true, open);
     open.value = true;
+    settle();
     x.value = 100;
+    settle();
     expect(safe.value).toBe(false);
     open.value = false;
+    settle();
     open.value = true; // re-arm + immediate re-violation
+    settle();
     expect(safe.value).toBe(false);
   });
 });
@@ -246,8 +261,10 @@ describe("claim() — fluent builder", () => {
     const c = claim(x).stays.in([0, 1]);
     expect(c.value).toBe(true);
     x.value = 0.5;
+    settle();
     expect(c.value).toBe(true);
     x.value = 1.3;
+    settle();
     expect(c.value).toBe(false);
   });
 
@@ -256,8 +273,10 @@ describe("claim() — fluent builder", () => {
     const c = claim(x).becomes.above(0.5);
     expect(c.value).toBe(false);
     x.value = 0.4;
+    settle();
     expect(c.value).toBe(false);
     x.value = 0.6;
+    settle();
     expect(c.value).toBe(true);
   });
 
@@ -266,8 +285,10 @@ describe("claim() — fluent builder", () => {
     const c = claim(x).never.above(1);
     expect(c.value).toBe(true);
     x.value = 0.9;
+    settle();
     expect(c.value).toBe(true);
     x.value = 1.1;
+    settle();
     expect(c.value).toBe(false);
   });
 
@@ -278,6 +299,7 @@ describe("claim() — fluent builder", () => {
     const both = a.and(b);
     expect(both.value).toBe(true);
     x.value = 1.5;
+    settle();
     expect(both.value).toBe(false);
   });
 
@@ -418,9 +440,11 @@ describe("intervals & firstOf", () => {
     // write happens inside a gen.
     anim.step(0.5);
     a.value = true;
+    settle();
     expect(winner.value?.first).toBe(0);
     expect(winner.value?.at).toBeCloseTo(0.5, 1);
     b.value = true;
+    settle();
     expect(winner.value?.first).toBe(0); // sticky
     rec.stop();
     anim.stop();

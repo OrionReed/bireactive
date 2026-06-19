@@ -3,7 +3,7 @@
 // notify-then-pull). Verifies the field-path fast path preserves it.
 
 import { describe, expect, it } from "vitest";
-import { cell, derive, effect, Num, num, transform } from "../index";
+import { cell, derive, effect, Num, num, settle, transform } from "../index";
 
 describe("glitch-free: diamond shapes", () => {
   it("classic diamond: a → b1, a → b2, leaf reads (b1, b2)", () => {
@@ -17,7 +17,9 @@ describe("glitch-free: diamond shapes", () => {
       observed.push({ b1: v1, b2: v2, aviabranches: v1 - 1 });
     });
     a.value = 5;
+    settle();
     a.value = 10;
+    settle();
     for (const o of observed) {
       expect(o.b1 - 1).toBe(o.b2 / 10);
     }
@@ -35,7 +37,9 @@ describe("glitch-free: diamond shapes", () => {
       observed.push({ x: xv, y: yv, sum: xv + yv });
     });
     tr.value = { ...tr.value, translate: { x: 3, y: 4 } };
+    settle();
     tr.value = { ...tr.value, translate: { x: 10, y: 20 } };
+    settle();
     expect(observed[observed.length - 1]).toEqual({ x: 10, y: 20, sum: 30 });
     for (const o of observed) {
       expect(o.sum).toBe(o.x + o.y);
@@ -52,8 +56,10 @@ describe("glitch-free: diamond shapes", () => {
     });
     fires = 0;
     a.value = -5;
+    settle();
     expect(fires).toBe(0);
     a.value = 6;
+    settle();
     expect(fires).toBe(1);
   });
 

@@ -5,7 +5,7 @@
 // that a drifty roundtrip oscillates forever (the real failure mode).
 
 import { describe, expect, it } from "vitest";
-import { effect, Num, num } from "../index";
+import { effect, Num, num, settle } from "../index";
 
 /** Inline bidirectional sync via two guarded effects. */
 function sync<T>(a: { value: T; peek(): T }, b: { value: T; peek(): T }): () => void {
@@ -35,6 +35,7 @@ describe("cycle: single write is finite", () => {
     });
     runs = 0;
     a.value = 1;
+    settle();
     expect(runs).toBe(1);
     expect(b.value).toBe(1);
   });
@@ -97,8 +98,10 @@ describe("cycle: drift-prone roundtrip — the actual failure mode", () => {
     writes = 0;
 
     a.value = 5;
+    settle();
     expect(writes).toBe(0);
     a.value = 6;
+    settle();
     expect(writes).toBe(1);
     expect(clean.value).toBe(6);
   });

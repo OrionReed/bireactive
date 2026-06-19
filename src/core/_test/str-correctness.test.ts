@@ -2,7 +2,7 @@
 // PutPut, round-trip, stability, isolation, composition, external refresh, …).
 
 import { describe, expect, it } from "vitest";
-import { effect } from "../cell";
+import { effect, settle } from "../cell";
 import { str } from "../values/str";
 
 describe("GetPut: writing back the read value is a no-op on source", () => {
@@ -297,9 +297,11 @@ describe("NICHE: corner cases that shouldn't break invariants", () => {
     });
     fires = 0;
     lo.value = "hi bye";
+    settle();
     expect(last).toBe("hi bye");
     expect(fires).toBe(1);
     s.value = "FOO BAR";
+    settle();
     expect(last).toBe("foo bar");
     expect(fires).toBe(2);
     dispose();

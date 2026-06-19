@@ -16,6 +16,7 @@ import {
   type Mount,
   type Num,
   num,
+  SKIP,
   Vec,
   vec,
   type Writable,
@@ -135,14 +136,14 @@ export class MdFractalTree extends Diagram {
         return { x: tip.x + l1 * Math.cos(a1), y: tip.y + l1 * Math.sin(a1) };
       },
       (target: Pt, vals) => {
-        const [tip] = vals as readonly [Pt, number, number];
+        const [tip] = vals;
         const a0 = Math.atan2(tip.y - BASE.y, tip.x - BASE.x);
         const l0 = Math.hypot(tip.x - BASE.x, tip.y - BASE.y) || 1;
         const vx = target.x - tip.x;
         const vy = target.y - tip.y;
         const newRatio = Math.min(0.95, Math.max(0.05, Math.hypot(vx, vy) / l0));
         const newAngle = Math.min(1.5, Math.max(0.02, Math.abs(wrapToPi(a0 - Math.atan2(vy, vx)))));
-        return [undefined, newAngle, newRatio] as never;
+        return [SKIP, newAngle, newRatio];
       },
     );
     const ruleDot = s(circle(ruleHandle, 6, { fill: "#f5a623", stroke: "#b3760f", thin: true }));

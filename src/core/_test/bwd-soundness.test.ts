@@ -5,7 +5,7 @@
 // makeAnchor bug (engine predicting the post-write view from a stale candidate).
 
 import { describe, expect, it } from "vitest";
-import { cell, derive, lens } from "../index";
+import { cell, derive, lens, SKIP } from "../index";
 
 // Seeded PRNG (mulberry32).
 function rng(seed: number): () => number {
@@ -39,7 +39,7 @@ describe("backward soundness: targeted breakers", () => {
     const L = lens(
       [base, S] as const,
       ([b]) => b + D.value,
-      (t, [b]) => [undefined, t - b],
+      (t, [b]) => [SKIP, t - b],
     );
     expect(L.value).toBe(15);
     L.value = 30;
@@ -54,7 +54,7 @@ describe("backward soundness: targeted breakers", () => {
     const L = lens(
       [base, S] as const,
       ([b]) => b + d3.value,
-      (t, [b]) => [undefined, t - b],
+      (t, [b]) => [SKIP, t - b],
     );
     expect(L.value).toBe(1);
     L.value = 9;
@@ -150,10 +150,10 @@ describe("backward soundness: PutGet fuzz over random anchor-style DAGs", () => 
           return acc + v;
         }, 0);
 
-      const bwd = (target: number): (number | undefined)[] => {
+      const bwd = (target: number): (number | typeof SKIP)[] => {
         const cur = viewOf();
         const s0 = sources[0]!.peek();
-        const updates: (number | undefined)[] = new Array(parents.length).fill(undefined);
+        const updates: (number | typeof SKIP)[] = new Array(parents.length).fill(SKIP);
         updates[0] = s0 + (target - cur) / gamma;
         return updates;
       };
@@ -161,7 +161,7 @@ describe("backward soundness: PutGet fuzz over random anchor-style DAGs", () => 
       const L = lens(
         parents as unknown as readonly N[],
         fwd as unknown as (vals: readonly number[]) => number,
-        bwd as unknown as (t: number, vals: readonly number[]) => readonly (number | undefined)[],
+        bwd as unknown as (t: number, vals: readonly number[]) => readonly (number | typeof SKIP)[],
       ) as unknown as N;
 
       const cur = L.value;

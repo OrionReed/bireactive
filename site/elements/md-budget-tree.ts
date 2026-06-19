@@ -65,14 +65,13 @@ function makeBudget(): Budget {
       leaves.map(l => l.cell),
       (vs: readonly number[]) => vs.reduce((a, b) => a + b, 0),
       (target, vs) => {
-        const arr = vs as readonly number[];
-        const cur = arr.reduce((a, b) => a + b, 0);
+        const cur = vs.reduce((a, b) => a + b, 0);
         if (cur === 0) {
-          const even = target / arr.length;
-          return arr.map(() => even) as never;
+          const even = target / vs.length;
+          return vs.map(() => even);
         }
         const scale = target / cur;
-        return arr.map(v => v * scale) as never;
+        return vs.map(v => v * scale);
       },
     );
     return { label: catLabel, total, leaves };
@@ -83,14 +82,13 @@ function makeBudget(): Budget {
     categories.map(c => c.total),
     (vs: readonly number[]) => vs.reduce((a, b) => a + b, 0),
     (target, vs) => {
-      const arr = vs as readonly number[];
-      const cur = arr.reduce((a, b) => a + b, 0);
+      const cur = vs.reduce((a, b) => a + b, 0);
       if (cur === 0) {
-        const even = target / arr.length;
-        return arr.map(() => even) as never;
+        const even = target / vs.length;
+        return vs.map(() => even);
       }
       const scale = target / cur;
-      return arr.map(v => v * scale) as never;
+      return vs.map(v => v * scale);
     },
   );
 
@@ -244,15 +242,15 @@ export class MdBudgetTree extends Diagram {
           return { x: leftI1 + (va / sumAB) * (sumAB / total.peek()) * w, y: y + ROW_H / 2 };
         },
         (target, vals) => {
-          const [va, vb, leftI1] = vals as readonly [number, number, number];
+          const [va, vb, leftI1] = vals;
           const sumAB = va + vb;
-          if (sumAB === 0) return [0, 0, undefined] as never;
+          if (sumAB === 0) return [0, 0];
           const totalRow = total.peek();
           const widthAB = (sumAB / totalRow) * w;
           const newAWPx = Math.max(0, Math.min(widthAB, target.x - leftI1));
           const newAValue = (newAWPx / widthAB) * sumAB;
           const newBValue = sumAB - newAValue;
-          return [newAValue, newBValue, undefined] as never;
+          return [newAValue, newBValue];
         },
       );
       const PILL_W = 6;

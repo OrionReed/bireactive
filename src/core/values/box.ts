@@ -15,6 +15,8 @@ import {
   type Read,
   reader,
   readNow,
+  SKIP,
+  type Skip,
   type Val,
   type Writable,
   type WritableBrand,
@@ -175,15 +177,18 @@ export class Box extends Cell<V> {
         const mk = Bool.lens.bind(Bool) as unknown as (
           parents: readonly [Read<V>, Read<Inner<Vec>>],
           fwd: (vals: readonly [V, Inner<Vec>]) => boolean,
-          bwd: (target: boolean, vals: readonly [V, Inner<Vec>]) => readonly [V?, Inner<Vec>?],
+          bwd: (
+            target: boolean,
+            vals: readonly [V, Inner<Vec>],
+          ) => readonly [V | Skip, Inner<Vec> | Skip],
         ) => Writable<Bool>;
         return mk(
           [this, p],
           vals => contains(vals[0], vals[1]),
           (target, vals) => {
             const [b, v] = vals;
-            if (contains(b, v) === target) return [undefined, undefined];
-            return [undefined, target ? clampToBox(v, b) : ejectFromBox(v, b)];
+            if (contains(b, v) === target) return [SKIP, SKIP];
+            return [SKIP, target ? clampToBox(v, b) : ejectFromBox(v, b)];
           },
         ) as never;
       }

@@ -1,7 +1,18 @@
 // Resize a cluster by dragging its bounding box: a closed-form `bbox`
 // over five points, with derived center and corner handles.
 
-import { bbox, Diagram, derive, handle, label, type Mount, rect, Vec, vec } from "@bireactive";
+import {
+  bbox,
+  Diagram,
+  derive,
+  handle,
+  label,
+  type Mount,
+  rect,
+  SKIP,
+  Vec,
+  vec,
+} from "@bireactive";
 
 const PT = "#5b8def";
 const CTR = "#f5a623";
@@ -27,7 +38,7 @@ export class MdBboxHandles extends Diagram {
     const corner = Vec.lens(
       [center, size] as const,
       ([c, sz]) => ({ x: c.x + sz.x / 2, y: c.y + sz.y / 2 }),
-      (t, [c]) => [undefined, { x: 2 * (t.x - c.x), y: 2 * (t.y - c.y) }] as never,
+      (t, [c]) => [SKIP, { x: 2 * (t.x - c.x), y: 2 * (t.y - c.y) }],
     );
 
     s(

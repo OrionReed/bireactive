@@ -1,7 +1,18 @@
 // values.test.ts — Num/Vec runtime + Writable<R> behaviour.
 
 import { describe, expect, it } from "vitest";
-import { effect, isLens, isReadonly, Num, num, polar, tangentPoint, Vec, vec } from "../index";
+import {
+  effect,
+  isLens,
+  isReadonly,
+  Num,
+  num,
+  polar,
+  settle,
+  tangentPoint,
+  Vec,
+  vec,
+} from "../index";
 
 describe("Num", () => {
   it("num(v) writable, .value setter works", () => {
@@ -165,6 +176,7 @@ describe("Vec", () => {
     });
     expect(seen).toBe(3);
     v.x.value = 10;
+    settle();
     expect(seen).toBe(12);
   });
 });

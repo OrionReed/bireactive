@@ -12,6 +12,8 @@
 //   T (generic), if the suspend is `(wake, spawn) => T`
 //   Example: `const result = yield (wake, spawn) => { ... }`
 
+import { settle } from "../core/cell";
+
 export interface Tick {
   readonly dt: number;
   readonly elapsed: number;
@@ -101,6 +103,9 @@ export class Anim {
         }
       }
     }
+    // A frame advances reactive state; flush the effects it woke so observers
+    // (and the next frame) see this frame's results synchronously.
+    settle();
   }
 
   private stepInner(dt: number): void {

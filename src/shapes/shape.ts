@@ -13,6 +13,7 @@ import {
   mean,
   Num,
   readNow,
+  SKIP,
   transformBox,
   transformPoint,
   type Val,
@@ -217,8 +218,8 @@ export class Shape<O extends ShapeOpts = ShapeOpts> {
         const local = { x: b.x + u * b.w, y: b.y + v * b.h };
         const currentWorld = transformPoint(m, local);
         return [
-          undefined,
-          undefined,
+          SKIP,
+          SKIP,
           {
             x: tNow.x + (target.x - currentWorld.x),
             y: tNow.y + (target.y - currentWorld.y),

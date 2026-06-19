@@ -6,6 +6,5 @@
 import { run } from "mitata";
 import "./forward.bench";
 import "./backward.bench";
-import "./mixed.bench";
 
 await run({ format: "mitata" });

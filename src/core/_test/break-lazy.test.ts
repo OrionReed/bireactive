@@ -19,7 +19,7 @@
 //      strands a co-writer of a shared source" bug class, over random diamonds.
 
 import { describe, expect, it } from "vitest";
-import { batch, type Cell, cell, derive, effect, lens } from "../index";
+import { batch, type Cell, cell, derive, effect, lens, SKIP, settle } from "../index";
 
 // ── seeded PRNG (mulberry32) ──────────────────────────────────────────────
 function rng(seed: number): () => number {
@@ -291,7 +291,7 @@ describe("stateful stash lens: exact reference under interleaving", () => {
           step: (_s: number[], c: number) => c,
           fwd: ([s]: number[], c: number) => s + c,
           bwd: (t: number, [s]: number[], _c: number) => ({
-            updates: [undefined],
+            updates: [SKIP],
             complement: t - s,
           }),
         } as never,
@@ -336,7 +336,7 @@ describe("stateful multi-source stash (n≥2): exact reference, exercises buffer
           step: (_s: number[], c: number) => c,
           fwd: (s: number[], c: number) => sum(s) + c,
           bwd: (t: number, s: number[], _c: number) => ({
-            updates: s.map(() => undefined),
+            updates: s.map(() => SKIP),
             complement: t - sum(s),
           }),
         } as never,
@@ -377,7 +377,7 @@ describe("stateful external-vs-own detection (the value-comparison branch)", () 
         step: ([_s]: number[], c: number, external: boolean) => (external ? 0 : c),
         fwd: ([s]: number[], c: number) => s + c,
         bwd: (t: number, [s]: number[], _c: number) => ({
-          updates: [undefined],
+          updates: [SKIP],
           complement: t - s,
         }),
       } as never,
@@ -445,6 +445,7 @@ describe("re-entrancy: back-writes observed by effects", () => {
       seen.push(total.value as number);
     });
     (view as { value: number }).value = 9; // fans out to 3, 3, 3
+    settle();
     expect(total.value).toBeCloseTo(9, 9);
     expect(seen[seen.length - 1]).toBeCloseTo(9, 9); // single consistent observation
   });
@@ -491,7 +492,7 @@ describe("re-entrancy: back-writes observed by effects", () => {
         step: (_s: number[], c: number) => c,
         fwd: ([x]: number[], c: number) => x + c,
         bwd: (t: number, [x]: number[], _c: number) => ({
-          updates: [undefined],
+          updates: [SKIP],
           complement: t - x,
         }),
       } as never,
@@ -502,6 +503,7 @@ describe("re-entrancy: back-writes observed by effects", () => {
     });
     expect(seen).toBe(10);
     (view as { value: number }).value = 15; // stash: stores offset, source unmoved
+    settle();
     expect(seen).toBe(15); // effect must observe the view change despite no source write
     expect(src.value).toBe(10);
   });
@@ -517,6 +519,7 @@ describe("re-entrancy: back-writes observed by effects", () => {
       (bView as { value: number }).value = av;
     });
     (a as { value: number }).value = 42;
+    settle();
     expect(b.value).toBe(42);
     expect(mirror.value).toBe(42);
   });
