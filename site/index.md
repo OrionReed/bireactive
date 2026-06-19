@@ -81,8 +81,9 @@ Coordinate spaces via a `world.lens(fwd, bwd)`: euclidean, oblique, polar, log-p
 
 <md-coordinate-spaces></md-coordinate-spaces>
 
+RGB ⇌ HSV, bidirectionally:
 
-
+<md-color-hsv></md-color-hsv>
 
 <md-gears></md-gears>
 
