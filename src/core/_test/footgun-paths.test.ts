@@ -1,19 +1,17 @@
 // footgun-paths.test.ts — field-path edge cases.
 
 import { describe, expect, it } from "vitest";
-import { Cell, cell, Num } from "../index";
+import { Cell, cell, fieldOf, Num } from "../index";
 
 describe("footgun: deep field paths (4+)", () => {
   it("4-deep field chain hits the loop fallback in makeFieldGetter/Setter", () => {
     type S = { a: { b: { c: { d: { e: number } } } } };
     const root = cell<S>({ a: { b: { c: { d: { e: 1 } } } } });
-    // Build via fieldOf (uses Cell.fieldOf, recognizes field
-    // patterns).
-    const lens = Cell.fieldOf(
-      Cell.fieldOf(
-        Cell.fieldOf(
-          Cell.fieldOf(
-            Cell.fieldOf(root, "a", Cell as new (...args: never[]) => Cell<S["a"]>),
+    const lens = fieldOf(
+      fieldOf(
+        fieldOf(
+          fieldOf(
+            fieldOf(root, "a", Cell as new (...args: never[]) => Cell<S["a"]>),
             "b",
             Cell as new (
               ...args: never[]
@@ -47,9 +45,9 @@ describe("footgun: deep field paths (4+)", () => {
     const root = new Cell<S>({ a: { b: { c: { d: { e: { f: 1 } } } } } });
     let s: Cell<unknown> = root as Cell<unknown>;
     for (const k of ["a", "b", "c", "d", "e"]) {
-      s = Cell.fieldOf(s, k, Cell as new (...args: never[]) => Cell<unknown>);
+      s = fieldOf(s, k, Cell as new (...args: never[]) => Cell<unknown>);
     }
-    const lens = Cell.fieldOf(s, "f", Num);
+    const lens = fieldOf(s, "f", Num);
 
     expect(lens.value).toBe(1);
     (lens as unknown as { value: number }).value = 42;
@@ -62,9 +60,9 @@ describe("footgun: numeric / symbol keys", () => {
     type S = { items: number[] };
     const root = cell<S>({ items: [10, 20, 30] });
     // Note: field expects `keyof S[K]` so numeric index requires
-    // careful typing. Use Cell.fieldOf which is more permissive.
-    const itemsLens = Cell.fieldOf(root, "items", Cell as new (...args: never[]) => Cell<number[]>);
-    const idx0 = Cell.fieldOf(itemsLens, 0, Num);
+    // careful typing. Use fieldOf which is more permissive.
+    const itemsLens = fieldOf(root, "items", Cell as new (...args: never[]) => Cell<number[]>);
+    const idx0 = fieldOf(itemsLens, 0, Num);
 
     expect(idx0.value).toBe(10);
     (idx0 as unknown as { value: number }).value = 99;
@@ -80,7 +78,7 @@ describe("footgun: numeric / symbol keys", () => {
     const SYM = Symbol("k");
     type S = { [SYM]: number };
     const root = cell<S>({ [SYM]: 5 });
-    const lens = Cell.fieldOf(root, SYM, Num);
+    const lens = fieldOf(root, SYM, Num);
     expect(lens.value).toBe(5);
     (lens as unknown as { value: number }).value = 99;
     expect(root.value[SYM]).toBe(99);
@@ -103,8 +101,8 @@ describe("footgun: spread on arrays (semantic difference)", () => {
   it("FOOTGUN: writing through field path ON AN ARRAY converts to object", () => {
     type S = { items: number[] };
     const root = cell<S>({ items: [10, 20, 30] });
-    const itemsLens = Cell.fieldOf(root, "items", Cell as new (...args: never[]) => Cell<number[]>);
-    const idx0 = Cell.fieldOf(itemsLens, 0, Num);
+    const itemsLens = fieldOf(root, "items", Cell as new (...args: never[]) => Cell<number[]>);
+    const idx0 = fieldOf(itemsLens, 0, Num);
 
     expect(Array.isArray(root.value.items)).toBe(true);
     (idx0 as unknown as { value: number }).value = 99;

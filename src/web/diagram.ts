@@ -161,8 +161,8 @@ export class Diagram extends HTMLElement {
    *  wins; returns a reactive `Box` for layout. */
   view(w: Val<number>, h: Val<number>): Box {
     if (this.#viewSet) return this.#viewBox;
-    const ws = Num.from(w);
-    const hs = Num.from(h);
+    const ws = Num.coerce(w);
+    const hs = Num.coerce(h);
     effect(() => this.setViewBox(0, 0, ws.value, hs.value));
     this.#viewSet = true;
     return this.#viewBox;

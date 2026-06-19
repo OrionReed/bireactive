@@ -30,7 +30,7 @@ export class Label<O extends LabelOpts = LabelOpts> extends Shape<O> {
         : typeof content === "function"
           ? derive(content)
           : cell(content as Content);
-    const sizeSig = Num.from(opts.size ?? tokens.fontSize);
+    const sizeSig = Num.coerce(opts.size ?? tokens.fontSize);
     const a = opts.align ?? { x: 0.5, y: 0.5 };
     super(
       "text",

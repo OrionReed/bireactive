@@ -2,8 +2,21 @@
 // effect cleanup across the fast path, reactive args in fwd/bwd, sequencing.
 
 import { describe, expect, it } from "vitest";
-import { Cell, fieldLens } from "../cell";
-import { cell, derive, effect, lens, Num, num, SKIP, settle, transform, Vec, vec } from "../index";
+import { fieldLens } from "../cell";
+import {
+  cell,
+  derive,
+  effect,
+  fieldOf,
+  lens,
+  Num,
+  num,
+  SKIP,
+  settle,
+  transform,
+  Vec,
+  vec,
+} from "../index";
 
 void vec;
 
@@ -44,10 +57,10 @@ describe("footgun: field on top of a structural lens", () => {
       },
     );
 
-    const x = Cell.fieldOf(mLens, "x", Num);
+    const x = fieldOf(mLens, "x", Num);
     void x;
 
-    const y = Cell.fieldOf(mLens, "y", Num);
+    const y = fieldOf(mLens, "y", Num);
     (y as unknown as { value: number }).value = 99;
     // The put is demand-driven: it runs once, when the source is pulled.
     expect(root.value).toEqual({ vals: { x: 1, y: 99 } });

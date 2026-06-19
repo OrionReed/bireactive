@@ -3,7 +3,6 @@
 //   1.2  Computed re-eval ignores `equals` trait → derived chains over-fire
 //   1.3  Cyclic Computed silently returns undefined → must throw
 //   4.2  vec(reactiveX, reactiveY) glitches without batching
-// Plus the Symbol.toPrimitive footgun guard.
 
 import {
   batch,
@@ -120,21 +119,5 @@ describe("correctness", () => {
     });
     expect(seen.length, "batched update yields one final value").toBe(1);
     expect(seen[0]?.x === 100 && seen[0]?.y === 200, "final value is consistent").toBe(true);
-  });
-
-  it("Symbol.toPrimitive footgun guard", () => {
-    const n = num(5);
-    let threw: unknown;
-    try {
-      const _ = `value is ${n}`;
-      void _;
-    } catch (e) {
-      threw = e;
-    }
-    expect(threw, "template string throws").toBeInstanceOf(TypeError);
-    expect((threw as Error).message, "error mentions .value").toMatch(/\.value/);
-    const m = num(5);
-    expect(n === n, "=== identity works").toBe(true);
-    expect(n !== m, "!== different identity works").toBe(true);
   });
 });

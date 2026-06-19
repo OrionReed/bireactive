@@ -7,6 +7,7 @@ export {
   derive,
   effect,
   fieldLens,
+  fieldOf,
   type Init,
   type Inner,
   isCell,
@@ -52,12 +53,15 @@ export {
 } from "./traits";
 export { Anchor, Dir } from "./values/anchor";
 export { Audio, type AudioClip, audio, stamp as audioStamp } from "./values/audio";
-export * as BoolMath from "./values/bool";
 export { Bool, bool } from "./values/bool";
-export * as BoxMath from "./values/box";
-export { Box, box } from "./values/box";
+export {
+  Box,
+  box,
+  edgeFrom as boxEdgeFrom,
+  expand as boxExpand,
+  union as boxUnion,
+} from "./values/box";
 export { Canvas, canvas, type Raster, stamp as canvasStamp } from "./values/canvas";
-export * as ColorMath from "./values/color";
 export { Color, rgb, rgba } from "./values/color";
 export {
   type ColorStop,
@@ -79,15 +83,17 @@ export {
   scratch2 as gpuScratch2,
   type Tex,
 } from "./values/gpu";
-export * as MatrixMath from "./values/matrix";
-export { Matrix, matrix, transformBox, transformPoint } from "./values/matrix";
-export * as NumMath from "./values/num";
+export {
+  compose as matrixCompose,
+  Matrix,
+  matrix,
+  toMatrixString,
+  transformBox,
+  transformPoint,
+} from "./values/matrix";
 export { Num, num } from "./values/num";
-export * as PoseMath from "./values/pose";
 export { Pose, pose } from "./values/pose";
-export * as RangeMath from "./values/range";
 export { Range, range, span } from "./values/range";
-export * as StrMath from "./values/str";
 export { Str, str } from "./values/str";
 export {
   type Codec,
@@ -100,9 +106,6 @@ export {
   template,
   tpl,
 } from "./values/template";
-export * as TransformMath from "./values/transform";
 export { Transform, type TransformInit, transform } from "./values/transform";
-export * as TriMath from "./values/tri";
 export { Tri, tri } from "./values/tri";
-export * as VecMath from "./values/vec";
 export { type PolarPolicy, polar, tangentPoint, Vec, vec } from "./values/vec";

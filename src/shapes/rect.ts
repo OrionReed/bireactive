@@ -16,10 +16,10 @@ export class Rect<O extends RectOpts = RectOpts> extends Shape<O> {
   readonly corner: Num;
 
   constructor(x: Val<number>, y: Val<number>, w: Val<number>, h: Val<number>, opts: O = {} as O) {
-    const xs = Num.from(x);
-    const ys = Num.from(y);
-    const ws = Num.from(w);
-    const hs = Num.from(h);
+    const xs = Num.coerce(x);
+    const ys = Num.coerce(y);
+    const ws = Num.coerce(w);
+    const hs = Num.coerce(h);
     super(
       opts.dashed ? "path" : "rect",
       () => ({ x: xs.value, y: ys.value, w: ws.value, h: hs.value }),
@@ -35,7 +35,7 @@ export class Rect<O extends RectOpts = RectOpts> extends Shape<O> {
     this.y = ys;
     this.w = ws;
     this.h = hs;
-    this.corner = Num.from(opts.corner ?? tokens.corner);
+    this.corner = Num.coerce(opts.corner ?? tokens.corner);
     this.stroke(opts, true, {
       x: xs,
       y: ys,
@@ -187,8 +187,8 @@ export function rect(
   if (a instanceof Vec) {
     const w = b as Val<number>;
     const h = c as Val<number>;
-    const ws = Num.from(w);
-    const hs = Num.from(h);
+    const ws = Num.coerce(w);
+    const hs = Num.coerce(h);
     return new Rect(
       derive(() => a.x.value - ws.value / 2),
       derive(() => a.y.value - hs.value / 2),

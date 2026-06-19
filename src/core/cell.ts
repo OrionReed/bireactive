@@ -739,11 +739,6 @@ export class Cell<T = unknown> implements ReactiveNode {
     }
   }
 
-  /** Guard: silent coercion to string/number is almost always a bug. */
-  [Symbol.toPrimitive](hint: string): never {
-    throw new TypeError(`Cell cannot be coerced to ${hint} — use \`.value\``);
-  }
-
   // Construction helpers build via `new this()` so a subclass static
   // (`Vec.lens(...)`) yields a `Vec` with its constructor-set equality.
   // Every lens has a structural backward target (`_bwd.parent`), which is
@@ -872,10 +867,10 @@ export class Cell<T = unknown> implements ReactiveNode {
     return v instanceof this;
   }
 
-  /** Lift `Val<Inner<Cls>>` → `Cls`: instance → identity, RO cell →
+  /** Coerce `Val<Inner<Cls>>` → `Cls`: instance → identity, RO cell →
    *  tracked `derive`, literal → fresh seed. */
   // biome-ignore lint/suspicious/noExplicitAny: variance escape
-  static from<C extends new (...args: never[]) => Cell<any>>(
+  static coerce<C extends new (...args: never[]) => Cell<any>>(
     this: C,
     v: Val<Inner<InstanceType<C>>>,
   ): InstanceType<C> {
@@ -904,33 +899,30 @@ export class Cell<T = unknown> implements ReactiveNode {
     cell._bwd = new BwdSpec();
     return cell as unknown as Writable<InstanceType<C>>;
   }
+}
 
-  /** Typed field lens onto `parent.value[key]`. A read-only computed
-   *  parent yields a RO derive view; any writable parent yields a
-   *  bidirectional field lens with spread-replace `put`. */
-  // biome-ignore lint/suspicious/noExplicitAny: variance escape
-  static fieldOf<C extends new (...args: never[]) => Cell<any>>(
-    // biome-ignore lint/suspicious/noExplicitAny: parent is contravariant on put
-    parent: Cell<any>,
-    key: string | number | symbol,
-    Cls: C,
-  ): InstanceType<C> {
-    const ctor = Cls as unknown as CellCtor<Cell<unknown>>;
-    const get = (s: unknown): unknown => (s as Record<string | number | symbol, unknown>)[key];
-    // Read-only ⇔ computed: a getter with no backward sidecar.
-    const ro = parent.getter !== undefined && parent._bwd === undefined;
-    if (ro) {
-      return buildDerived(ctor, () => get(parent.value)) as InstanceType<C>;
-    }
-    // Spread-replace reads the current source ⇒ source-reading (lens) form.
-    return buildLens1(
-      ctor,
-      parent as Cell<unknown>,
-      get,
-      (v, s) => ({ ...(s as object), [key]: v }),
-      true,
-    ) as InstanceType<C>;
+/** Typed field lens onto `parent.value[key]`. RO parent → RO derive;
+ *  writable parent → bidirectional lens with spread-replace `put`. */
+// biome-ignore lint/suspicious/noExplicitAny: variance escape
+export function fieldOf<C extends new (...args: never[]) => Cell<any>>(
+  // biome-ignore lint/suspicious/noExplicitAny: parent is contravariant on put
+  parent: Cell<any>,
+  key: string | number | symbol,
+  Cls: C,
+): InstanceType<C> {
+  const ctor = Cls as unknown as CellCtor<Cell<unknown>>;
+  const get = (s: unknown): unknown => (s as Record<string | number | symbol, unknown>)[key];
+  const ro = parent.getter !== undefined && parent._bwd === undefined;
+  if (ro) {
+    return buildDerived(ctor, () => get(parent.value)) as InstanceType<C>;
   }
+  return buildLens1(
+    ctor,
+    parent as Cell<unknown>,
+    get,
+    (v, s) => ({ ...(s as object), [key]: v }),
+    true,
+  ) as InstanceType<C>;
 }
 
 // Each `new Cls()` yields the right subclass (so `Vec.lens(...)` returns
@@ -1941,7 +1933,7 @@ export function fieldLens<
   Cls: C,
 ): S extends WritableBrand ? Writable<InstanceType<C>> : InstanceType<C> {
   return lazy(parent, key as string | symbol, () =>
-    Cell.fieldOf(parent as unknown as Cell<unknown>, key as string | symbol, Cls),
+    fieldOf(parent as unknown as Cell<unknown>, key as string | symbol, Cls),
   ) as never;
 }
 

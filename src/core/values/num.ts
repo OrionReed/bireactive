@@ -247,7 +247,7 @@ export class Num extends Cell<V> {
 
 /** Writable `Num`. Literal seeds a fresh cell; existing `Writable<Num>`
  *  passes through by identity. RO sources are rejected at the type level —
- *  use `Num.derive(...)` for reactive RO tracking, or `Num.from(...)` for
+ *  use `Num.derive(...)` for reactive RO tracking, or `Num.coerce(...)` for
  *  the permissive lift over any `Val<number>`. */
 export function num(v: Init<Num> = 0): Writable<Num> {
   if (v instanceof Num) return v as Writable<Num>;

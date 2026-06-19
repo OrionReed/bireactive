@@ -18,10 +18,10 @@ export class AnnularSector<O extends AnnularSectorOpts = AnnularSectorOpts> exte
     a1: Val<number>,
     opts: O = {} as O,
   ) {
-    const ro = Num.from(rOuter);
-    const ri = Num.from(rInner);
-    const a0s = Num.from(a0);
-    const a1s = Num.from(a1);
+    const ro = Num.coerce(rOuter);
+    const ri = Num.coerce(rInner);
+    const a0s = Num.coerce(a0);
+    const a1s = Num.coerce(a1);
     super(
       "path",
       () => ({

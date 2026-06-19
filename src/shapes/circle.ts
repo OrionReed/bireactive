@@ -8,7 +8,7 @@ export class Circle<O extends CircleOpts = CircleOpts> extends Shape<O> {
   readonly radius: Num;
 
   constructor(center: Vec, radius: Val<number>, opts: O = {} as O) {
-    const r = Num.from(radius);
+    const r = Num.coerce(radius);
     super(
       opts.dashed ? "path" : "circle",
       () => ({

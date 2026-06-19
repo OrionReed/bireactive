@@ -38,7 +38,7 @@ export function button(
 ): AnyShape {
   const w = opts.width ?? 80;
   const h = opts.height ?? 26;
-  const size = Num.from(opts.size ?? 11);
+  const size = Num.coerce(opts.size ?? 11);
   const hovered = opts.hovered ?? cell(false);
 
   // Hover tint behind the border so outline weight stays constant.

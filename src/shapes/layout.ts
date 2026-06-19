@@ -1,6 +1,6 @@
 // Spatial composition primitives.
 
-import { Box, BoxMath, reader, transformBox, type Val } from "@bireactive/core";
+import { Box, boxExpand, reader, transformBox, type Val } from "@bireactive/core";
 import type { Shape } from "./shape";
 
 export interface ArrangeOpts {
@@ -54,7 +54,7 @@ export function arrange(
 /** Inflate a Box on each side by `by`. */
 export function expand(b: Box, by: Val<number>): Box {
   const byFn = reader(by);
-  return Box.derive(() => BoxMath.expand(b.value, byFn()));
+  return Box.derive(() => boxExpand(b.value, byFn()));
 }
 
 /** Split a Box along an axis into N reactive sub-Boxes.

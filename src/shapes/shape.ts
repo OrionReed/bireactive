@@ -1,7 +1,8 @@
 import { type Animator, suspend } from "@bireactive/animation";
 import {
   Box,
-  BoxMath,
+  boxEdgeFrom,
+  boxUnion,
   Cell,
   cell,
   derive,
@@ -9,11 +10,12 @@ import {
   type Inner,
   lazy,
   type Matrix,
-  MatrixMath,
+  matrixCompose,
   mean,
   Num,
   readNow,
   SKIP,
+  toMatrixString,
   transformBox,
   transformPoint,
   type Val,
@@ -172,7 +174,7 @@ export class Shape<O extends ShapeOpts = ShapeOpts> {
           const cs = this._children.value
             .filter(c => !c.aside)
             .map(c => transformBox(c.localFrame.value, c.box.value));
-          return cs.length ? BoxMath.union(...cs) : { x: 0, y: 0, w: 0, h: 0 };
+          return cs.length ? boxUnion(...cs) : { x: 0, y: 0, w: 0, h: 0 };
         }),
     );
 
@@ -184,14 +186,14 @@ export class Shape<O extends ShapeOpts = ShapeOpts> {
       const r = this.rotate.value;
       const sc = this.scale.value;
       if (t.x === 0 && t.y === 0 && r === 0 && sc.x === 1 && sc.y === 1) {
-        return MatrixMath.compose(t, r, sc, { x: 0, y: 0 });
+        return matrixCompose(t, r, sc, { x: 0, y: 0 });
       }
-      return MatrixMath.compose(t, r, sc, this.origin.value);
+      return matrixCompose(t, r, sc, this.origin.value);
     });
 
     this.disposers.push(
       effect(() => {
-        this.el.style.transform = MatrixMath.toMatrixString(this.localFrame.value);
+        this.el.style.transform = toMatrixString(this.localFrame.value);
         this.el.style.opacity = String(this.opacity.value);
       }),
     );
@@ -200,7 +202,7 @@ export class Shape<O extends ShapeOpts = ShapeOpts> {
   /** Parent-frame perimeter point toward `target`; tighter shapes override. */
   boundary(toward: Vec): Vec {
     return Vec.derive(() =>
-      BoxMath.edgeFrom(transformBox(this.localFrame.value, this.box.value), toward.value),
+      boxEdgeFrom(transformBox(this.localFrame.value, this.box.value), toward.value),
     );
   }
 

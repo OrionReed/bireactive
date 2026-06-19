@@ -92,8 +92,8 @@ class TimelineImpl implements Timeline {
 }
 
 function makeClip(spec: ClipSpec, clock: Num): Clip {
-  const at = Num.from(spec.at);
-  const dur = Num.from(spec.dur);
+  const at = Num.coerce(spec.at);
+  const dur = Num.coerce(spec.dur);
   const end = Num.derive(() => at.value + dur.value);
   // Bidirectional span when both inputs are writable; RO derive when
   // either is read-only. Mirrors `ResolvedSpan`.
