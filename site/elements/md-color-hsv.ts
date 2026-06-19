@@ -9,7 +9,7 @@
 // the multiparent lens to leave them untouched — so the stored hue survives
 // a trip through grey and back.
 
-import { Color, effect, type Num, num, type Writable } from "@bireactive";
+import { Color, effect, type Num, num, SKIP, type Writable } from "@bireactive";
 import { BaseElement, css } from "./base-element";
 
 /** RGB→HSV. Channels in [0, 1]; `h ∈ [0, 360)`, `s, v ∈ [0, 1]`. */
@@ -139,7 +139,7 @@ export class MdColorHsv extends BaseElement {
       ([h, s, v]) => hsvToRgb(h, s, v),
       ({ r, g, b }) => {
         const c = rgbToHsv(r, g, b);
-        return [c.s === 0 ? undefined : c.h, c.v === 0 ? undefined : c.s, c.v];
+        return [c.s === 0 ? SKIP : c.h, c.v === 0 ? SKIP : c.s, c.v];
       },
     );
 
