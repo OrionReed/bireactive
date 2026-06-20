@@ -11,6 +11,14 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./jsx-runtime": {
+      "types": "./dist/jsx-runtime.d.ts",
+      "import": "./dist/jsx-runtime.js"
+    },
+    "./jsx-dev-runtime": {
+      "types": "./dist/jsx-dev-runtime.d.ts",
+      "import": "./dist/jsx-dev-runtime.js"
+    },
     "./package.json": "./package.json"
   },
   "sideEffects": false,

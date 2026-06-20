@@ -50,6 +50,10 @@ export default defineConfig(({ command }) => ({
     // (Diagram.tagName / BaseElement.tagName), so the bundle must preserve
     // them — renaming would break every `<md-*>` upgrade.
     keepNames: true,
+    // `.tsx` demos use the automatic JSX runtime; the import source resolves
+    // to `src/jsx-runtime.ts` through the `@bireactive` alias above.
+    jsx: "automatic",
+    jsxImportSource: "@bireactive",
   },
   plugins: [
     {

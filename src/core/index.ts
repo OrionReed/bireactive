@@ -37,6 +37,7 @@ export {
 export { bezier2, bezier3 } from "./derived-geometry";
 export * from "./lenses";
 export { each, type Lifecycle } from "./lifecycle";
+export { at, fields } from "./optics";
 export {
   type Equals,
   type Lerp,

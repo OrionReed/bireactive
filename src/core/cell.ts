@@ -1026,14 +1026,43 @@ function arrayGetter(
 // (a read-only N view is a `derive`, built via `buildDerive`).
 // biome-ignore lint/suspicious/noExplicitAny: dispatch over the untyped call forms
 function buildLens<C extends Cell<any>>(Cls: CellCtor<C>, args: any[]): C {
-  const parent = args[0];
+  const parent0 = args[0];
   if (args.length === 2) {
-    return Array.isArray(parent)
-      ? buildStateful(Cls, parent as Cell<unknown>[], args[1])
-      : buildStateful1(Cls, parent as Cell<unknown>, args[1]);
+    return Array.isArray(parent0)
+      ? buildStateful(Cls, parent0 as Cell<unknown>[], args[1])
+      : buildStateful1(Cls, parent0 as Cell<unknown>, args[1]);
   }
-  const fwd = args[1];
-  const bwd = args[2] as (t: unknown, s?: unknown) => unknown;
+  let parent = parent0;
+  let fwd = args[1];
+  let bwd = args[2] as (t: unknown, s?: unknown) => unknown;
+  // Object-keyed parents → rewrite to the positional array form (key order
+  // fixed once; omitted backward keys become SKIP). The tuple fast path below
+  // is untouched.
+  if (
+    parent0 !== null &&
+    typeof parent0 === "object" &&
+    !Array.isArray(parent0) &&
+    !(parent0 instanceof Cell)
+  ) {
+    const keys = Object.keys(parent0 as object);
+    const rec = parent0 as Record<string, Cell<unknown>>;
+    const fwdObj = fwd as (vals: Record<string, unknown>) => unknown;
+    const bwdObj = bwd as unknown as (
+      t: unknown,
+      vals: Record<string, unknown>,
+    ) => Record<string, unknown>;
+    const toObj = (vals: readonly unknown[]): Record<string, unknown> => {
+      const o: Record<string, unknown> = {};
+      for (let i = 0; i < keys.length; i++) o[keys[i] as string] = vals[i];
+      return o;
+    };
+    parent = keys.map(k => rec[k] as Cell<unknown>);
+    fwd = (vals: readonly unknown[]) => fwdObj(toObj(vals));
+    bwd = ((t: unknown, vals: readonly unknown[]) => {
+      const o = bwdObj(t, toObj(vals));
+      return keys.map(k => (k in o ? o[k] : SKIP));
+    }) as (t: unknown, s?: unknown) => unknown;
+  }
   const readsSource = (bwd as (...xs: unknown[]) => unknown).length >= 2;
   const cell = new Cls();
   cell.flags = F.Mutable | F.Dirty;
@@ -1706,10 +1735,15 @@ export function lens<P extends readonly Read<unknown>[], R>(
   fwd: (vals: ReadValues<P>) => R,
   bwd: (target: R, vals: ReadValues<P>) => ReadValuesOrSkip<P>,
 ): Writable<Cell<R>>;
-export function lens<P, R, C>(
-  parent: Read<P>,
-  spec: StatefulLensSpec1<P, R, C>,
+export function lens<S extends Record<string, Read<unknown>>, R>(
+  parents: S,
+  fwd: (vals: { [K in keyof S]: Inner<S[K]> }) => R,
+  bwd: (
+    target: R,
+    vals: { [K in keyof S]: Inner<S[K]> },
+  ) => Partial<{ [K in keyof S]: Inner<S[K]> | Skip }>,
 ): Writable<Cell<R>>;
+export function lens<P, R, C>(parent: Read<P>, spec: StatefulLensSpec1<P, R, C>): Writable<Cell<R>>;
 export function lens<P extends readonly Read<unknown>[], R, C>(
   parents: P,
   spec: StatefulLensSpec<ReadValues<P>, R, C>,
