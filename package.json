@@ -23,7 +23,7 @@
     "dev": "vite --host",
     "site": "vite build && typedoc && vitepress build docs",
     "docs": "typedoc && vitepress build docs",
-    "docs:dev": "typedoc && vitepress dev docs",
+    "docs:dev": "typedoc && vitepress dev docs --port 5556",
     "preview": "vite preview",
     "prebuild": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json --resolve-full-paths",
