@@ -1,31 +1,36 @@
-// Lists of lists — the Dragology comparison. Boxes and lists are the same
-// kind of draggable, and the layout is a pure function of the tree
-// (`treeStack`), so dragging just feeds it a *previewed* tree: the dragged
-// node is reinserted at where it would land, the neighbours reflow to open
-// that slot, and the node floats at the pointer. Releasing commits the same
-// preview — so the drop is just "stop floating", with nothing to compute.
-// At grab time the projected slot is the node's own home, so it never jumps
-// out of its parent.
+// Lists of lists — the Dragology comparison, on the drag algebra. The model is
+// the structural state `{ tree, origin }`, and the layout is a pure function of
+// it (`treeStack`). The drag is one expression:
+//
+//     d.withFloating(pointer, d.vary(pointer, place, …))
+//
+// where `place` is the backward map pointer→state: reinsert the dragged node at
+// the slot it's over (deepest list wins), or wrap a far-flung leaf in a fresh
+// list. `vary` makes that previewed state live (neighbours reflow to open the
+// slot, the wrap forms as you go), `withFloating` floats the node, and
+// `dragModel` commits the previewed state verbatim on release — the drop is
+// "stop floating", nothing to recompute. The structural hit-test is the only
+// bespoke part; everything temporal comes from the algebra.
 
 import {
-  Box,
   box,
   cell,
   Diagram,
+  d,
   derive,
-  drag,
+  dragModel,
   effect,
   label,
   type Mount,
+  raise,
   rect,
   spring,
   treeStack,
-  type Vec,
-  vec,
-  type Writable,
 } from "@bireactive";
 
 type Tree = { kids: Record<string, string[]>; roots: string[] };
+type V = { x: number; y: number };
+type State = { tree: Tree; origin: Record<string, V> };
 type Meta = { kind: "leaf" | "list"; label: string; fill: string };
 
 const LEAF_W = 116;
@@ -51,6 +56,8 @@ const NODES: Record<string, Meta> = {
   L4: { kind: "list", label: "group", fill: "#8882" },
 };
 const LIST_POOL = ["L0", "L1", "L2", "L3", "L4"];
+// The two named columns persist even when empty; every other list is a group.
+const KEEP_COLUMNS = new Set(["L0", "L2"]);
 const ALL = Object.keys(NODES);
 const isList = (id: string) => NODES[id]!.kind === "list";
 
@@ -65,137 +72,171 @@ const withoutNode = (t: Tree, id: string): Tree => {
   return { kids, roots: t.roots.filter(x => x !== id) };
 };
 const depthOf = (t: Tree, id: string): number => {
-  let d = 0;
+  let depth = 0;
   let frontier = t.roots.slice();
   while (frontier.length) {
-    if (frontier.includes(id)) return d;
+    if (frontier.includes(id)) return depth;
     const next: string[] = [];
     for (const f of frontier) if (isList(f)) next.push(...(t.kids[f] ?? []));
     frontier = next;
-    d++;
+    depth++;
   }
-  return d;
+  return depth;
 };
-const rectDist = (p: { x: number; y: number }, b: { x: number; y: number; w: number; h: number }) =>
+const rectDist = (p: V, b: { x: number; y: number; w: number; h: number }) =>
   Math.hypot(Math.max(b.x - p.x, 0, p.x - (b.x + b.w)), Math.max(b.y - p.y, 0, p.y - (b.y + b.h)));
+const freeList = (t: Tree): string | null => {
+  const used = new Set<string>();
+  const walk = (id: string) => {
+    used.add(id);
+    if (isList(id)) for (const c of t.kids[id] ?? []) walk(c);
+  };
+  for (const r of t.roots) walk(r);
+  return LIST_POOL.find(l => !used.has(l)) ?? null;
+};
+// Groups are ephemeral containers: an empty list dissolves (and frees its id
+// back to the pool), except the two named columns and whatever's being dragged.
+const pruneEmpty = (t: Tree, keep: Set<string>): Tree => {
+  const kids: Record<string, string[]> = {};
+  for (const k of Object.keys(t.kids)) kids[k] = t.kids[k]!.slice();
+  let roots = t.roots.slice();
+  for (;;) {
+    const dead = new Set(
+      [...roots, ...Object.values(kids).flat()].filter(
+        id => isList(id) && !keep.has(id) && (kids[id]?.length ?? 0) === 0,
+      ),
+    );
+    if (!dead.size) return { kids, roots };
+    roots = roots.filter(r => !dead.has(r));
+    for (const k of Object.keys(kids)) kids[k] = kids[k]!.filter(x => !dead.has(x));
+    for (const dn of dead) delete kids[dn];
+  }
+};
 
 export class MdNested extends Diagram {
   protected scene(s: Mount): void {
     const view = this.view(640, 460);
 
-    const tree = cell<Tree>({
-      kids: { L0: ["B0", "B1", "L1"], L1: ["B2", "B3"], L2: ["B4", "B5"], L3: [], L4: [] },
-      roots: ["L0", "L2"],
+    const state = cell<State>({
+      tree: {
+        kids: { L0: ["B0", "B1", "L1"], L1: ["B2", "B3"], L2: ["B4", "B5"], L3: [], L4: [] },
+        roots: ["L0", "L2"],
+      },
+      origin: { L0: { x: 70, y: 90 }, L2: { x: 340, y: 90 } },
     });
-    const rootPos: Record<string, Writable<Vec>> = {};
-    for (const id of ALL) rootPos[id] = vec(0, 0);
-    rootPos.L0!.value = { x: 70, y: 90 };
-    rootPos.L2!.value = { x: 340, y: 90 };
+    const originOf = (st: State, id: string): V => st.origin[id] ?? { x: 0, y: 0 };
 
-    const dragId = cell<string | null>(null);
-    // Top-left of the dragged node, tracking the pointer.
-    const lift: Record<string, Writable<Vec>> = {};
-    for (const id of ALL) lift[id] = vec(0, 0);
-
-    const freeList = (t: Tree): string | null => {
-      const used = new Set<string>();
-      const walk = (id: string) => {
-        used.add(id);
-        if (isList(id)) for (const c of t.kids[id] ?? []) walk(c);
-      };
-      for (const r of t.roots) walk(r);
-      return LIST_POOL.find(l => !used.has(l)) ?? null;
-    };
-
-    // The committed layout — stable during a drag, so hit-testing never
-    // chases its own reflow.
-    const base = treeStack<string>({
-      roots: () => tree.value.roots,
-      kids: id => tree.value.kids[id] ?? [],
+    // The committed layout — stable during a drag, so hit-testing never chases
+    // its own reflow.
+    const stackOpts = {
       container: isList,
       leaf: () => ({ w: LEAF_W, h: LEAF_H }),
-      origin: id => rootPos[id]!.value,
       header: HEADER,
       pad: PAD,
       gap: GAP,
       minWidth: MIN_W,
       emptyHeight: EMPTY_H,
+    };
+    const base = treeStack<string>({
+      roots: () => state.value.tree.roots,
+      kids: id => state.value.tree.kids[id] ?? [],
+      origin: id => originOf(state.value, id),
+      ...stackOpts,
     });
 
-    // Where the drag would land: deepest list under the pointer (excluding
-    // its own subtree), else wrap (a leaf dropped far) or a bare root.
-    const drop = derive((): { list: string | null; index: number; wrap: boolean } => {
-      const d = dragId.value;
-      if (d === null) return { list: null, index: 0, wrap: false };
-      const lay = base.boxes.value;
-      const l = lift[d]!.value;
-      const sz = lay.get(d) ?? { w: LEAF_W, h: LEAF_H };
-      const c = { x: l.x + sz.w / 2, y: l.y + sz.h / 2 };
-      const sub = subtree(tree.value, d);
-      let best: string | null = null;
-      let bestDepth = -1;
-      let near = Number.POSITIVE_INFINITY;
-      for (const [id, b] of lay) {
-        if (!isList(id) || sub.has(id)) continue;
-        near = Math.min(near, rectDist(c, b));
-        if (c.x >= b.x && c.x <= b.x + b.w && c.y >= b.y && c.y <= b.y + b.h) {
-          const dep = depthOf(tree.value, id);
-          if (dep > bestDepth) {
-            bestDepth = dep;
-            best = id;
+    // The drag spec: float the node, and let `vary` make the previewed state
+    // live. `place` (below, via `previewState`) is the pointer→state map.
+    const dm = dragModel<State, string>(state, (_id, pointer) =>
+      d.withFloating(
+        pointer,
+        d.vary(
+          pointer,
+          () => previewState.value,
+          () => pointer.value,
+        ),
+      ),
+    );
+
+    // Where the drag would land: deepest list under the pointer (excluding its
+    // own subtree), else wrap (a leaf dropped far) or a bare root.
+    const dropInfo = derive(
+      (): { list: string | null; index: number; wrap: boolean; nl: string | null } => {
+        const id = dm.active.value;
+        if (id === null) return { list: null, index: 0, wrap: false, nl: null };
+        const lay = base.boxes.value;
+        const l = dm.pointer.value;
+        const sz = lay.get(id) ?? { w: LEAF_W, h: LEAF_H };
+        const c = { x: l.x + sz.w / 2, y: l.y + sz.h / 2 };
+        const sub = subtree(state.value.tree, id);
+        let best: string | null = null;
+        let bestDepth = -1;
+        let near = Number.POSITIVE_INFINITY;
+        for (const [nid, b] of lay) {
+          if (!isList(nid) || sub.has(nid)) continue;
+          near = Math.min(near, rectDist(c, b));
+          if (c.x >= b.x && c.x <= b.x + b.w && c.y >= b.y && c.y <= b.y + b.h) {
+            const dep = depthOf(state.value.tree, nid);
+            if (dep > bestDepth) {
+              bestDepth = dep;
+              best = nid;
+            }
           }
         }
-      }
-      if (best) {
-        let idx = 0;
-        for (const ch of tree.value.kids[best] ?? []) {
-          if (sub.has(ch)) continue;
-          const cb = lay.get(ch);
-          if (cb && cb.y + cb.h / 2 < c.y) idx++;
+        if (best) {
+          let idx = 0;
+          for (const ch of state.value.tree.kids[best] ?? []) {
+            if (sub.has(ch)) continue;
+            const cb = lay.get(ch);
+            if (cb && cb.y + cb.h / 2 < c.y) idx++;
+          }
+          return { list: best, index: idx, wrap: false, nl: null };
         }
-        return { list: best, index: idx, wrap: false };
-      }
-      return { list: null, index: 0, wrap: NODES[d]!.kind === "leaf" && near > WRAP_RADIUS };
-    });
+        const wrap = NODES[id]!.kind === "leaf" && near > WRAP_RADIUS;
+        return { list: null, index: 0, wrap, nl: wrap ? freeList(state.value.tree) : null };
+      },
+    );
 
-    // The previewed tree: the dragged node reinserted at the drop slot (or
-    // a bare root in open space). Neighbours reflow around it.
-    const previewTree = derive((): Tree => {
-      const d = dragId.value;
-      if (d === null) return tree.value;
-      const dt = drop.value;
-      const t = withoutNode(tree.value, d);
+    // The previewed state: the dragged node reinserted at the drop slot, or
+    // wrapped in a fresh list (live), or a bare root. New roots get a pointer-
+    // anchored origin, so committing is just adopting this value. Lists emptied
+    // by the move dissolve at once (except the columns and the dragged subtree).
+    const previewState = derive((): State => {
+      const id = dm.active.value;
+      if (id === null) return state.value;
+      const dt = dropInfo.value;
+      const t = withoutNode(state.value.tree, id);
+      const origin = { ...state.value.origin };
+      const l = dm.pointer.value;
+      let tree: Tree;
       if (dt.list) {
         const arr = (t.kids[dt.list] ?? []).slice();
-        arr.splice(Math.min(dt.index, arr.length), 0, d);
-        return { kids: { ...t.kids, [dt.list]: arr }, roots: t.roots };
+        arr.splice(Math.min(dt.index, arr.length), 0, id);
+        tree = { kids: { ...t.kids, [dt.list]: arr }, roots: t.roots };
+      } else if (dt.wrap && dt.nl) {
+        origin[dt.nl] = { x: l.x - PAD, y: l.y - HEADER - PAD };
+        tree = { kids: { ...t.kids, [dt.nl]: [id] }, roots: [...t.roots, dt.nl] };
+      } else {
+        origin[id] = l;
+        tree = { kids: t.kids, roots: [...t.roots, id] };
       }
-      return { kids: t.kids, roots: [...t.roots, d] };
+      const keep = new Set([...KEEP_COLUMNS, ...subtree(state.value.tree, id)]);
+      return { tree: pruneEmpty(tree, keep), origin };
     });
 
     const preview = treeStack<string>({
-      roots: () => previewTree.value.roots,
-      kids: id => previewTree.value.kids[id] ?? [],
-      container: isList,
-      leaf: () => ({ w: LEAF_W, h: LEAF_H }),
-      // A dragged node placed as a root sits under the pointer; everyone
-      // else keeps their committed origin.
-      origin: id =>
-        dragId.value === id && drop.value.list === null ? lift[id]!.value : rootPos[id]!.value,
-      header: HEADER,
-      pad: PAD,
-      gap: GAP,
-      minWidth: MIN_W,
-      emptyHeight: EMPTY_H,
+      roots: () => previewState.value.tree.roots,
+      kids: id => previewState.value.tree.kids[id] ?? [],
+      origin: id => originOf(previewState.value, id),
+      ...stackOpts,
     });
 
-    // The dragged subtree renders rigidly at the pointer: shift it by the
-    // gap between its slot and the pointer.
+    // The dragged subtree renders rigidly at the pointer: shift it by the gap
+    // between its slot and the pointer (zero once it's a floated root).
     const offset = derive(() => {
-      const d = dragId.value;
-      if (d === null) return { x: 0, y: 0 };
-      const m = preview.boxes.value.get(d);
-      const l = lift[d]!.value;
+      const id = dm.active.value;
+      if (id === null) return { x: 0, y: 0 };
+      const m = preview.boxes.value.get(id);
+      const l = dm.at.value;
       return m ? { x: l.x - m.x, y: l.y - m.y } : { x: 0, y: 0 };
     });
 
@@ -210,8 +251,12 @@ export class MdNested extends Diagram {
       const dispBox = box(0, 0, isLeaf ? LEAF_W : MIN_W, isLeaf ? LEAF_H : EMPTY_H);
 
       const inDrag = derive(() => {
-        const d = dragId.value;
-        return d !== null && subtree(tree.value, d).has(id);
+        const dd = dm.active.value;
+        if (dd === null) return false;
+        if (subtree(state.value.tree, dd).has(id)) return true;
+        // The fresh wrap list travels with the leaf it's forming around.
+        const di = dropInfo.value;
+        return di.wrap && di.nl === id;
       });
       const present = derive(() => preview.boxes.value.has(id));
       const target = derive(() => {
@@ -224,8 +269,6 @@ export class MdNested extends Diagram {
         return m;
       });
       dispBox.value = target.peek();
-      // The reflow springs every box (xywh); the dragged subtree is written
-      // directly so it tracks the pointer crisply.
       this.anim.start(
         spring(dispBox, target, {
           omega: 26,
@@ -238,7 +281,7 @@ export class MdNested extends Diagram {
         if (inDrag.value) dispBox.value = target.value;
       });
 
-      const isDropTarget = derive(() => drop.value.list === id);
+      const isDropTarget = derive(() => dropInfo.value.list === id);
       const opacity = derive(() => (present.value ? 1 : 0));
 
       const r = s(
@@ -263,81 +306,21 @@ export class MdNested extends Diagram {
       shapes[id] = { rect: r, label: lbl };
 
       r.el.style.cursor = "grab";
-      r.on("pointerdown", () => {
-        const b = dispBox.peek();
-        lift[id]!.value = { x: b.x, y: b.y };
-      });
-      const dragging = cell(false);
-      drag(r, lift[id]!, dragging);
-
-      let was = false;
-      effect(() => {
-        const now = dragging.value;
-        if (now && !was) {
-          dragId.value = id;
-          // Raise the dragged subtree (rect then label, so text stays on top).
-          for (const sid of subtree(tree.peek(), id)) {
-            const sh = shapes[sid];
-            if (sh) {
-              sh.rect.el.parentElement?.appendChild(sh.rect.el);
-              sh.label.el.parentElement?.appendChild(sh.label.el);
-            }
-          }
-        } else if (!now && was) {
-          const dt = drop.peek();
-          const t = withoutNode(tree.peek(), id);
-          const kids = { ...t.kids };
-          let roots = t.roots.slice();
-          if (dt.list) {
-            const arr = (kids[dt.list] ?? []).slice();
-            arr.splice(Math.min(dt.index, arr.length), 0, id);
-            kids[dt.list] = arr;
-          } else if (dt.wrap && isLeaf) {
-            const nl = freeList(tree.peek());
-            const l = lift[id]!.peek();
-            if (nl) {
-              kids[nl] = [id];
-              roots = [...roots, nl];
-              rootPos[nl]!.value = { x: l.x - PAD, y: l.y - HEADER - PAD };
-            } else {
-              roots = [...roots, id];
-              rootPos[id]!.value = l;
-            }
-          } else {
-            roots = [...roots, id];
-            rootPos[id]!.value = lift[id]!.peek();
-          }
-          tree.value = { kids, roots };
-          dragId.value = null;
-        }
-        was = now;
-      });
-    }
-
-    // Ghost of the list a far-dropped leaf would be wrapped in.
-    const wrapBox = derive(() => {
-      const d = dragId.value;
-      if (d === null || !drop.value.wrap) return { x: 0, y: 0, w: 0, h: 0 };
-      const l = lift[d]!.value;
-      return {
-        x: l.x - PAD,
-        y: l.y - HEADER - PAD,
-        w: LEAF_W + 2 * PAD,
-        h: LEAF_H + HEADER + 2 * PAD,
-      };
-    });
-    s(
-      rect(
-        Box.derive(() => wrapBox.value),
-        {
-          corner: 12,
-          fill: "#5b8def22",
-          stroke: "#5b8def",
-          strokeWidth: 1.5,
-          opacity: derive(() => (dragId.value !== null && drop.value.wrap ? 1 : 0)),
+      dm.grip(
+        r,
+        id,
+        () => {
+          const b = dispBox.peek();
+          return { x: b.x, y: b.y };
         },
-      ),
-    );
+        () => {
+          for (const sid of subtree(state.peek().tree, id)) {
+            const sh = shapes[sid];
+            if (sh) raise(sh.rect, sh.label);
+          }
+        },
+      );
+    }
 
     s(
       label(view.top.down(20), "drag boxes and lists — drop in a list to nest, in space to wrap", {
@@ -346,7 +329,7 @@ export class MdNested extends Diagram {
       }),
       label(
         view.bottom.up(14),
-        "one treeStack lays out a previewed tree · neighbours reflow to open the drop slot · release just commits it",
+        "d.vary(pointer, place) previews the tree live · d.withFloating floats the node · release commits the preview",
         { size: 10, fill: "var(--text-secondary, #888)" },
       ),
     );

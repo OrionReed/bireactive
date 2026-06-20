@@ -1,34 +1,34 @@
-// Planets & suns — drag a planet onto any orbit, around any sun. Built by
-// composing primitives, not as a bespoke widget:
-//   • orbit position   = center + r·(cos θ, sin θ)   (a polar lens)
-//   • orbit motion      = a `drive` animator ticking θ
-//   • which orbit       = `closest` over each ring's projection of the pointer
-//   • preview + settle  = the planet springs to where it would land (the
-//                         pointer projected onto the chosen orbit), so the
-//                         body itself shows the drop — no ring highlight needed.
-// Releasing reassigns the planet's orbit (and sun) and resumes the motion
-// from the drop angle.
+// Planets & suns — drag a planet onto any orbit, around any sun. Mixed discrete
+// (which ring) and continuous (where on it), as a composition:
+//   • each orbit is a `d.vary` track — place = project the pointer onto the ring
+//     (angle = atan2), so the body lands where you point;
+//   • `d.closest` over the tracks picks the nearest ring across both suns;
+//   • no `withFloating`, so the held body springs to the projected drop — it
+//     previews the landing itself, no ring highlight needed.
+// Releasing commits the chosen orbit + angle; one `drive` ticks every other
+// planet's angle onward.
 
 import {
   cell,
   circle,
-  closest,
   Diagram,
-  drag,
+  d,
+  dragModel,
   drive,
-  effect,
   label,
   type Mount,
+  raise,
   spring,
   Vec,
   vec,
 } from "@bireactive";
 
+type P = { orbit: number; angle: number };
+
 const SUNS = [
   { x: 196, y: 222, fill: "#f5a623" },
   { x: 470, y: 222, fill: "#e25c5c" },
 ];
-// (sun index, radius) for every orbit, flattened.
 const ORBITS = [
   { sun: 0, r: 52 },
   { sun: 0, r: 88 },
@@ -43,106 +43,81 @@ const PLANETS = [
   { orbit: 4, speed: -0.45, fill: "#00b8a9" },
 ];
 
+const posOf = (o: number, angle: number) => {
+  const orb = ORBITS[o]!;
+  const c = SUNS[orb.sun]!;
+  return { x: c.x + orb.r * Math.cos(angle), y: c.y + orb.r * Math.sin(angle) };
+};
+
 export class MdPlanets extends Diagram {
   protected scene(s: Mount): void {
     const view = this.view(640, 430);
 
-    const draggingPlanet = cell<number | null>(null);
-    const planets = PLANETS.map((p, i) => ({
-      id: i,
-      orbit: cell(p.orbit),
-      angle: cell((i / PLANETS.length) * Math.PI * 2),
-      speed: p.speed,
-      fill: p.fill,
-      pos: vec(0, 0),
-      // The raw pointer while this planet is held (drives the projection).
-      raw: vec(0, 0),
-    }));
-
-    // The dragged planet's raw pointer.
-    const pointer = Vec.derive(() => {
-      const d = draggingPlanet.value;
-      return d === null ? { x: -1e4, y: -1e4 } : planets[d]!.raw.value;
-    });
-    // Each orbit's candidate position is the pointer projected onto its ring;
-    // `closest` then picks the nearest orbit across both suns.
-    const projections = ORBITS.map(o =>
-      Vec.derive(() => {
-        const c = SUNS[o.sun]!;
-        const p = pointer.value;
-        const dx = p.x - c.x;
-        const dy = p.y - c.y;
-        const d = Math.hypot(dx, dy) || 1;
-        return { x: c.x + (dx / d) * o.r, y: c.y + (dy / d) * o.r };
-      }),
+    const model = cell<P[]>(
+      PLANETS.map((p, i) => ({ orbit: p.orbit, angle: (i / PLANETS.length) * Math.PI * 2 })),
     );
-    const { index: targetOrbit } = closest(pointer, projections, { sticky: 16 });
-    // Where a release would put the planet: the chosen ring's projection.
-    const projectedDrop = Vec.derive(() => projections[targetOrbit.value]!.value);
 
-    // Orbit rings — plain; the dragged body itself shows the target.
-    ORBITS.forEach(o => {
-      const c = SUNS[o.sun]!;
-      s(circle(vec(c.x, c.y), o.r, { fill: "none", stroke: "#8886", strokeWidth: 1.25 }));
+    // Dragging planet `id`: each orbit is a `vary` track that projects the
+    // pointer onto its ring; `closest` picks the nearest across both suns.
+    const dm = dragModel<P[], number>(model, (id, pointer) =>
+      d.closest(
+        ORBITS.map((orb, oi) =>
+          d.vary<P[]>(
+            pointer,
+            p => {
+              // Read `model` live (not peek): the other planets keep orbiting,
+              // so the drop must reflect their current angles, or committing a
+              // stale snapshot on release snaps them backward.
+              const base = model.value;
+              const c = SUNS[orb.sun]!;
+              const angle = Math.atan2(p.y - c.y, p.x - c.x);
+              return base.map((st, k) => (k === id ? { orbit: oi, angle } : st));
+            },
+            m => posOf(oi, m[id]!.angle),
+          ),
+        ),
+      ),
+    );
+
+    ORBITS.forEach(orb => {
+      const c = SUNS[orb.sun]!;
+      s(circle(vec(c.x, c.y), orb.r, { fill: "none", stroke: "#8886", strokeWidth: 1.25 }));
     });
-
-    // Suns.
     SUNS.forEach(sun => s(circle(vec(sun.x, sun.y), 20, { fill: sun.fill })));
 
-    // Planets: each springs toward its orbit position — or, while held,
-    // toward where it would land. So the body previews the drop and a release
-    // just stops steering it.
-    for (const p of planets) {
-      const home = Vec.derive(() => {
-        const o = ORBITS[p.orbit.value]!;
-        const c = SUNS[o.sun]!;
-        const a = p.angle.value;
-        return { x: c.x + o.r * Math.cos(a), y: c.y + o.r * Math.sin(a) };
-      });
-      p.pos.value = home.peek();
-
-      const dragging = cell(false);
-      const target = Vec.derive(() =>
-        draggingPlanet.value === p.id ? projectedDrop.value : home.value,
-      );
-
+    PLANETS.forEach((p, k) => {
+      const start = posOf(p.orbit, model.peek()[k]!.angle);
+      const pos = vec(start.x, start.y);
       const dot = s(
-        circle(p.pos, 11, { fill: p.fill, stroke: "var(--bg-color, #fff)", strokeWidth: 2 }),
+        circle(pos, 11, { fill: p.fill, stroke: "var(--bg-color, #fff)", strokeWidth: 2 }),
       );
       dot.el.style.cursor = "grab";
-      dot.on("pointerdown", () => {
-        p.raw.value = p.pos.peek();
-      });
-      drag(dot, p.raw, dragging);
-      this.anim.start(spring(p.pos, target, { omega: 28, zeta: 0.9, precision: 0 }));
 
-      let was = false;
-      effect(() => {
-        const now = dragging.value;
-        if (now && !was) {
-          draggingPlanet.value = p.id;
-          dot.el.parentElement?.appendChild(dot.el);
-        } else if (!now && was) {
-          // Commit: adopt the chosen orbit and resume from the drop angle.
-          const k = targetOrbit.peek();
-          const o = ORBITS[k]!;
-          const c = SUNS[o.sun]!;
-          const pos = p.pos.peek();
-          p.orbit.value = k;
-          p.angle.value = Math.atan2(pos.y - c.y, pos.x - c.x);
-          draggingPlanet.value = null;
-        }
-        was = now;
+      // Held: spring to the projected drop (`dm.at`). Idle: orbit at the
+      // drive-ticked angle. Either way it lerps — releasing just stops steering.
+      const home = Vec.derive(() => {
+        if (dm.active.value === k) return dm.at.value;
+        const st = model.value[k]!;
+        return posOf(st.orbit, st.angle);
       });
-    }
+      this.anim.start(spring(pos, home, { omega: 28, zeta: 0.9, precision: 0 }));
+      dm.grip(
+        dot,
+        k,
+        () => pos.peek(),
+        () => raise(dot),
+      );
+    });
 
-    // Orbit motion: one animator advances every (un-held) planet's angle.
+    // One animator advances every un-held planet's angle.
     this.anim.start(
       drive(tick => {
-        for (const p of planets) {
-          if (draggingPlanet.peek() === p.id) continue;
-          p.angle.value = p.angle.peek() + p.speed * tick.dt;
-        }
+        const act = dm.active.peek();
+        model.value = model
+          .peek()
+          .map((st, k) =>
+            k === act ? st : { orbit: st.orbit, angle: st.angle + PLANETS[k]!.speed * tick.dt },
+          );
       }),
     );
 
@@ -153,7 +128,7 @@ export class MdPlanets extends Diagram {
       }),
       label(
         view.bottom.up(14),
-        "orbit = polar position · closest picks the ring · the body springs to the projected drop · one drive ticks the angles",
+        "each orbit is a d.vary track · d.closest picks the ring · the body springs to the projected drop",
         { size: 10, fill: "var(--text-muted)" },
       ),
     );

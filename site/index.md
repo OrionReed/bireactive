@@ -715,20 +715,27 @@ A waveform and its spectrum:
 
 ## Dragging
 
-Some interaction experiments inspired by [Dragology](https://joshuahhh.com/dragology/). This is all very imperative and less polished, but it at least hints that lenses *could* be a compelling way to do complex drag-heavy interactions, with closed-form inverses, while still being very composable.
+Inspired by [Dragology](https://joshuahhh.com/dragology/) and its `d` DSL. These demos explore whether the same algebra can be re-expressed using reactive lenses:
 
 ```ts
-const { index } = closest(pointer, slotCenters); // O(slots), not O(perms)
-order.value = move(order.peek(), from, index.peek()); // on drop
+d.fixed(pointer, state, locate); // a reachable model
+d.vary(pointer, place, locate); // a continuous family — place is the backward lens
+d.closest([...]); // pick the smallest residual          d.between(pointer, [...], mix); // blend the hull
+d.whenFar(near, far, r); // switch on distance            d.withFloating(pointer, b); // float the handle
+```
+
+```ts
+// reorder: dragging a tile reinserts it at each slot — the reachable states
+d.withFloating(pointer, d.closest(states.map(st => d.fixed(pointer, st, locate))));
 ```
 
 <md-reorder></md-reorder>
 
-`between` is like `closest` but continuous. `ctrl → nodeᵢ` is affine and and invertible, so dragging *any* node steers the one control point.
+`d.between` is the continuous sibling of `d.closest`. A node's three presets are just its own corners, so dragging *any* node steers the one morph.
 
 ```ts
-const w = between(ctrl, corners); // weights, clamped to the hull
-const node = mix(w, [stack, ring, splay]); // and the inverse steers ctrl from a node
+const corners = anchors.map((a, i) => d.fixed(pointer, basis[i], () => a));
+d.between(pointer, corners, mix); // weights → every node is the weighted blend
 ```
 
 <md-twisted></md-twisted>
@@ -740,27 +747,26 @@ const snap = nearestIndex(playhead, ticks); // discrete settle
 
 <md-algebra></md-algebra>
 
-Drag a planet to any orbit, around either sun.
+Drag a planet to any orbit, around either sun: each orbit is a `vary` track (project the pointer onto the ring), `closest` picks across both suns.
 
 ```ts
-const rings = ORBITS.map(o => project(pointer, o)); // nearest point per orbit
-const { index } = closest(pointer, rings); // which orbit, across suns
-floating(planet, pos, orbitPosition); // follow, then settle on the ring
+d.closest(ORBITS.map((o, i) =>
+  d.vary(pointer, p => placeOnOrbit(i, p), m => posOf(i, m)))); // discrete × continuous
 ```
 
 <md-planets></md-planets>
 
 ```ts
-const preview = treeStack({ roots, kids, origin, ... });   // tree → box per node
-const draft = derive(() => insert(without(tree.value, id), id, drop.value)); // slot opens live
-tree.value = draft.peek(); // release commits the previewed tree, unchanged
+d.withFloating(pointer, d.vary(pointer, place)); // preview = the previewed tree, drop = commit it
 ```
 
 <md-nested></md-nested>
 
+The puck's behaviour is itself three `d` specs selected by a knob, so the same lil bits of algebra can apply reflexively.
+
 ```ts
-const mode = nearestIndex(knob, markers); // the spec is a cell
-const home = derive(() => [gridClosest, free, ringClosest][mode.value].value);
+const by = [d.closest(grid), d.vary(free), d.vary(ring)];
+const spec = select(mode, by); // closest snaps, vary frees — no rewiring
 ```
 
 <md-spec></md-spec>

@@ -1,29 +1,29 @@
-// Twisted Trees — Dragology's `between`, the continuous sibling of
-// `closest`. Drag the control point inside the triangle: its barycentric
-// position (clamped to the hull) gives the weights, and every node of the
-// tree is a `mix` of its position in the three reference layouts. The tree
-// morphs smoothly between "stack", "ring", and "splay" — one weighted
-// lens, no per-frame re-layout of candidates.
+// Twisted Trees — Dragology's `between`, the continuous sibling of `closest`.
+// The model is the 2-DOF morph state: barycentric weights over three reference
+// layouts. `d.between(pointer, corners, mix)` reads the pointer's position in
+// the corners' convex hull as those weights, and every node renders as the
+// weighted blend of its three preset positions. Drag the control point — or any
+// node — and the same `between` steers the one morph: a node's three presets are
+// just its own set of corners, so grabbing it moves the shared weights too.
 
 import {
-  between,
+  cell,
   circle,
   Diagram,
+  d,
   derive,
-  drag,
-  handle,
+  dragModel,
   hullWeights,
   label,
   line,
   type Mount,
-  mix,
-  type Read,
+  raise,
   Vec,
   vec,
-  type Writable,
 } from "@bireactive";
 
-// root, three children, three grandchildren.
+type V = { x: number; y: number };
+
 const EDGES: [number, number][] = [
   [0, 1],
   [0, 2],
@@ -32,8 +32,6 @@ const EDGES: [number, number][] = [
   [2, 5],
   [3, 6],
 ];
-
-// Three reference layouts, as offsets from the morph center.
 const STACK: [number, number][] = [
   [0, -120],
   [-95, -25],
@@ -61,11 +59,10 @@ const SPLAY: [number, number][] = [
   [95, 0],
   [95, 85],
 ];
-
 const TINTS = [
-  [91, 141, 239], // stack — blue
-  [155, 93, 229], // ring — purple
-  [0, 184, 169], // splay — teal
+  [91, 141, 239],
+  [155, 93, 229],
+  [0, 184, 169],
 ];
 
 export class MdTwisted extends Diagram {
@@ -74,113 +71,139 @@ export class MdTwisted extends Diagram {
     const mx = 410;
     const my = 200;
 
-    // Per-layout preset positions, as constant (writable) Vec cells.
-    const presets = [STACK, RING, SPLAY].map(layout =>
-      layout.map(([dx, dy]) => vec(mx + dx, my + dy)),
+    // Three reference layouts (node positions), and the control triangle whose
+    // corners are the basis of the morph.
+    const layouts: V[][] = [STACK, RING, SPLAY].map(L =>
+      L.map(([dx, dy]) => ({ x: mx + dx, y: my + dy })),
     );
-
-    // The control triangle: three corners, one draggable point inside it.
-    const corners = [vec(95, 360), vec(95, 250), vec(235, 360)];
+    const cpts: V[] = [
+      { x: 95, y: 360 },
+      { x: 95, y: 250 },
+      { x: 235, y: 360 },
+    ];
     const cornerNames = ["stack", "ring", "splay"];
-    const ctrl = vec(140, 320);
+    const basis = [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+    ];
 
-    // The draggable dot, clamped to the triangle on the way in: a write
-    // projects onto the convex hull (the same `hullWeights` `between` uses),
-    // so the control point can never leave its gamut.
-    const cpts = corners.map(c => c.peek());
-    const ctrlDot = Vec.lens(
-      ctrl,
-      v => v,
-      (t: { x: number; y: number }) => {
-        const w = hullWeights(t, cpts);
-        let x = 0;
-        let y = 0;
-        for (let k = 0; k < w.length; k++) {
-          x += w[k]! * cpts[k]!.x;
-          y += w[k]! * cpts[k]!.y;
-        }
-        return { x, y };
-      },
-    );
+    // mix over the basis = the weights themselves; this is what `between`
+    // blends, so the model `M` IS the barycentric weight vector.
+    const mixW = (ms: readonly number[][], ws: readonly number[]): number[] => {
+      const out = [0, 0, 0];
+      ms.forEach((m, i) => {
+        for (let k = 0; k < 3; k++) out[k] += ws[i]! * m[k]!;
+      });
+      return out;
+    };
 
-    // Barycentric weights of the control point in the triangle (clamped).
-    const weights = between(ctrl, corners);
+    const w0 = hullWeights({ x: 140, y: 320 }, cpts);
+    const weights = cell<number[]>([...w0]);
 
-    // Each node is the weighted blend of its three layout positions.
-    const nodes: Writable<Vec>[] = [];
-    for (let i = 0; i < 7; i++) {
-      nodes.push(mix(weights, presets.map(p => p[i]!) as Writable<Vec>[]));
-    }
+    // Anchors are the dragged thing's three corners: the triangle for the
+    // control point, a node's three preset positions for that node.
+    const dm = dragModel<number[], "ctrl" | number>(weights, (id, pointer) => {
+      const anchors: V[] = id === "ctrl" ? cpts : layouts.map(L => L[id]!);
+      const corners = anchors.map((a, i) => d.fixed(pointer, basis[i]!, () => a));
+      return d.between(pointer, corners, mixW);
+    });
 
-    // Node colour blends the three tints by the same weights (mix is just
-    // as happy on RGB as on position — shown here by hand to stay in CSS).
-    const blendColor = (w: Read<number>[]): string => {
+    const blend = (ws: readonly number[], pts: readonly V[]): V => {
+      let x = 0;
+      let y = 0;
+      ws.forEach((wi, i) => {
+        x += wi * pts[i]!.x;
+        y += wi * pts[i]!.y;
+      });
+      return { x, y };
+    };
+    const nodeFill = derive(() => {
+      const ws = dm.preview.value;
       let r = 0;
       let g = 0;
       let b = 0;
-      for (let k = 0; k < 3; k++) {
-        const wk = Math.max(0, w[k]!.value);
-        r += wk * TINTS[k]![0]!;
-        g += wk * TINTS[k]![1]!;
-        b += wk * TINTS[k]![2]!;
-      }
+      ws.forEach((wi, i) => {
+        const t = TINTS[i]!;
+        r += Math.max(0, wi) * t[0]!;
+        g += Math.max(0, wi) * t[1]!;
+        b += Math.max(0, wi) * t[2]!;
+      });
       return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
-    };
-    const nodeFill = derive(() => blendColor(weights));
+    });
 
-    // Tree edges + nodes.
+    // Each node IS the weighted blend of its presets — a pure function of the
+    // morph weights, so no spring: it tracks the pointer exactly. (The dragged
+    // node's blend equals the clamped pointer, so it needs no special case.)
+    const pos = Array.from({ length: 7 }, (_, k) =>
+      Vec.derive(() =>
+        blend(
+          dm.preview.value,
+          layouts.map(L => L[k]!),
+        ),
+      ),
+    );
     for (const [a, b] of EDGES) {
-      s(line(nodes[a]!, nodes[b]!, { stroke: nodeFill, strokeWidth: 3, opacity: 0.55 }));
+      s(line(pos[a]!, pos[b]!, { stroke: nodeFill, strokeWidth: 3, opacity: 0.55 }));
     }
-    nodes.forEach((n, i) => {
+    pos.forEach((p, k) => {
       const c = s(
-        circle(n, i === 0 ? 16 : 12, {
+        circle(p, k === 0 ? 16 : 12, {
           fill: nodeFill,
           stroke: "var(--bg-color, #fff)",
           strokeWidth: 2,
         }),
       );
-      // A node is a way to steer the *one* control point, not a free handle.
-      // ctrl → nodeᵢ is affine (it sends each corner to a preset), so
-      // barycentric coords carry across: read the node's weights against its
-      // own presets and replay them on the corners to recover ctrl (clamped
-      // by `between`). Drag a node → the whole tree follows the 2-DOF morph.
-      const presetsI = presets.map(p => p[i]!.peek());
-      const nodeHandle = Vec.lens(
-        ctrl,
-        () => n.value,
-        (p: { x: number; y: number }) => {
-          const w = hullWeights(p, presetsI);
-          let x = 0;
-          let y = 0;
-          for (let k = 0; k < w.length; k++) {
-            x += w[k]! * cpts[k]!.x;
-            y += w[k]! * cpts[k]!.y;
-          }
-          return { x, y };
-        },
-      );
       c.el.style.cursor = "grab";
-      drag(c, nodeHandle);
+      dm.grip(
+        c,
+        k,
+        () => p.peek(),
+        () => raise(c),
+      );
     });
 
-    // The control triangle chrome.
+    // Control triangle chrome.
     for (const [a, b] of [
       [0, 1],
       [1, 2],
       [2, 0],
     ] as [number, number][]) {
-      s(line(corners[a]!, corners[b]!, { stroke: "#888", strokeWidth: 1, opacity: 0.5 }));
-    }
-    corners.forEach((c, i) => {
-      const t = TINTS[i]!;
-      s(circle(c, 5, { fill: `rgb(${t[0]}, ${t[1]}, ${t[2]})` }));
       s(
-        label(c.down(i === 1 ? -16 : 18), cornerNames[i]!, { size: 11, fill: "var(--text-muted)" }),
+        line(vec(cpts[a]!.x, cpts[a]!.y), vec(cpts[b]!.x, cpts[b]!.y), {
+          stroke: "#888",
+          strokeWidth: 1,
+          opacity: 0.5,
+        }),
+      );
+    }
+    cpts.forEach((c, i) => {
+      const t = TINTS[i]!;
+      s(circle(vec(c.x, c.y), 5, { fill: `rgb(${t[0]}, ${t[1]}, ${t[2]})` }));
+      s(
+        label(vec(c.x, c.y + (i === 1 ? -16 : 18)), cornerNames[i]!, {
+          size: 11,
+          fill: "var(--text-muted)",
+        }),
       );
     });
 
-    s(handle(ctrlDot, { r: 9 }));
+    // The control point: the same weights, mapped back into the triangle.
+    const ctrlPos = Vec.derive(() => blend(dm.preview.value, cpts));
+    const ctrl = s(
+      circle(ctrlPos, 9, {
+        fill: "var(--bireactive-handle, #2563eb)",
+        stroke: "var(--bg-color, #fff)",
+        strokeWidth: 2,
+      }),
+    );
+    ctrl.el.style.cursor = "grab";
+    dm.grip(
+      ctrl,
+      "ctrl",
+      () => ctrlPos.peek(),
+      () => raise(ctrl),
+    );
 
     s(
       label(view.top.down(22), "drag the point — or any node — to morph between three layouts", {
@@ -189,7 +212,7 @@ export class MdTwisted extends Diagram {
       }),
       label(
         view.bottom.up(16),
-        "between(point, corners) → weights · each node is mix(weights, [layoutᵢ]) · clamped to the hull",
+        "d.between(pointer, corners, mix) → weights · every node is the weighted blend · clamped to the hull",
         { size: 10, fill: "var(--text-muted)" },
       ),
     );

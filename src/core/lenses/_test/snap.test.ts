@@ -1,10 +1,10 @@
-// snap.test.ts — closest / between / whenFar drag combinators.
+// snap.test.ts — hull weights + sticky nearest-index.
 
 import { describe, expect, it } from "vitest";
 import type { Writable } from "../../cell";
 import type { Vec } from "../../values/vec";
 import { vec } from "../../values/vec";
-import { between, closest, hullWeights, nearestIndex, whenFar } from "../snap";
+import { hullWeights, nearestIndex } from "../snap";
 
 const at = (x: number, y: number) => vec(x, y);
 
@@ -51,22 +51,7 @@ describe("hullWeights — convex-hull barycentric", () => {
   });
 });
 
-describe("between — reactive weights tracking a pointer", () => {
-  it("weights follow the pointer across a segment", () => {
-    const p = vec(0, 0) as Writable<Vec>;
-    const a = vec(0, 0);
-    const b = vec(10, 0);
-    const [wa, wb] = between(p, [a, b]);
-    p.value = { x: 5, y: 0 };
-    expect(wa!.value).toBeCloseTo(0.5, 6);
-    expect(wb!.value).toBeCloseTo(0.5, 6);
-    p.value = { x: 10, y: 0 };
-    expect(wa!.value).toBeCloseTo(0, 6);
-    expect(wb!.value).toBeCloseTo(1, 6);
-  });
-});
-
-describe("nearestIndex / closest — discrete selection", () => {
+describe("nearestIndex — discrete selection", () => {
   it("picks the nearest candidate", () => {
     const p = vec(0, 0) as Writable<Vec>;
     const cands = [at(0, 0), at(100, 0), at(0, 100)];
@@ -89,34 +74,5 @@ describe("nearestIndex / closest — discrete selection", () => {
     // Move well past: now 1 wins by > 30.
     p.value = { x: 90, y: 0 };
     expect(idx.value).toBe(1);
-  });
-
-  it("closest exposes the snapped position of the chosen candidate", () => {
-    const p = vec(0, 0) as Writable<Vec>;
-    const cands = [at(0, 0), at(100, 0)];
-    const { index, pos } = closest(p, cands);
-    p.value = { x: 90, y: 10 };
-    expect(index.value).toBe(1);
-    expect(pos.value).toEqual({ x: 100, y: 0 });
-  });
-});
-
-describe("whenFar — distance-gated behaviour switch", () => {
-  it("routes writes to near within radius, far beyond it", () => {
-    const p = vec(0, 0) as Writable<Vec>;
-    const cands = [at(0, 0)];
-    const near = vec(0, 0) as Writable<Vec>;
-    const far = vec(0, 0) as Writable<Vec>;
-    const out = whenFar(p, cands, near, far, 50);
-    // Within radius: out reads `near`.
-    p.value = { x: 10, y: 0 };
-    void out.value;
-    out.value = { x: 1, y: 1 };
-    expect(near.value).toEqual({ x: 1, y: 1 });
-    // Beyond radius: out reads `far`.
-    p.value = { x: 200, y: 0 };
-    void out.value;
-    out.value = { x: 2, y: 2 };
-    expect(far.value).toEqual({ x: 2, y: 2 });
   });
 });

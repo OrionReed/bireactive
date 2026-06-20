@@ -74,7 +74,7 @@ describe("counts: minimal-work baselines", () => {
     expect(counts.put).toBe(0); // a merge has no put; it folds then writes its parent
   });
 
-  it("a stateful back-write steps twice and puts once", () => {
+  it("a stateful back-write steps once and puts once", () => {
     const s = cell(1);
     const st = lens(s as never, {
       init: () => 0,
@@ -90,6 +90,6 @@ describe("counts: minimal-work baselines", () => {
       void (s as unknown as V).value; // pull → resolve
     });
     expect(counts.put).toBe(1);
-    expect(counts.step).toBe(2); // step-to-current then step-to-committed
+    expect(counts.step).toBe(1); // step-to-current before `bwd`; no redundant step-to-committed
   });
 });

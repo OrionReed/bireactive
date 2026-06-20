@@ -541,8 +541,9 @@ class BwdSpec {
   scatter = false;
 }
 
-/** Runtime state of a stateful (complement-carrying) lens, kept off `BwdSpec` so
- *  plain lenses don't carry its slots. */
+/** Runtime state of a symmetric-lens complement, kept off `BwdSpec` so plain
+ *  lenses don't carry its slots. See the stateful-lens header for the theory
+ *  (symmetric/edit lenses) and the `external` provenance bit. */
 class StatefulCore {
   /** Engine-owned memory the view discards. */
   complement: unknown;
@@ -561,7 +562,10 @@ class StatefulCore {
     this.step = step;
   }
   /** External iff live `sources` (first `n`) differ from this lens's own last
-   *  back-write — i.e. someone other than this lens moved them. */
+   *  back-write — i.e. someone other than this lens moved them. A parent can move
+   *  via another lens's back-commit (during draining), so this MUST compare values:
+   *  a drain-aware provenance epoch misses exactly that case (see the differential
+   *  fuzz with a complement-dependent `stateMemo` node). */
   isExternal(sources: unknown[], n: number): boolean {
     const last = this.last;
     if (last === undefined) return true;
@@ -1032,6 +1036,28 @@ function buildLens<C extends Cell<any>>(Cls: CellCtor<C>, args: any[]): C {
 //   bwd(target, srcs, c)    → { updates, complement } (per-parent + new complement)
 // All four are pure and read no cells; the engine owns `c`, stepping it to the
 // current sources before `bwd` so `bwd` sees an up-to-date complement.
+//
+// This is a SYMMETRIC LENS WITH COMPLEMENT in the literature (Hofmann, Pierce &
+// Wagner, "Symmetric Lenses", POPL 2011): `step`+`fwd` are the complement-carrying
+// `putr`, `bwd` is `putl`, `init` seeds the shared complement `C`. The complement
+// is path-dependent (winding, casing), so this is a genuine symmetric lens, not a
+// constant-complement ("very well-behaved") one where `S ≅ V × C`.
+//
+// `external` is a 1-bit PROVENANCE signal: "did the source change for a reason
+// other than this lens's own last back-write?" It is the degenerate case of an
+// EDIT LENS (Hofmann–Pierce–Wagner edit lenses; Diskin, Xiong & Czarnecki delta
+// lenses), where the incoming edit's origin is explicit. Today's state lens is the
+// trivial edit alphabet `{ Replace(v) }`; when the alphabet grows, `step`/`bwd`
+// take the edit and `external` generalizes to its provenance. The engine currently
+// RECONSTRUCTS that bit by comparing live sources to the last back-write (the
+// `last` witness on `StatefulCore`); an edit lens would receive it directly.
+//
+// Law `step` must satisfy (relied on by `writeBack` committing `bwd`'s complement
+// without a redundant step-to-committed): a settle is a fixpoint —
+//   step(s, step(s, c, e), false) === step(s, c, e).
+// Holds for every lens in the tree: the `external ? refresh(s) : c` idiom returns
+// `c` unchanged when `external=false`; the schema/`each` idiom is a pure function
+// of `s` (so applying it twice equals once).
 
 export interface StatefulBwd<S extends readonly unknown[], C> {
   /** Per-parent updates: a value (written verbatim, `undefined` included) or
@@ -1409,8 +1435,11 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
         // or short-`upd` slot leaves that parent at its current `vals[i]`.
         const um = upd.length < n ? upd.length : n;
         for (let i = 0; i < um; i++) if (upd[i] !== SKIP) vals[i] = upd[i];
-        if (COUNTS) counts.step++;
-        sc.complement = sc.step(vals, res.complement, false);
+        // Commit `bwd`'s complement directly — no step-to-committed. A forward read
+        // re-steps with `external=false` regardless, and a lawful `step` is a
+        // fixpoint there (`step(s, step(s, c, e), false) === step(s, c, e)`), so that
+        // extra step was always redundant. `vals` is the own-write witness `last`.
+        sc.complement = res.complement;
         sc.last = vals;
         out = upd;
       } else {

@@ -11,7 +11,16 @@ export { type ArrowOpts, arrow, connect, ensureArrowMarker } from "./connect";
 export { Curve, type CurveOpts, type CurveSegment, curve, ellipse } from "./curve";
 export { dashedPath } from "./dashed";
 export { debug } from "./debug";
-export { type FloatingOpts, type FloatingResult, floating, floatingAt } from "./drag-behaviors";
+export {
+  type DragModel,
+  dragModel,
+  type FloatingOpts,
+  type FloatingResult,
+  floating,
+  onGesture,
+  raise,
+} from "./drag-behaviors";
+export { type Drag, d } from "./drag-spec";
 export { group } from "./group";
 export { type HandleOpts, handle } from "./handle";
 export { cursor, drag, draggable, dragRotate, dragWithState, hoverSignal } from "./interaction";

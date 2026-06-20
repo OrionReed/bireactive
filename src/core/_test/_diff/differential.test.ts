@@ -59,8 +59,10 @@ function genRecipe(r: () => number, allowDerive: boolean): Recipe {
       });
     } else if (roll < 0.6) {
       nodes.push({ kind: "merge", parent: int(r, 0, i - 1) });
-    } else if (roll < 0.72) {
+    } else if (roll < 0.66) {
       nodes.push({ kind: "stateful1", parent: int(r, 0, i - 1) });
+    } else if (roll < 0.72) {
+      nodes.push({ kind: "stateMemo", parent: int(r, 0, i - 1) });
     } else if (roll < 0.85) {
       nodes.push({ kind: "skipN", parents: pickParents(i) });
     } else {

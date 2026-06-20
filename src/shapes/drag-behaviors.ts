@@ -9,7 +9,18 @@
 // committed drop.
 
 import { type Animator, type SpringOpts, spring } from "@bireactive/animation";
-import { type Cell, cell, type Read, type Vec, vec, type Writable } from "@bireactive/core";
+import {
+  type Cell,
+  cell,
+  derive,
+  effect,
+  type Inner,
+  type Read,
+  Vec,
+  vec,
+  type Writable,
+} from "@bireactive/core";
+import type { Drag } from "./drag-spec";
 import { drag } from "./interaction";
 import type { AnyShape } from "./shape";
 
@@ -56,15 +67,89 @@ export function floating(
   return { dragging, anim, dispose };
 }
 
-/** Sugar: create the display cell, float the shape, and return both. The
- *  shape must already be bound to the returned `pos`. */
-export function floatingAt(
-  make: (pos: Writable<Vec>) => AnyShape,
-  home: Read<{ x: number; y: number }>,
-  opts: FloatingOpts = {},
-): { pos: Writable<Vec>; shape: AnyShape } & FloatingResult {
-  const p = home.peek();
-  const pos = vec(p.x, p.y);
-  const shape = make(pos);
-  return { pos, shape, ...floating(shape, pos, home, opts) };
+// ── drag lifecycle ──────────────────────────────────────────────────
+// The `was`-flag edge and z-raise every demo hand-rolls, factored out, plus a
+// model-driven driver that ties a `Drag<M>` spec (drag-spec.ts) to the
+// grab→preview→commit lifecycle — the spec is built once per grab (like
+// Dragology's `dragologyOnDrag`), so candidate states are enumerated then.
+
+/** Run `grab`/`drop` on the rising/falling edge of `active`. */
+export function onGesture(
+  active: Read<boolean>,
+  edges: { grab?: () => void; drop?: () => void },
+): () => void {
+  let was = false;
+  return effect(() => {
+    const now = active.value;
+    if (now && !was) edges.grab?.();
+    else if (!now && was) edges.drop?.();
+    was = now;
+  });
+}
+
+/** Re-append shapes to raise them above siblings (z-order). */
+export function raise(...shapes: readonly AnyShape[]): void {
+  for (const s of shapes) s.el.parentElement?.appendChild(s.el);
+}
+
+export interface DragModel<M, Id> {
+  /** Which element is being dragged (null when idle). */
+  active: Cell<Id | null>;
+  /** The free pointer for the active drag (bound by `grip`). */
+  pointer: Writable<Vec>;
+  /** Previewed model while dragging, else the committed model. */
+  preview: Read<M>;
+  /** Where the dragged handle sits this frame (float the dragged element here). */
+  at: Vec;
+  /** Wire a handle: seed + claim on press, commit `drop` on release. */
+  grip(handle: AnyShape, id: Id, seed: () => Inner<Vec>, onGrab?: () => void): () => void;
+}
+
+/** Bind a committed `model` cell to a `Drag<M>` spec built at grab time. Owns
+ *  the transient drag state (which element, the free pointer, the live preview)
+ *  and commits the spec's drop on release — the demo only renders `preview`/`at`. */
+export function dragModel<M, Id>(
+  model: Writable<Cell<M>>,
+  spec: (id: Id, pointer: Read<Inner<Vec>>) => Drag<M>,
+): DragModel<M, Id> {
+  const active = cell<Id | null>(null);
+  const pointer = vec(0, 0);
+  const live = cell<Drag<M> | null>(null);
+  const preview = derive(() => {
+    const s = live.value;
+    return s ? s.preview.value : model.value;
+  });
+  const at = Vec.derive(() => {
+    const s = live.value;
+    return s ? s.at.value : pointer.value;
+  });
+  const grip = (
+    handle: AnyShape,
+    id: Id,
+    seed: () => Inner<Vec>,
+    onGrab?: () => void,
+  ): (() => void) => {
+    const dragging = cell(false);
+    const offDown = handle.on("pointerdown", () => {
+      pointer.value = seed();
+      active.value = id;
+      live.value = spec(id, pointer);
+      onGrab?.();
+    });
+    const offDrag = drag(handle, pointer, dragging);
+    const offEdge = onGesture(dragging, {
+      drop: () => {
+        const s = live.peek();
+        if (s) model.value = s.drop.peek();
+        active.value = null;
+        live.value = null;
+      },
+    });
+    return () => {
+      offDown();
+      offDrag();
+      offEdge();
+    };
+  };
+  return { active, pointer, preview, at, grip };
 }

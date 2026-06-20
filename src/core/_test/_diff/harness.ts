@@ -28,7 +28,13 @@ export type NodeSpec =
   | { kind: "skipN"; parents: number[] }
   // Minimal complement-carrying (stateful) lens — identity through the stateful
   // path, to fuzz the single-source stateful build + `writeBack`'s stateful branch.
-  | { kind: "stateful1"; parent: number };
+  | { kind: "stateful1"; parent: number }
+  // Complement-DEPENDENT stateful lens: `view = s + offset`, where a write splits
+  // the delta (half to the source, half stashed into the offset) so the VIEW
+  // genuinely depends on the complement, and an external source change forgets the
+  // offset (`external ? 0 : c`). This is the node that makes provenance/`external`
+  // semantics observable to the diff — `stateful1`'s view ignores its complement.
+  | { kind: "stateMemo"; parent: number };
 
 export type Op =
   | { kind: "write"; node: number; val: number }
@@ -129,6 +135,25 @@ export function build(rx: Engine, r: Recipe): Built {
             step: ([s]: number[], c: { last: number }, ext: boolean) => (ext ? { last: s } : c),
             fwd: ([s]: number[]) => s,
             bwd: (t: number) => ({ updates: [t], complement: { last: t } }),
+          }),
+        );
+        break;
+      }
+      case "stateMemo": {
+        const p = cells[n.parent];
+        cells.push(
+          // view = s + off. Write splits the delta: source moves half, off keeps
+          // half (PutGet: (s + d/2) + (off + d/2) = s + off + d = t). An external
+          // source change (`ext`) forgets the offset, so the VIEW depends on both
+          // the complement AND the engine's provenance verdict.
+          lens(p, {
+            init: ([_s]: number[]) => ({ off: 0 }),
+            step: ([_s]: number[], c: { off: number }, ext: boolean) => (ext ? { off: 0 } : c),
+            fwd: ([s]: number[], c: { off: number }) => s + c.off,
+            bwd: (t: number, [s]: number[], c: { off: number }) => {
+              const d = t - (s + c.off);
+              return { updates: [s + d / 2], complement: { off: c.off + d / 2 } };
+            },
           }),
         );
         break;
