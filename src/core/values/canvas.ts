@@ -276,21 +276,20 @@ export class Canvas extends Cell<V> {
       return c;
     };
     const self: Canvas = this;
-    return Canvas.lens([self], {
-      init: ([s]) => chromaOf(s),
-      step: ([s], c, external) => (external ? chromaOf(s) : c),
-      fwd: ([s]) => {
+    return Canvas.lens(self, {
+      init: s => chromaOf(s),
+      fwd: s => {
         const out = sf(s.w, s.h);
         pass(LUMA, out, x => x.tex("u_s", 0, s.tex));
         return stamp(out.tex, s.w, s.h);
       },
-      bwd: (target, [s], c) => {
+      bwd: (target, s, c) => {
         const out = sb(s.w, s.h);
         pass(RECOLOR, out, x => {
           x.tex("u_t", 0, target.tex);
           x.tex("u_c", 1, c.tex);
         });
-        return { updates: [stamp(out.tex, s.w, s.h)], complement: c };
+        return { update: stamp(out.tex, s.w, s.h), complement: c };
       },
     }) as Writable<Canvas>;
   }
@@ -308,21 +307,20 @@ export class Canvas extends Cell<V> {
       return c;
     };
     const self: Canvas = this;
-    return Canvas.lens([self], {
-      init: ([s]) => lumaOf(s),
-      step: ([s], c, external) => (external ? lumaOf(s) : c),
-      fwd: ([s]) => {
+    return Canvas.lens(self, {
+      init: s => lumaOf(s),
+      fwd: s => {
         const out = sf(s.w, s.h);
         pass(CHROMA_VIEW, out, x => x.tex("u_s", 0, s.tex));
         return stamp(out.tex, s.w, s.h);
       },
-      bwd: (target, [s], c) => {
+      bwd: (target, s, c) => {
         const out = sb(s.w, s.h);
         pass(DELUMA, out, x => {
           x.tex("u_t", 0, target.tex);
           x.tex("u_c", 1, c.tex);
         });
-        return { updates: [stamp(out.tex, s.w, s.h)], complement: c };
+        return { update: stamp(out.tex, s.w, s.h), complement: c };
       },
     }) as Writable<Canvas>;
   }
@@ -402,14 +400,13 @@ export class Canvas extends Cell<V> {
       return res;
     };
     const self: Canvas = this;
-    return Canvas.lens([self], {
-      init: ([s]) => residualOf(s),
-      step: ([s], c, external) => (external ? residualOf(s) : c),
-      fwd: ([s]) => {
+    return Canvas.lens(self, {
+      init: s => residualOf(s),
+      fwd: s => {
         const small = down(sdF, s.tex, s.w, s.h);
         return stamp(small.tex, small.w, small.h);
       },
-      bwd: (target, [s], c) => {
+      bwd: (target, s, c) => {
         const up = suB(s.w, s.h);
         pass(UP, up, x => {
           x.tex("u_small", 0, target.tex);
@@ -421,7 +418,7 @@ export class Canvas extends Cell<V> {
           x.tex("u_a", 0, up.tex);
           x.tex("u_b", 1, c.tex);
         });
-        return { updates: [stamp(out.tex, s.w, s.h)], complement: c };
+        return { update: stamp(out.tex, s.w, s.h), complement: c };
       },
     }) as Writable<Canvas>;
   }

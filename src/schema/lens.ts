@@ -430,12 +430,12 @@ export function recurse(build: (self: OLens) => OLens): OLens {
 export function toStep<C>(vl: VLens<Obj, Obj, C>): Step {
   return src =>
     lens<Obj, Obj, C>(src, {
-      init: ([v]) => vl.init(v),
-      step: ([v], c) => (vl.step ? vl.step(v, c) : c),
-      fwd: ([v], c) => vl.fwd(v, c),
-      bwd: (t: Obj, [v], c) => {
+      init: v => vl.init(v),
+      step: (v, c) => (vl.step ? vl.step(v, c) : c),
+      fwd: (v, c) => vl.fwd(v, c),
+      bwd: (t: Obj, v, c) => {
         const r = vl.bwd(t, v, c);
-        return { updates: [r.s], complement: r.c };
+        return { update: r.s, complement: r.c };
       },
     });
 }

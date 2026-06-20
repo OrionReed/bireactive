@@ -150,10 +150,13 @@ export function nearestIndex(
   const sticky = opts.sticky ?? 0;
   const parents = [pointer, ...candidates] as readonly Read<V>[];
   type C = { index: number };
-  return lens<V, number, C>(parents as never, {
-    init: sources => ({ index: pick(sources, -1, 0) }),
-    step: (sources, c) => ({ index: pick(sources, c.index, sticky) }),
-    fwd: (_sources, c) => c.index,
-    bwd: (_t, sources, c) => ({ updates: sources.map(() => SKIP) as never, complement: c }),
+  return lens(parents, {
+    init: (sources: readonly V[]) => ({ index: pick(sources, -1, 0) }),
+    step: (sources: readonly V[], c: C) => ({ index: pick(sources, c.index, sticky) }),
+    fwd: (_sources: readonly V[], c: C) => c.index,
+    bwd: (_t: number, sources: readonly V[], c: C) => ({
+      updates: sources.map(() => SKIP) as never,
+      complement: c,
+    }),
   }) as Cell<number>;
 }

@@ -38,6 +38,64 @@
 // Counts-first instrumentation: off by default, one branch per site (see _counts).
 import { COUNTS, counts } from "./_counts";
 
+// ─────────────────────────────────────────────────────────────────────────
+// Module state — mutable engine-wide variables and pooled scratch buffers.
+// Every pool is non-reentrant: forward and backward runs never nest, so one
+// shared buffer per role suffices (no per-call allocation).
+// ─────────────────────────────────────────────────────────────────────────
+
+let cycle = 0;
+let runDepth = 0;
+let batchDepth = 0;
+let notifyIndex = 0;
+let queuedLength = 0;
+let activeSub: ReactiveNode | undefined;
+let flushing = false;
+/** A microtask flush is queued. Effects run asynchronously (end of turn), so a
+ *  burst of writes wakes each at most once; reads stay synchronous. */
+let scheduled = false;
+/** A `Sync` watcher (a `network`) is queued: a wake flushes the whole queue
+ *  synchronously (eager solve), so a read right after the write sees post-solve
+ *  state. Writes that wake plain effects alone defer to the microtask. */
+let syncFlush = false;
+/** The running self-excluding watcher (`Exclude`-mode `Effect`), passed as
+ *  `propagate`'s `excluding` so its own writes don't re-trigger it. */
+let activeExcluded: Effect | undefined;
+const queued: (Effect | undefined)[] = [];
+/** Re-entrancy guard: during a back-resolve a `put`'s source read commits
+ *  normally but must NOT trigger a nested resolve. */
+let draining = false;
+
+// Pooled backward-traversal buffers (non-reentrant under `draining`, so reused
+// across calls — no per-call allocation).
+/** `backResolve` phase-1 source worklist (collect, then resolve in phase 2). */
+const backSources: Cell<unknown>[] = [];
+/** Monotone epoch stamped onto `Cell.bEpoch` during a `backResolve` collect, so
+ *  diamonds visit each node once without a Set (the backward dual of `cycle`). */
+let backCycle = 0;
+/** `writeBack`'s explicit descent stack (depth-first, left-to-right), as two
+ *  parallel pooled columns. Non-reentrant — a `writeBack` triggers no nested
+ *  `writeBack` — so one shared stack suffices (no per-call allocation). */
+const wbNode: Cell<unknown>[] = [];
+const wbTarget: unknown[] = [];
+/** Stateful lenses passed through in a `writeBack`, re-stamped post-order once
+ *  their sources are written (versions bumped) so the next forward read sees an
+ *  unchanged sum and skips `step` — own-write provenance. Pooled; non-reentrant. */
+const wbStateful: Cell<unknown>[] = [];
+/** `resolveCone`'s pooled post-order frame stack: the node and its next-child
+ *  cursor. Non-reentrant (no nested `resolveCone`), so shared pools suffice. */
+const rcNode: Cell<unknown>[] = [];
+const rcEdge: (LensLink | undefined)[] = [];
+
+const EMPTY_DIRTY: ReadonlySet<Cell<unknown>> = new Set();
+
+/** Fires on every source value-change. Backward writes reach it via `_writeSource`. */
+let writeHook: ((cell: Cell<unknown>) => void) | undefined;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Internal constants & types — flag bits, mode bits, and the node/edge records.
+// ─────────────────────────────────────────────────────────────────────────
+
 // Forward flag bits (alien-signals v2), on `flags`.
 const F = {
   None: 0,
@@ -79,20 +137,60 @@ const EM = {
   Manual: 8,
 } as const;
 
-/** Multi-out / stateful back-write sentinel: "leave this parent untouched."
- *  Every non-`SKIP` slot is written verbatim, `undefined` included; a short array
- *  skips the trailing parents. (1→1 `put` always writes its one parent.) */
-export const SKIP: unique symbol = Symbol("bireactive.SKIP");
-export type Skip = typeof SKIP;
+interface ReactiveNode {
+  flags: number;
+  deps: Link | undefined;
+  depsTail: Link | undefined;
+  subs: Link | undefined;
+  subsTail: Link | undefined;
+  _update(): boolean;
+  _notify(): void;
+  _unwatched(): void;
+}
 
-/** Per-parent back-write result: any prefix of the update tuple, each slot a value
- *  or `SKIP` (so `[a]` / `[a, SKIP]` / `[]` all type against `[A, B]`, while a bare
- *  `undefined` in a non-undefined slot stays an error). */
-export type BackUpdates<T extends readonly unknown[]> = number extends T["length"]
-  ? T
-  : T extends readonly [infer H, ...infer R]
-    ? readonly [] | readonly [H, ...BackUpdates<R>]
-    : readonly [];
+interface Link {
+  version: number;
+  dep: ReactiveNode;
+  sub: ReactiveNode;
+  prevSub: Link | undefined;
+  nextSub: Link | undefined;
+  prevDep: Link | undefined;
+  nextDep: Link | undefined;
+}
+
+// LensLink — the backward dual of `Link`, the one structure both backward
+// traversals ride. A lens-edge connects a `child` (a writable view) to one
+// `parent` (a back-target) at tuple position `index`. It lives in two lists,
+// the backward mirror of forward's `deps`/`subs`:
+//   child.parentEdges  (down: my back-targets)      via nextParent
+//   parent.childEdges  (up:   my lens-children)      via prevChild/nextChild
+// The down-list is built eagerly at construction (the lens topology is static,
+// unlike dynamic forward deps), append-only, and never removed — it's intrinsic
+// to the view and dies with it (so it needs no back-pointer). The up-list is
+// spliced lazily on first back-mark (`linkChild`) and removed in O(1) when a view
+// is unwatched (`unlinkChild`), mirroring forward `unlink` — hence doubly-linked.
+// `markDown`/`backResolve` descend `parentEdges`; `resolveCone` ascends `childEdges`.
+interface LensLink {
+  index: number;
+  parent: Cell<unknown>;
+  child: Cell<unknown>;
+  /** Spliced into `parent.childEdges` yet? The down-list (`parentEdges`) is
+   *  eager at construction; the up-list is lazy on first back-mark so the
+   *  parent's child order is arm-order (co-writer resolution is last-write-wins). */
+  linked: boolean;
+  nextParent: LensLink | undefined;
+  prevChild: LensLink | undefined;
+  nextChild: LensLink | undefined;
+}
+
+interface Stack<T> {
+  value: T;
+  prev: Stack<T> | undefined;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Internal helpers — mode predicates, edge wiring, and the write-hook installer.
+// ─────────────────────────────────────────────────────────────────────────
 
 // Mode predicates — the single place a cell's role is read off its fields.
 /** Source (truth leaf): no forward derivation. */
@@ -189,101 +287,6 @@ function setWriteBlocked(cell: Cell<unknown>): void {
   }
 }
 
-let cycle = 0;
-let runDepth = 0;
-let batchDepth = 0;
-let notifyIndex = 0;
-let queuedLength = 0;
-let activeSub: ReactiveNode | undefined;
-let flushing = false;
-/** A microtask flush is queued. Effects run asynchronously (end of turn), so a
- *  burst of writes wakes each at most once; reads stay synchronous. */
-let scheduled = false;
-/** A `Sync` watcher (a `network`) is queued: a wake flushes the whole queue
- *  synchronously (eager solve), so a read right after the write sees post-solve
- *  state. Writes that wake plain effects alone defer to the microtask. */
-let syncFlush = false;
-/** The running self-excluding watcher (`Exclude`-mode `Effect`), passed as
- *  `propagate`'s `excluding` so its own writes don't re-trigger it. */
-let activeExcluded: Effect | undefined;
-const queued: (Effect | undefined)[] = [];
-/** Re-entrancy guard: during a back-resolve a `put`'s source read commits
- *  normally but must NOT trigger a nested resolve. */
-let draining = false;
-
-// Pooled backward-traversal buffers (non-reentrant under `draining`, so reused
-// across calls — no per-call allocation).
-/** `backResolve` phase-1 source worklist (collect, then resolve in phase 2). */
-const backSources: Cell<unknown>[] = [];
-/** Monotone epoch stamped onto `Cell.bEpoch` during a `backResolve` collect, so
- *  diamonds visit each node once without a Set (the backward dual of `cycle`). */
-let backCycle = 0;
-/** `writeBack`'s explicit descent stack (depth-first, left-to-right), as two
- *  parallel pooled columns. Non-reentrant — a `writeBack` triggers no nested
- *  `writeBack` — so one shared stack suffices (no per-call allocation). */
-const wbNode: Cell<unknown>[] = [];
-const wbTarget: unknown[] = [];
-/** `resolveCone`'s pooled post-order frame stack: the node and its next-child
- *  cursor. Non-reentrant (no nested `resolveCone`), so shared pools suffice. */
-const rcNode: Cell<unknown>[] = [];
-const rcEdge: (LensLink | undefined)[] = [];
-
-const EMPTY_DIRTY: ReadonlySet<Cell<unknown>> = new Set();
-
-interface ReactiveNode {
-  flags: number;
-  deps: Link | undefined;
-  depsTail: Link | undefined;
-  subs: Link | undefined;
-  subsTail: Link | undefined;
-  _update(): boolean;
-  _notify(): void;
-  _unwatched(): void;
-}
-
-interface Link {
-  version: number;
-  dep: ReactiveNode;
-  sub: ReactiveNode;
-  prevSub: Link | undefined;
-  nextSub: Link | undefined;
-  prevDep: Link | undefined;
-  nextDep: Link | undefined;
-}
-
-// LensLink — the backward dual of `Link`, the one structure both backward
-// traversals ride. A lens-edge connects a `child` (a writable view) to one
-// `parent` (a back-target) at tuple position `index`. It lives in two lists,
-// the backward mirror of forward's `deps`/`subs`:
-//   child.parentEdges  (down: my back-targets)      via nextParent
-//   parent.childEdges  (up:   my lens-children)      via prevChild/nextChild
-// The down-list is built eagerly at construction (the lens topology is static,
-// unlike dynamic forward deps), append-only, and never removed — it's intrinsic
-// to the view and dies with it (so it needs no back-pointer). The up-list is
-// spliced lazily on first back-mark (`linkChild`) and removed in O(1) when a view
-// is unwatched (`unlinkChild`), mirroring forward `unlink` — hence doubly-linked.
-// `markDown`/`backResolve` descend `parentEdges`; `resolveCone` ascends `childEdges`.
-interface LensLink {
-  index: number;
-  parent: Cell<unknown>;
-  child: Cell<unknown>;
-  /** Spliced into `parent.childEdges` yet? The down-list (`parentEdges`) is
-   *  eager at construction; the up-list is lazy on first back-mark so the
-   *  parent's child order is arm-order (co-writer resolution is last-write-wins). */
-  linked: boolean;
-  nextParent: LensLink | undefined;
-  prevChild: LensLink | undefined;
-  nextChild: LensLink | undefined;
-}
-
-interface Stack<T> {
-  value: T;
-  prev: Stack<T> | undefined;
-}
-
-// Fires on every source value-change. Backward writes reach it via `_writeSource`.
-let writeHook: ((cell: Cell<unknown>) => void) | undefined;
-
 /** Install a hook fired on every source value-change; returns a restore fn. */
 export function setCellWriteHook(fn: ((cell: Cell<unknown>) => void) | undefined): () => void {
   const prev = writeHook;
@@ -292,6 +295,10 @@ export function setCellWriteHook(fn: ((cell: Cell<unknown>) => void) | undefined
     writeHook = prev;
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Forward graph engine (internal) — alien-signals verbatim.
+// ─────────────────────────────────────────────────────────────────────────
 
 // alien-signals algorithm (verbatim): link / unlink / propagate / checkDirty.
 function link(dep: ReactiveNode, sub: ReactiveNode, version: number): void {
@@ -501,6 +508,10 @@ function disposeAllDepsInReverse(sub: ReactiveNode): void {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Backward sidecar (internal) — the `_bwd` payload: merge / spec / complement.
+// ─────────────────────────────────────────────────────────────────────────
+
 // MergeNode — backward fan-in (N→1), the one non-dual ingredient: where forward
 // broadcasts one source to N subscribers, backward accumulates N contributors
 // into one value. Contributors resolve first (each cascades a `put` into
@@ -543,36 +554,48 @@ class BwdSpec {
 
 /** Runtime state of a symmetric-lens complement, kept off `BwdSpec` so plain
  *  lenses don't carry its slots. See the stateful-lens header for the theory
- *  (symmetric/edit lenses) and the `external` provenance bit. */
+ *  (symmetric/edit lenses) and the version-stamp provenance. */
 class StatefulCore {
   /** Engine-owned memory the view discards. */
   complement: unknown;
-  /** Advance the complement: `step(sources, complement, external)`. */
+  /** Advance the complement: `step(sources, complement)`. Run only when the
+   *  sources actually moved (the engine gates it; see the stateful header). */
   // biome-ignore lint/suspicious/noExplicitAny: opaque step shape
-  step: (sources: any, complement: any, external: boolean) => any;
-  /** Sources last committed back (own-vs-external test); `undefined` until first
-   *  back-write, then the committed candidate built in place. */
-  last: unknown[] | undefined = undefined;
+  step: (sources: any, complement: any) => any;
+  /** Sum of the parents' `version`s as of the last sync. Sources moved iff the
+   *  live sum differs — the lazy own-vs-external provenance that replaces a value
+   *  witness. A read syncs it after stepping; a back-write re-stamps it post-order
+   *  (own writes don't re-step, so `bwd` must leave the complement consistent).
+   *  Seeded to `-1` (sums are ≥ 0) so the first use always folds the sources in. */
+  stamp = -1;
   constructor(
     complement: unknown,
     // biome-ignore lint/suspicious/noExplicitAny: opaque step shape
-    step: (sources: any, complement: any, external: boolean) => any,
+    step: (sources: any, complement: any) => any,
   ) {
     this.complement = complement;
     this.step = step;
   }
-  /** External iff live `sources` (first `n`) differ from this lens's own last
-   *  back-write — i.e. someone other than this lens moved them. A parent can move
-   *  via another lens's back-commit (during draining), so this MUST compare values:
-   *  a drain-aware provenance epoch misses exactly that case (see the differential
-   *  fuzz with a complement-dependent `stateMemo` node). */
-  isExternal(sources: unknown[], n: number): boolean {
-    const last = this.last;
-    if (last === undefined) return true;
-    for (let i = 0; i < n; i++) if (sources[i] !== last[i]) return true;
-    return false;
-  }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Public API — sentinels, read/write shapes, and value-coercion helpers.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Multi-out / stateful back-write sentinel: "leave this parent untouched."
+ *  Every non-`SKIP` slot is written verbatim, `undefined` included; a short array
+ *  skips the trailing parents. (1→1 `put` always writes its one parent.) */
+export const SKIP: unique symbol = Symbol("bireactive.SKIP");
+export type Skip = typeof SKIP;
+
+/** Per-parent back-write result: any prefix of the update tuple, each slot a value
+ *  or `SKIP` (so `[a]` / `[a, SKIP]` / `[]` all type against `[A, B]`, while a bare
+ *  `undefined` in a non-undefined slot stays an error). */
+export type BackUpdates<T extends readonly unknown[]> = number extends T["length"]
+  ? T
+  : T extends readonly [infer H, ...infer R]
+    ? readonly [] | readonly [H, ...BackUpdates<R>]
+    : readonly [];
 
 /** Plain T or any read-shape; snapshot via `readNow`, close via `reader`. */
 export type Val<T> = T | Read<T>;
@@ -653,6 +676,10 @@ export interface CellOptions<T = unknown> {
   equals?: (a: T, b: T) => boolean;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Public API — the Cell class (the one user-facing reactive primitive).
+// ─────────────────────────────────────────────────────────────────────────
+
 export class Cell<T = unknown> implements ReactiveNode {
   /** @internal */
   flags: number;
@@ -701,6 +728,11 @@ export class Cell<T = unknown> implements ReactiveNode {
    *  without a Set; compared against the global `backCycle`). */
   bEpoch: number;
 
+  /** @internal Monotone committed-change counter. A stateful lens sums its
+   *  parents' versions to detect "did my sources move since I last synced?" —
+   *  the lazy provenance that replaces a value witness (see the stateful header). */
+  version: number;
+
   // Every slot assigned once, in declaration order, for a stable V8 hidden class.
   constructor(initial: T, opts?: CellOptions<T>) {
     this.flags = F.Mutable;
@@ -721,6 +753,7 @@ export class Cell<T = unknown> implements ReactiveNode {
     this.childEdgesTail = undefined;
     this.bflags = BF.None;
     this.bEpoch = 0;
+    this.version = 0;
     if (opts !== undefined) {
       if (opts.equals !== undefined) this._equals = opts.equals;
       if (opts.watched !== undefined) this._watched = opts.watched;
@@ -740,6 +773,7 @@ export class Cell<T = unknown> implements ReactiveNode {
     const prev = this.pendingValue;
     this.pendingValue = next;
     if (!this._equals(prev, next)) {
+      this.version++; // stamp the change for stateful-lens provenance (sum-of-versions)
       this.flags = F.Mutable | F.Dirty;
       if (writeHook !== undefined) writeHook(this as Cell<unknown>);
       const subs = this.subs;
@@ -767,7 +801,9 @@ export class Cell<T = unknown> implements ReactiveNode {
         const old = this.currentValue;
         const next = (this.currentValue = this.getter());
         threw = false;
-        return !this._equals(old, next);
+        const changed = !this._equals(old, next);
+        if (changed) this.version++; // derived commit: stamp for stateful provenance
+        return changed;
       } finally {
         activeSub = prev;
         this.flags = threw ? F.Mutable | F.Dirty : this.flags & ~F.RecursedCheck;
@@ -886,7 +922,7 @@ export class Cell<T = unknown> implements ReactiveNode {
   static lens<C extends AnyCellCtor, P, Cm>(
     this: C,
     parent: Read<P>,
-    spec: StatefulLensSpec<readonly [P], Inner<InstanceType<C>>, Cm>,
+    spec: StatefulLensSpec1<P, Inner<InstanceType<C>>, Cm>,
   ): Writable<InstanceType<C>>;
   static lens<C extends AnyCellCtor, P extends readonly Read<unknown>[], Cm>(
     this: C,
@@ -950,6 +986,10 @@ export function fieldOf<C extends AnyCellCtor>(
   ]) as InstanceType<C>;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Lens / derive builders (internal) — wire a `Cls` instance into each mode.
+// ─────────────────────────────────────────────────────────────────────────
+
 // Each `new Cls()` yields the right subclass, then sets the mode fields.
 
 // biome-ignore lint/suspicious/noExplicitAny: variance escape for subclass ctors (contravariant _equals)
@@ -988,8 +1028,9 @@ function arrayGetter(
 function buildLens<C extends Cell<any>>(Cls: CellCtor<C>, args: any[]): C {
   const parent = args[0];
   if (args.length === 2) {
-    const ps = Array.isArray(parent) ? (parent as Cell<unknown>[]) : [parent as Cell<unknown>];
-    return buildStateful(Cls, ps, args[1]);
+    return Array.isArray(parent)
+      ? buildStateful(Cls, parent as Cell<unknown>[], args[1])
+      : buildStateful1(Cls, parent as Cell<unknown>, args[1]);
   }
   const fwd = args[1];
   const bwd = args[2] as (t: unknown, s?: unknown) => unknown;
@@ -1030,12 +1071,14 @@ function buildLens<C extends Cell<any>>(Cls: CellCtor<C>, args: any[]): C {
 
 // Stateful lens (complement-carrying) — a lens that carries memory the source
 // can't hold (a `lowercase` view's casing, a principal-axis angle's winding):
-//   init(srcs)              → seed the complement
-//   fwd(srcs, c)            → the view
-//   step(srcs, c, external) → advance the complement (`external` = outside change)
-//   bwd(target, srcs, c)    → { updates, complement } (per-parent + new complement)
-// All four are pure and read no cells; the engine owns `c`, stepping it to the
-// current sources before `bwd` so `bwd` sees an up-to-date complement.
+//   init(srcs)        → seed the complement
+//   fwd(srcs, c)      → the view
+//   step(srcs, c)     → advance the complement (optional; defaults to `init`)
+//   bwd(target, s, c) → { updates, complement } (per-parent + new complement)
+// All four are pure and read no cells; the engine owns `c`. A single-source lens
+// (`lens(parent, spec)`, one cell not an array) takes the scalar fast-path
+// (`StatefulLensSpec1`): `init`/`step`/`fwd`/`bwd` see the source value directly,
+// and `bwd` returns a scalar `{ update, complement }` — no tuple, no `vals` buffer.
 //
 // This is a SYMMETRIC LENS WITH COMPLEMENT in the literature (Hofmann, Pierce &
 // Wagner, "Symmetric Lenses", POPL 2011): `step`+`fwd` are the complement-carrying
@@ -1043,21 +1086,35 @@ function buildLens<C extends Cell<any>>(Cls: CellCtor<C>, args: any[]): C {
 // is path-dependent (winding, casing), so this is a genuine symmetric lens, not a
 // constant-complement ("very well-behaved") one where `S ≅ V × C`.
 //
-// `external` is a 1-bit PROVENANCE signal: "did the source change for a reason
-// other than this lens's own last back-write?" It is the degenerate case of an
-// EDIT LENS (Hofmann–Pierce–Wagner edit lenses; Diskin, Xiong & Czarnecki delta
-// lenses), where the incoming edit's origin is explicit. Today's state lens is the
-// trivial edit alphabet `{ Replace(v) }`; when the alphabet grows, `step`/`bwd`
-// take the edit and `external` generalizes to its provenance. The engine currently
-// RECONSTRUCTS that bit by comparing live sources to the last back-write (the
-// `last` witness on `StatefulCore`); an edit lens would receive it directly.
+// PROVENANCE without a flag. `step` must run on an *outside* change and be skipped
+// on this lens's own back-write (else trim-style lenses re-derive from a degraded
+// source and lose the complement). The engine decides which by asking "did my
+// sources move since I last synced?": each cell carries a monotone `version`
+// (bumped on every committed change), and the lens remembers the SUM of its
+// parents' versions (`StatefulCore.stamp`). Live sum ≠ stamp ⇒ a source moved ⇒
+// step. This is the lazy, O(1)-per-lens replacement for a value witness: a
+// co-writer bumping a shared source during draining raises the sum (caught), and
+// an external write before the next read bumps it too (caught) — both because the
+// version lives on the source, not on a flag on the lens. A single bit cannot do
+// this (it can't survive an external write landing between back-write and read).
 //
-// Law `step` must satisfy (relied on by `writeBack` committing `bwd`'s complement
-// without a redundant step-to-committed): a settle is a fixpoint —
-//   step(s, step(s, c, e), false) === step(s, c, e).
-// Holds for every lens in the tree: the `external ? refresh(s) : c` idiom returns
-// `c` unchanged when `external=false`; the schema/`each` idiom is a pure function
-// of `s` (so applying it twice equals once).
+// An own back-write moves its sources too, so `writeBack` re-stamps the lens
+// post-order (after the sources are written): the sum is back in sync, so the next
+// read skips `step` and trusts `bwd`'s complement. The contract this buys: `bwd`
+// must return a complement CONSISTENT with its `updates` — it can't stash a stale
+// value and lean on a later `step` to repair it (there won't be one). The stamp is
+// seeded to `-1` so the very first use always folds the sources into the seed.
+//
+// This is the degenerate EDIT LENS (Hofmann–Pierce–Wagner edit lenses; Diskin,
+// Xiong & Czarnecki delta lenses) with the trivial alphabet `{ Replace(v) }`; when
+// the alphabet grows, `step`/`bwd` take the edit and the version-stamp generalizes
+// to the edit's provenance, received directly rather than reconstructed.
+//
+// Law `step` must satisfy: re-running it on an unchanged source is a fixpoint —
+//   step(s, step(s, c)) === step(s, c).
+// This is what lets the engine SKIP `step` on an own back-write (the complement
+// from `bwd` is already settled): the `init` default returns a pure function of
+// `s`; an accumulating `step` is a no-op once the source stops moving.
 
 export interface StatefulBwd<S extends readonly unknown[], C> {
   /** Per-parent updates: a value (written verbatim, `undefined` included) or
@@ -1068,9 +1125,26 @@ export interface StatefulBwd<S extends readonly unknown[], C> {
 
 export interface StatefulLensSpec<S extends readonly unknown[], V, C> {
   init: (sources: S) => C;
-  step: (sources: S, complement: C, external: boolean) => C;
+  /** Advance the complement on an outside change. Optional — defaults to `init`
+   *  (the memoryless refresh); the engine runs it only when sources actually move. */
+  step?: (sources: S, complement: C) => C;
   fwd: (sources: S, complement: C) => V;
   bwd: (target: V, sources: S, complement: C) => StatefulBwd<S, C>;
+}
+
+/** Single-source `bwd` result: a scalar `update` (or `SKIP`) plus the complement. */
+export interface StatefulBwd1<S, C> {
+  update: S | Skip;
+  complement: C;
+}
+
+/** Single-source stateful spec — the scalar fast-path of `StatefulLensSpec`: one
+ *  parent, so `init`/`step`/`fwd`/`bwd` take the source value directly, not a tuple. */
+export interface StatefulLensSpec1<S, V, C> {
+  init: (source: S) => C;
+  step?: (source: S, complement: C) => C;
+  fwd: (source: S, complement: C) => V;
+  bwd: (target: V, source: S, complement: C) => StatefulBwd1<S, C>;
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: variance escape
@@ -1087,15 +1161,67 @@ function buildStateful<C extends Cell<any>>(
   const b = (cell._bwd = new BwdSpec());
   const seed = new Array<unknown>(n);
   for (let i = 0; i < n; i++) seed[i] = parents[i]!.peek();
-  const sc = (b.stateful = new StatefulCore(spec.init(seed), spec.step));
+  // Default `step` is the memoryless refresh (`init`); the engine runs it only on
+  // an outside change, so the `external ? init(s) : c` idiom needs no user `step`.
+  const init = spec.init as (s: unknown) => unknown;
+  const step = (spec.step ?? init) as (s: unknown, c: unknown) => unknown;
+  const sc = (b.stateful = new StatefulCore(spec.init(seed), step));
+  // Sentinel: version sums are ≥ 0, so the first read (or back-write) always
+  // steps once, folding the initial sources into the seed complement. The
+  // `init`/`step` split is seed-then-fold: `init` need not see the sources.
+  sc.stamp = -1;
   const fwd = spec.fwd as (s: unknown, c: unknown) => unknown;
   b.put = spec.bwd as (t: unknown, c?: unknown) => unknown;
   b.scatter = true;
   for (let i = 0; i < n; i++) linkLens(cell as Cell<unknown>, parents[i]!, i);
   cell.getter = (() => {
-    for (let i = 0; i < n; i++) vals[i] = parents[i]!.value;
-    sc.complement = sc.step(vals, sc.complement, sc.isExternal(vals, n));
+    let ver = 0;
+    for (let i = 0; i < n; i++) {
+      vals[i] = parents[i]!.value;
+      ver += parents[i]!.version;
+    }
+    // Step only when sources moved since the last sync (lazy own-vs-external).
+    if (ver !== sc.stamp) {
+      if (COUNTS) counts.step++;
+      sc.complement = sc.step(vals, sc.complement);
+      sc.stamp = ver;
+    }
     return fwd(vals, sc.complement);
+  }) as () => never;
+  setWriteBlocked(cell as Cell<unknown>);
+  return cell;
+}
+
+// Single-source stateful fast-path: one parent, so no `vals` buffer and a scalar
+// `step`/`fwd`/`bwd` — the version stamp is just the parent's `version`. Same
+// provenance and laziness as the N-source `buildStateful`, minus the array work.
+// biome-ignore lint/suspicious/noExplicitAny: variance escape
+function buildStateful1<C extends Cell<any>>(
+  Cls: CellCtor<C>,
+  parent: Cell<unknown>,
+  // biome-ignore lint/suspicious/noExplicitAny: opaque spec
+  spec: StatefulLensSpec1<any, any, any>,
+): C {
+  const cell = new Cls();
+  cell.flags = F.Mutable | F.Dirty;
+  const b = (cell._bwd = new BwdSpec());
+  const init = spec.init as (s: unknown) => unknown;
+  const step = (spec.step ?? init) as (s: unknown, c: unknown) => unknown;
+  const sc = (b.stateful = new StatefulCore(init(parent.peek()), step));
+  sc.stamp = -1; // sentinel: first use folds the source in (see `buildStateful`)
+  const fwd = spec.fwd as (s: unknown, c: unknown) => unknown;
+  b.put = spec.bwd as (t: unknown, c?: unknown) => unknown;
+  // `scatter` stays false: writeBack routes this through the scalar stateful branch.
+  linkLens(cell as Cell<unknown>, parent, 0);
+  cell.getter = (() => {
+    const x = parent.value;
+    const ver = parent.version;
+    if (ver !== sc.stamp) {
+      if (COUNTS) counts.step++;
+      sc.complement = sc.step(x, sc.complement);
+      sc.stamp = ver;
+    }
+    return fwd(x, sc.complement);
   }) as () => never;
   setWriteBlocked(cell as Cell<unknown>);
   return cell;
@@ -1174,6 +1300,10 @@ Object.defineProperty(Cell.prototype, "value", {
   enumerable: false,
   configurable: false,
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Backward graph engine (internal) — arm / markDown / resolveCone / writeBack.
+// ─────────────────────────────────────────────────────────────────────────
 
 /** Backward push: arm a back-write of `target` on view `node` (dual of a source
  *  `set`). A re-write of a still-armed view keeps only the last target (the path
@@ -1377,6 +1507,7 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
   wbNode[0] = node;
   wbTarget[0] = target;
   let top = 1;
+  let sTop = 0;
   while (top > 0) {
     if (COUNTS) counts.writeBackVisit++;
     const cur = wbNode[--top]!;
@@ -1411,6 +1542,36 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
     const pe = cur.parentEdges;
     if (pe === undefined) continue; // pin sink (parentless): absorb
     const sc = b.stateful;
+    if (sc !== undefined && !b.scatter) {
+      // Single-source stateful fast-path (scalar `bwd`); one index-0 parent edge.
+      const p = pe.parent;
+      const x = p.value;
+      const ver = p.version;
+      if (ver !== sc.stamp) {
+        if (COUNTS) counts.step++;
+        sc.complement = sc.step(x, sc.complement);
+      }
+      if (COUNTS) counts.put++;
+      const res = (b.put as (t: unknown, s: unknown, c: unknown) => StatefulBwd1<unknown, unknown>)(
+        tgt,
+        x,
+        sc.complement,
+      );
+      sc.complement = res.complement;
+      wbStateful[sTop++] = cur;
+      const u = res.update;
+      if (u !== SKIP) {
+        wbNode[top] = p;
+        wbTarget[top] = u;
+        top++;
+      } else {
+        // Stash: the view moved through the complement alone (see the scatter case).
+        cur.flags |= F.Dirty;
+        const subs = cur.subs;
+        if (subs !== undefined) propagate(subs, runDepth > 0, activeExcluded);
+      }
+      continue;
+    }
     if (b.scatter) {
       // Gather ordered parents (index-ordered edges) for the tuple `put`.
       let n = 0;
@@ -1421,26 +1582,29 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
       let out: ReadonlyArray<unknown>;
       if (sc !== undefined) {
         const vals = new Array<unknown>(n);
-        for (let i = 0; i < n; i++) vals[i] = parents[i]!.value;
-        // Step the complement to the current sources before `bwd` (so it measures
-        // from a prior sibling write, not a stale snapshot).
-        if (COUNTS) counts.step++;
-        sc.complement = sc.step(vals, sc.complement, sc.isExternal(vals, n));
+        let ver = 0;
+        for (let i = 0; i < n; i++) {
+          vals[i] = parents[i]!.value;
+          ver += parents[i]!.version;
+        }
+        // Refresh the complement only if a source moved since the last sync — e.g.
+        // a prior sibling co-writer bumped a shared source. A pure own re-write
+        // (sum unchanged) skips it: `bwd` already gets the settled complement.
+        if (ver !== sc.stamp) {
+          if (COUNTS) counts.step++;
+          sc.complement = sc.step(vals, sc.complement);
+        }
         if (COUNTS) counts.put++;
         const res = (
           b.put as (t: unknown, s: unknown, c: unknown) => StatefulBwd<unknown[], unknown>
         )(tgt, vals, sc.complement);
         const upd = res.updates as ReadonlyArray<unknown>;
-        // Build the committed candidate in `vals` and keep it as `last`. A `SKIP`
-        // or short-`upd` slot leaves that parent at its current `vals[i]`.
-        const um = upd.length < n ? upd.length : n;
-        for (let i = 0; i < um; i++) if (upd[i] !== SKIP) vals[i] = upd[i];
-        // Commit `bwd`'s complement directly — no step-to-committed. A forward read
-        // re-steps with `external=false` regardless, and a lawful `step` is a
-        // fixpoint there (`step(s, step(s, c, e), false) === step(s, c, e)`), so that
-        // extra step was always redundant. `vals` is the own-write witness `last`.
+        // Commit `bwd`'s complement directly; it must be consistent with `updates`
+        // (no reliance on a post-write `step`). The stamp is re-set post-order (after
+        // the sources are written and their versions bumped) so the next forward read
+        // sees an unchanged sum and skips `step` — own-write provenance.
         sc.complement = res.complement;
-        sc.last = vals;
+        wbStateful[sTop++] = cur;
         out = upd;
       } else {
         if (COUNTS) counts.put++;
@@ -1475,6 +1639,18 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
     wbTarget[top] = (b.put as (t: unknown) => unknown)(tgt);
     top++;
   }
+  // Post-order re-stamp: now the sources are written (versions bumped), record
+  // each on-path stateful lens's parent-version sum, so its next forward read
+  // sees an unchanged sum and skips `step`. Integers only — no `fwd`, no commit.
+  for (let i = 0; i < sTop; i++) {
+    const sc = wbStateful[i]!._bwd!.stateful!;
+    let ver = 0;
+    for (let e = wbStateful[i]!.parentEdges; e !== undefined; e = e.nextParent) {
+      ver += e.parent.version;
+    }
+    sc.stamp = ver;
+    wbStateful[i] = undefined as unknown as Cell<unknown>;
+  }
 }
 
 /** Fold a merge's contributions once (policy; default last-writer-wins) and write
@@ -1490,6 +1666,10 @@ function foldMerge(parent: Cell<unknown>, mn: MergeNode<unknown>): void {
   vals.length = 0; // reuse the merge-owned buffer in place (fold must not retain it)
   writeBack(parent, folded);
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Public API — factories (cell / derive / lens) over the builders above.
+// ─────────────────────────────────────────────────────────────────────────
 
 /** Writable source; passes an existing `Writable` through (idempotent). */
 export function cell<T>(initial: T | Writable<Cell<T>>, opts?: CellOptions<T>): Writable<Cell<T>> {
@@ -1528,7 +1708,7 @@ export function lens<P extends readonly Read<unknown>[], R>(
 ): Writable<Cell<R>>;
 export function lens<P, R, C>(
   parent: Read<P>,
-  spec: StatefulLensSpec<readonly [P], R, C>,
+  spec: StatefulLensSpec1<P, R, C>,
 ): Writable<Cell<R>>;
 export function lens<P extends readonly Read<unknown>[], R, C>(
   parents: P,
@@ -1538,6 +1718,11 @@ export function lens<P extends readonly Read<unknown>[], R, C>(
 export function lens(...args: any[]): any {
   return buildLens(CELL_CTOR, args);
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Effects & schedulers — the Effect watcher (internal) and the public
+// effect / batch / network / flush surface built on it.
+// ─────────────────────────────────────────────────────────────────────────
 
 // Effect — one watcher class for both auto-tracked effects and explicit-topology
 // networks: alien-signals' effect plus the `EM` mode toggles `network()` needs.

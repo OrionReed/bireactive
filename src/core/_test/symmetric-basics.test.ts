@@ -11,14 +11,14 @@ describe("stateful lens — single input, identity-ish", () => {
   it("init complement is used for the first read", () => {
     const src = num(7);
     let seenComplement: number | null = null;
-    const view = Num.lens([src], {
+    const view = Num.lens(src, {
       init: () => ({ v: -1 }),
-      step: ([_s], c) => {
+      step: (_s, c) => {
         seenComplement = c.v;
         return { v: c.v + 1 };
       },
-      fwd: ([s]) => s,
-      bwd: (t, _s, c) => ({ updates: [t], complement: c }),
+      fwd: s => s,
+      bwd: (t, _s, c) => ({ update: t, complement: c }),
     });
     expect(view.value).toBe(7);
     expect(seenComplement).toBe(-1);
@@ -27,14 +27,14 @@ describe("stateful lens — single input, identity-ish", () => {
   it("step refreshes the complement on each (dirtying) read", () => {
     const src = num(10);
     let calls = 0;
-    const view = Num.lens([src], {
+    const view = Num.lens(src, {
       init: () => ({ v: 0 }),
-      step: ([_s], c) => {
+      step: (_s, c) => {
         calls += 1;
         return { v: c.v + 1 };
       },
-      fwd: ([s]) => s,
-      bwd: (t, _s, c) => ({ updates: [t], complement: c }),
+      fwd: s => s,
+      bwd: (t, _s, c) => ({ update: t, complement: c }),
     });
     view.value;
     view.value;
@@ -49,13 +49,13 @@ describe("stateful lens — single input, identity-ish", () => {
     // "snap" non-monotonic writes upward (a write below the stored value
     // re-projects to the current view and is stopped by the equality check).
     const src = num(0);
-    const snapped = Num.lens([src], {
+    const snapped = Num.lens(src, {
       init: () => ({ last: 0 }),
-      step: ([s]) => ({ last: s }),
-      fwd: ([s]) => s,
+      step: s => ({ last: s }),
+      fwd: s => s,
       bwd: (t, _s, c) => {
         const next = t < c.last ? c.last : t; // monotonic
-        return { updates: [next], complement: { last: next } };
+        return { update: next, complement: { last: next } };
       },
     });
     snapped.value = 5;
@@ -232,13 +232,13 @@ describe("same-view back-write short-circuits", () => {
     // to the SAME view (the stored max), so the equality check stops it —
     // the source AND the complement are left untouched.
     const src = num(5);
-    const snapped = Num.lens([src], {
+    const snapped = Num.lens(src, {
       init: () => ({ hi: 0 }),
-      step: ([s], c) => (s > c.hi ? { hi: s } : c),
-      fwd: ([_s], c) => c.hi,
+      step: (s, c) => (s > c.hi ? { hi: s } : c),
+      fwd: (_s, c) => c.hi,
       bwd: (t, _s, c) => {
         const hi = Math.max(t, c.hi);
-        return { updates: [hi], complement: { hi } };
+        return { update: hi, complement: { hi } };
       },
     });
 

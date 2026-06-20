@@ -367,28 +367,29 @@ describe("stateful multi-source stash (n≥2): exact reference, exercises buffer
   });
 });
 
-describe("stateful external-vs-own detection (the value-comparison branch)", () => {
+describe("stateful own-vs-external detection (the version-stamp gate)", () => {
   it("forgets the complement on an external source change but not on its own back-write", () => {
     const src = cell(10) as unknown as Cell<number>;
+    // No `step`: the default refresh is `init` (→ 0), and the engine runs it only
+    // when the source's version moves (an outside change), not on an own back-write.
     const view = lens(
-      [src] as never,
+      src as never,
       {
         init: () => 0,
-        step: ([_s]: number[], c: number, external: boolean) => (external ? 0 : c),
-        fwd: ([s]: number[], c: number) => s + c,
-        bwd: (t: number, [s]: number[], _c: number) => ({
-          updates: [SKIP],
+        fwd: (s: number, c: number) => s + c,
+        bwd: (t: number, s: number, _c: number) => ({
+          update: SKIP,
           complement: t - s,
         }),
       } as never,
     ) as unknown as Cell<number>;
 
-    expect(view.value).toBe(10); // first read: external (no prior back-write) → c stays 0
+    expect(view.value).toBe(10); // first read: complement seeded to 0 → 10 + 0
     (view as { value: number }).value = 15; // own back-write: stores offset c = 5, source unmoved
-    expect(view.value).toBe(15); // own: source still 10 == last back-write → external=false → c=5 kept
+    expect(view.value).toBe(15); // own: source version unchanged → no step → c = 5 kept
     expect(view.value).toBe(15); // idempotent re-read
-    (src as { value: number }).value = 20; // EXTERNAL source change
-    expect(view.value).toBe(20); // source 20 ≠ last back-write 10 → external=true → c forgotten (0)
+    (src as { value: number }).value = 20; // EXTERNAL source change (bumps src.version)
+    expect(view.value).toBe(20); // version moved → step (default init) → c forgotten (0)
   });
 });
 
@@ -776,6 +777,64 @@ describe("source-reading bwd: last-settled primal", () => {
       (top as { value: number }).value = t;
       // observe every node each step (settles the chain ⇒ incremental semantics)
       for (let lvl = 0; lvl <= D; lvl++) expect(nodes[lvl]!.value).toBe(ref[0]);
+    }
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// G. Co-writer LWW over a shared source, both ends STATEFUL.
+// ════════════════════════════════════════════════════════════════════════
+//
+// The version-stamp post-pass marks an own back-write as "synced", so it cannot
+// (the way the retired value-witness did) tell that a *sibling* co-writer's
+// last-write-wins overwrote the shared source out from under this lens. That
+// difference is invisible to the forward view here (the complement is a constant
+// memory offset, recomputed-free), but we pin the invariants any correct engine
+// must keep regardless of which writer wins: forward consistency, LWW (the source
+// equals one of the two intended writes), stability, and GetPut idempotence.
+describe("co-writer LWW: two STATEFUL lenses sharing one source", () => {
+  it("stays consistent, stable, and idempotent under batched conflicting writes", () => {
+    const s = cell(0) as unknown as Cell<number>;
+    // view = source + a constant memory offset; `step` keeps the offset (genuine
+    // complement memory, not derivable from the source), `bwd` keeps it too.
+    const mk = (off: number) =>
+      lens(s as never, {
+        init: () => off,
+        step: (_x: number, c: number) => c,
+        fwd: (x: number, c: number) => x + c,
+        bwd: (t: number, _x: number, c: number) => ({ update: t - c, complement: c }),
+      } as never) as unknown as Cell<number>;
+    const a = mk(10);
+    const b = mk(20);
+    expect(a.value).toBe(10);
+    expect(b.value).toBe(20);
+
+    const r = rng(7);
+    for (let k = 0; k < 50; k++) {
+      const ta = int(r, -50, 50);
+      const tb = int(r, -50, 50);
+      batch(() => {
+        (a as { value: number }).value = ta;
+        (b as { value: number }).value = tb;
+      });
+      const sv = s.value;
+      const av = a.value;
+      const bv = b.value;
+      // forward consistency: each view equals source + its own memory offset
+      expect(av).toBe(sv + 10);
+      expect(bv).toBe(sv + 20);
+      // LWW: the source landed on exactly one of the two intended back-writes
+      expect(sv === ta - 10 || sv === tb - 20).toBe(true);
+      // stability: an extra settle + re-read changes nothing
+      settle();
+      expect(a.value).toBe(av);
+      expect(b.value).toBe(bv);
+      expect(s.value).toBe(sv);
+      // GetPut: writing each view's current value back is a no-op
+      (a as { value: number }).value = av;
+      expect(s.value).toBe(sv);
+      (b as { value: number }).value = bv;
+      expect(s.value).toBe(sv);
     }
   });
 });

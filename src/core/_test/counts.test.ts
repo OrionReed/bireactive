@@ -74,13 +74,13 @@ describe("counts: minimal-work baselines", () => {
     expect(counts.put).toBe(0); // a merge has no put; it folds then writes its parent
   });
 
-  it("a stateful back-write steps once and puts once", () => {
+  it("a pure own back-write puts once and does not step", () => {
     const s = cell(1);
     const st = lens(s as never, {
       init: () => 0,
-      step: (_s: readonly number[], c: number) => c,
-      fwd: ([v]: readonly number[]) => v,
-      bwd: (t: number) => ({ updates: [t] as const, complement: 0 }),
+      step: (_s: number, c: number) => c,
+      fwd: (v: number) => v,
+      bwd: (t: number) => ({ update: t, complement: 0 }),
     } as never) as unknown as V;
     void st.value; // realize forward before measuring the backward path
     settle();
@@ -90,6 +90,25 @@ describe("counts: minimal-work baselines", () => {
       void (s as unknown as V).value; // pull → resolve
     });
     expect(counts.put).toBe(1);
-    expect(counts.step).toBe(1); // step-to-current before `bwd`; no redundant step-to-committed
+    // No step: the source hasn't moved since the last sync (version stamp matches),
+    // so `bwd`'s complement is committed directly — provenance says "own write".
+    expect(counts.step).toBe(0);
+  });
+
+  it("an external source change steps the complement once on the next read", () => {
+    const s = cell(1);
+    const st = lens(s as never, {
+      init: (v: number) => v,
+      fwd: (v: number, c: number) => v + c,
+      bwd: (t: number) => ({ update: t, complement: 0 }),
+    } as never) as unknown as V;
+    void st.value; // sync stamp to s.version
+    settle();
+
+    const { counts } = withCounts(() => {
+      (s as unknown as V).value = 9; // outside change → bumps s.version
+      void st.value; // read: version moved → step (default init) once
+    });
+    expect(counts.step).toBe(1);
   });
 });

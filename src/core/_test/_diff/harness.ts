@@ -32,8 +32,8 @@ export type NodeSpec =
   // Complement-DEPENDENT stateful lens: `view = s + offset`, where a write splits
   // the delta (half to the source, half stashed into the offset) so the VIEW
   // genuinely depends on the complement, and an external source change forgets the
-  // offset (`external ? 0 : c`). This is the node that makes provenance/`external`
-  // semantics observable to the diff — `stateful1`'s view ignores its complement.
+  // offset (the engine runs `step` only on an outside move). This is the node that
+  // makes provenance observable to the diff — `stateful1`'s view ignores its complement.
   | { kind: "stateMemo"; parent: number };
 
 export type Op =
@@ -130,11 +130,12 @@ export function build(rx: Engine, r: Recipe): Built {
       case "stateful1": {
         const p = cells[n.parent];
         cells.push(
+          // No `step`: exercises the default (`init`) refresh, run by the engine
+          // only on an outside source move. `fwd` ignores the complement.
           lens(p, {
-            init: ([s]: number[]) => ({ last: s }),
-            step: ([s]: number[], c: { last: number }, ext: boolean) => (ext ? { last: s } : c),
-            fwd: ([s]: number[]) => s,
-            bwd: (t: number) => ({ updates: [t], complement: { last: t } }),
+            init: (s: number) => ({ last: s }),
+            fwd: (s: number) => s,
+            bwd: (t: number) => ({ update: t, complement: { last: t } }),
           }),
         );
         break;
@@ -143,16 +144,16 @@ export function build(rx: Engine, r: Recipe): Built {
         const p = cells[n.parent];
         cells.push(
           // view = s + off. Write splits the delta: source moves half, off keeps
-          // half (PutGet: (s + d/2) + (off + d/2) = s + off + d = t). An external
-          // source change (`ext`) forgets the offset, so the VIEW depends on both
-          // the complement AND the engine's provenance verdict.
+          // half (PutGet: (s + d/2) + (off + d/2) = s + off + d = t). An outside
+          // source change runs `step` (explicit here), forgetting the offset, so the
+          // VIEW depends on both the complement AND the engine's provenance verdict.
           lens(p, {
-            init: ([_s]: number[]) => ({ off: 0 }),
-            step: ([_s]: number[], c: { off: number }, ext: boolean) => (ext ? { off: 0 } : c),
-            fwd: ([s]: number[], c: { off: number }) => s + c.off,
-            bwd: (t: number, [s]: number[], c: { off: number }) => {
+            init: (_s: number) => ({ off: 0 }),
+            step: (_s: number, _c: { off: number }) => ({ off: 0 }),
+            fwd: (s: number, c: { off: number }) => s + c.off,
+            bwd: (t: number, s: number, c: { off: number }) => {
               const d = t - (s + c.off);
-              return { updates: [s + d / 2], complement: { off: c.off + d / 2 } };
+              return { update: s + d / 2, complement: { off: c.off + d / 2 } };
             },
           }),
         );

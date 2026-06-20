@@ -27,22 +27,22 @@ type V = string;
 // The complement is state recorded forward from the source and consumed
 // on write-back. It persists across the lens's own writes (so `trim`
 // keeps its padding even when the view is emptied) and refreshes on
-// external source changes — the engine's `external` flag drives `step`.
+// external source changes — the engine re-runs `init` (the default `step`)
+// only when the source actually moves.
 
 /** Endo lens backed by a complement recorded from the source. `record`
- *  rebuilds the complement (kept on the lens's own writes), `project`
- *  is the forward view, `reconstruct` is the backward source. */
+ *  rebuilds the complement (kept on the lens's own writes; re-run on external
+ *  source changes), `project` is the forward view, `reconstruct` the source. */
 function complementLens<C>(
   parent: Str,
   record: (s: V) => C,
   project: (s: V) => V,
   reconstruct: (target: V, complement: C) => V,
 ): Writable<Str> {
-  return Str.lens([parent], {
-    init: ([s]) => record(s),
-    step: ([s], c, external) => (external ? record(s) : c),
-    fwd: ([s]) => project(s),
-    bwd: (target, _s, c) => ({ updates: [reconstruct(target, c)], complement: c }),
+  return Str.lens(parent, {
+    init: (s: V) => record(s),
+    fwd: (s: V) => project(s),
+    bwd: (target: V, _s: V, c: C) => ({ update: reconstruct(target, c), complement: c }),
   }) as Writable<Str>;
 }
 

@@ -58,19 +58,16 @@ export function formatSpoke(
   adapter: FormatAdapter,
 ): Writable<Cell<string>> {
   return lens<JsonValue, string, Complement>(hub, {
-    init: ([v]) => fromValue(adapter, v),
-    step: ([v], c) => (v === c.synced ? c : absorb(adapter, c, v)),
-    fwd: (_vals, c) => c.text,
-    bwd: (target, _vals, c) => {
+    init: v => fromValue(adapter, v),
+    step: (v, c) => (v === c.synced ? c : absorb(adapter, c, v)),
+    fwd: (_v, c) => c.text,
+    bwd: (target, _v, c) => {
       const { tree, errors } = adapter.parse(target);
       if (errors.length === 0) {
         const v = valueOf(tree);
-        return { updates: [v] as const, complement: { text: target, tree, errors, synced: v } };
+        return { update: v, complement: { text: target, tree, errors, synced: v } };
       }
-      return {
-        updates: [SKIP] as const,
-        complement: { text: target, tree, errors, synced: c.synced },
-      };
+      return { update: SKIP, complement: { text: target, tree, errors, synced: c.synced } };
     },
   });
 }

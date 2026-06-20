@@ -105,16 +105,15 @@ export class Audio extends Cell<V> {
   normalize(target: Val<number> = 1): Writable<Audio> {
     const tf = reader(target);
     const self: Audio = this;
-    return Audio.lens([self], {
-      init: ([s]) => peak(s),
-      step: ([s], c, external) => (external ? peak(s) : c),
-      fwd: ([s]) => {
+    return Audio.lens(self, {
+      init: s => peak(s),
+      fwd: s => {
         const p = peak(s);
         return p === 0 ? s : scaled(s, tf() / p);
       },
       bwd: (view, _src, c) => {
         const t = tf();
-        return { updates: [t === 0 ? view : scaled(view, c / t)], complement: c };
+        return { update: t === 0 ? view : scaled(view, c / t), complement: c };
       },
     }) as Writable<Audio>;
   }

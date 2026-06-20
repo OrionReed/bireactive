@@ -482,9 +482,14 @@ export function pca(points: readonly Writable<Vec>[]): {
           // the current axis length and is absorbed (cluster left put).
           if (Math.abs(target) === c.lenThis)
             return { updates: vals.map((): typeof SKIP => SKIP), complement: c };
-          // Non-degenerate fast path: scale current cluster along axis.
+          // Non-degenerate fast path: scale current cluster along axis. The scale
+          // sets the axis length to |target|, so the complement is consistent
+          // without a post-write `step` (the engine no longer re-steps own writes).
           const k = target / c.lenThis;
-          return { updates: scaleAlongAxis(vals, d.cx, d.cy, c.uX, c.uY, k), complement: c };
+          return {
+            updates: scaleAlongAxis(vals, d.cx, d.cy, c.uX, c.uY, k),
+            complement: { ...c, lenThis: Math.abs(target) },
+          };
         }
         // Degenerate: reconstruct from complement. Centroid still
         // derivable from current source (mean translates always work).
@@ -502,7 +507,7 @@ export function pca(points: readonly Writable<Vec>[]): {
           const b = c.projOther[i]! * c.lenOther;
           out[i] = { x: cx + a * c.uX + b * c.vX, y: cy + a * c.uY + b * c.vY };
         }
-        return { updates: out, complement: c };
+        return { updates: out, complement: { ...c, lenThis: Math.abs(target) } };
       },
     });
   };

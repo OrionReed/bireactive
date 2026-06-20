@@ -23,13 +23,13 @@ function filterLens(
     return out;
   };
   return lens<number[], number[], C>(src, {
-    init: ([s]) => ({ keep: keptPositions(s) }),
-    step: ([s]) => ({ keep: keptPositions(s) }),
-    fwd: ([s]) => s.filter(pred),
-    bwd: (view, [s], c) => {
+    init: s => ({ keep: keptPositions(s) }),
+    step: s => ({ keep: keptPositions(s) }),
+    fwd: s => s.filter(pred),
+    bwd: (view, s, c) => {
       const next = s.slice();
       for (let j = 0; j < c.keep.length; j++) next[c.keep[j]!] = view[j]!;
-      return { updates: [next], complement: c };
+      return { update: next, complement: c };
     },
   });
 }
@@ -45,13 +45,13 @@ function sortLens(
   const permutation = (arr: readonly number[]): number[] =>
     arr.map((_, i) => i).sort((i, j) => cmp(arr[i]!, arr[j]!));
   return lens<number[], number[], C>(src, {
-    init: ([s]) => ({ perm: permutation(s) }),
-    step: ([s]) => ({ perm: permutation(s) }),
-    fwd: ([s], c) => c.perm.map(i => s[i]!),
-    bwd: (view, [s], c) => {
+    init: s => ({ perm: permutation(s) }),
+    step: s => ({ perm: permutation(s) }),
+    fwd: (s, c) => c.perm.map(i => s[i]!),
+    bwd: (view, s, c) => {
       const next = s.slice();
       for (let i = 0; i < c.perm.length; i++) next[c.perm[i]!] = view[i]!;
-      return { updates: [next], complement: c };
+      return { update: next, complement: c };
     },
   });
 }
