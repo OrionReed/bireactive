@@ -23,17 +23,20 @@
 // `_run`), never mid-compute. Fan-in is the one non-dual piece: a `merge`
 // accumulates N contributors and folds once, post-order, inside `resolveCone`.
 //
-// Mode table — `getter`/`_bwd` fix forward/writable; `_bwd.kind` (see `BK`) the
-// backward shape:
+// Mode table — `getter`/`_bwd` fix forward/writable; the backward shape is read off
+// `_bwd` field presence (`merge` / `stateful` / `parentEdges` / `scatter`):
 //   source      getter undefined                       (truth in currentValue)
 //   derived    getter, no _bwd                         (read-only derived)
-//   lens 1→1    getter + _bwd{ kind: Lens, put }
-//   multi-out   getter + _bwd{ kind: Split, put }       (1→N / N→M bwd)
-//   merge       getter + _bwd{ kind: Merge, merge }     (N→1 backward fold)
-//   stateful    getter + _bwd{ kind: Stateful, put, stateful } (complement-carrying)
-//   pin         getter + _bwd{ kind: Pin }              (parentless sink)
+//   lens 1→1    getter + _bwd{ put }                    (scalar put)
+//   multi-out   getter + _bwd{ put, scatter }           (1→N / N→M tuple put)
+//   merge       getter + _bwd{ merge }                  (N→1 backward fold)
+//   stateful    getter + _bwd{ put, scatter, stateful } (complement-carrying)
+//   pin         getter + _bwd{} no parentEdges          (parentless sink)
 // Writable iff `_bwd !== undefined`. `pendingValue` is a source's staged write
 // (and a view's armed back-target); a derived cell never uses it forward.
+
+// Counts-first instrumentation: off by default, one branch per site (see _counts).
+import { COUNTS, counts } from "./_counts";
 
 // Forward flag bits (alien-signals v2), on `flags`.
 const F = {
@@ -53,6 +56,10 @@ const BF = {
   Dirty: 1,
   /** Dual of `F.Pending`: this node is on the back-path to its sources. */
   Pending: 2,
+  /** Static (set once at construction): a write armed here is structurally
+   *  impossible — its mandatory back-spine dead-ends at a sole read-only-derived
+   *  parent. Checked atop `arm` so the throw lands before any backward mutation. */
+  WriteBlocked: 4,
 } as const;
 
 /** Armed root OR on a back-path — i.e. a read must `backResolve` first. */
@@ -133,6 +140,7 @@ function linkLens(child: Cell<unknown>, parent: Cell<unknown>, index: number): v
  *  co-writer resolution is last-write-wins. Idempotent via `linked`. */
 function linkChild(e: LensLink): void {
   if (e.linked) return;
+  if (COUNTS) counts.linkChild++;
   e.linked = true;
   const parent = e.parent;
   e.prevChild = parent.childEdgesTail;
@@ -147,6 +155,7 @@ function linkChild(e: LensLink): void {
  *  later arm re-`linkChild`s). The child's own down-list (`parentEdges`) stays:
  *  it's intrinsic to the view and dies with it. */
 function unlinkChild(e: LensLink): void {
+  if (COUNTS) counts.unlinkChild++;
   const { parent, prevChild, nextChild } = e;
   if (nextChild !== undefined) nextChild.prevChild = prevChild;
   else parent.childEdgesTail = prevChild;
@@ -155,6 +164,29 @@ function unlinkChild(e: LensLink): void {
   e.linked = false;
   e.prevChild = undefined;
   e.nextChild = undefined;
+}
+
+/** Precompute `BF.WriteBlocked` once, after a writable's `parentEdges` are linked.
+ *  Mirrors `markDown`'s descent exactly: a sole read-only-derived parent dead-ends
+ *  (block); a split routes around a read-only parent; otherwise the block is
+ *  inherited from any non-read-only parent already flagged. Topology is immutable
+ *  and parents are built first, so each node's bit is its parents' bits + one scan. */
+function setWriteBlocked(cell: Cell<unknown>): void {
+  const pe = cell.parentEdges;
+  if (pe === undefined) return; // parentless sink (pin): absorbs, never dead-ends
+  const sole = pe.nextParent === undefined;
+  for (let e: LensLink | undefined = pe; e !== undefined; e = e.nextParent) {
+    const p = e.parent;
+    if (isReadOnlyDerived(p)) {
+      if (sole) {
+        cell.bflags |= BF.WriteBlocked; // markDown would throw at this dead-end
+        return;
+      }
+    } else if (p.bflags & BF.WriteBlocked) {
+      cell.bflags |= BF.WriteBlocked; // a descended parent dead-ends deeper
+      return;
+    }
+  }
 }
 
 let cycle = 0;
@@ -273,6 +305,7 @@ function link(dep: ReactiveNode, sub: ReactiveNode, version: number): void {
   }
   const prevSub = dep.subsTail;
   if (prevSub !== undefined && prevSub.version === version && prevSub.sub === sub) return;
+  if (COUNTS) counts.link++;
   const isFirstSub = dep.subs === undefined;
   const newLink: Link =
     (sub.depsTail =
@@ -299,6 +332,7 @@ function link(dep: ReactiveNode, sub: ReactiveNode, version: number): void {
 }
 
 function unlink(l: Link, sub: ReactiveNode = l.sub): Link | undefined {
+  if (COUNTS) counts.unlink++;
   const { dep, prevDep, nextDep, nextSub, prevSub } = l;
   if (nextDep !== undefined) nextDep.prevDep = prevDep;
   else sub.depsTail = prevDep;
@@ -312,6 +346,7 @@ function unlink(l: Link, sub: ReactiveNode = l.sub): Link | undefined {
 }
 
 function propagate(start: Link, innerWrite: boolean, excluding?: ReactiveNode): void {
+  if (COUNTS) counts.propagate++;
   let l: Link | undefined = start;
   let next: Link | undefined = start.nextSub;
   let stack: Stack<Link | undefined> | undefined;
@@ -363,6 +398,7 @@ function propagate(start: Link, innerWrite: boolean, excluding?: ReactiveNode): 
 }
 
 function checkDirty(startLink: Link, startSub: ReactiveNode): boolean {
+  if (COUNTS) counts.checkDirty++;
   let l = startLink,
     sub = startSub;
   let stack: Stack<Link> | undefined;
@@ -483,36 +519,26 @@ class MergeNode<T> {
   }
 }
 
-// Backward-lens kind (on `BwdSpec.kind`), mutually exclusive.
-const BK = {
-  /** 1→1 lens: one parent, `put(target) → sourceValue`. */
-  Lens: 0,
-  /** Multi-out / N→M split: `put(target) → per-parent tuple`. */
-  Split: 1,
-  /** Backward fan-in (N→1): contributions folded post-order (payload `merge`). */
-  Merge: 2,
-  /** Complement-carrying (path-dependent) lens (payload `stateful`). */
-  Stateful: 3,
-  /** Parentless sink (`pin`): absorbs writes. */
-  Pin: 4,
-} as const;
-
 // BwdSpec — the backward sidecar, off a single `_bwd` pointer so a source/computed
 // stays lean. Only a writable derived cell (lens / multi-out / merge / stateful /
-// pin) carries one; writable iff `_bwd !== undefined`. `merge` and `stateful` are
-// rare named payloads, populated for their respective `kind`.
+// pin) carries one; writable iff `_bwd !== undefined`. The backward shape is read
+// off field presence rather than a tag: `merge` set ⇒ fan-in fold; `stateful` set ⇒
+// complement-carrying; no `parentEdges` ⇒ pin sink; `scatter` ⇒ tuple `put`. The
+// one bit that isn't recoverable from topology is scalar-vs-tuple `put` (a 1-parent
+// split still takes a tuple), hence `scatter`.
 class BwdSpec {
-  /** Backward shape; see {@link BK}. The one dispatch discriminant. */
-  kind: number = BK.Lens;
   /** Lens `put` (dual of `getter`): `put(target)` for 1→1 / multi-out (a
    *  source-reading lens reads its parents at walk time), `put(target, sources, c)`
-   *  for stateful. */
+   *  for stateful. `undefined` for a merge (folds) or pin (absorbs). */
   // biome-ignore lint/suspicious/noExplicitAny: put fn is opaque shape
   put: ((target: any, current?: any) => any) | undefined = undefined;
-  /** Fold payload; defined iff `kind === BK.Merge`. */
+  /** Fold payload; present ⇒ a fan-in merge. */
   merge: MergeNode<unknown> | undefined = undefined;
-  /** Complement state; defined iff `kind === BK.Stateful`. */
+  /** Complement state; present ⇒ a complement-carrying (stateful) lens. */
   stateful: StatefulCore | undefined = undefined;
+  /** `put` yields a per-parent tuple (split / stateful) vs a scalar (1→1). The
+   *  only discriminant not derivable from topology (a 1-parent split is a tuple). */
+  scatter = false;
 }
 
 /** Runtime state of a stateful (complement-carrying) lens, kept off `BwdSpec` so
@@ -533,6 +559,14 @@ class StatefulCore {
   ) {
     this.complement = complement;
     this.step = step;
+  }
+  /** External iff live `sources` (first `n`) differ from this lens's own last
+   *  back-write — i.e. someone other than this lens moved them. */
+  isExternal(sources: unknown[], n: number): boolean {
+    const last = this.last;
+    if (last === undefined) return true;
+    for (let i = 0; i < n; i++) if (sources[i] !== last[i]) return true;
+    return false;
   }
 }
 
@@ -718,6 +752,7 @@ export class Cell<T = unknown> implements ReactiveNode {
   /** @internal */
   _update(): boolean {
     if (this.getter !== undefined) {
+      if (COUNTS) counts.recompute++;
       this.depsTail = undefined;
       this.flags = F.Mutable | F.RecursedCheck;
       const prev = activeSub;
@@ -803,9 +838,9 @@ export class Cell<T = unknown> implements ReactiveNode {
     cell.flags = F.Mutable | F.Dirty;
     cell.getter = (): T => parent.value;
     const b = (cell._bwd = new BwdSpec());
-    b.kind = BK.Merge;
     b.merge = new MergeNode<T>(fold) as MergeNode<unknown>;
     linkLens(cell as Cell<unknown>, parent as Cell<unknown>, 0);
+    setWriteBlocked(cell as Cell<unknown>);
     return cell as Cell<T>;
   }
 
@@ -884,9 +919,8 @@ export class Cell<T = unknown> implements ReactiveNode {
     const cell = new (this as unknown as CellCtor<Cell<unknown>>)();
     cell.flags = F.Mutable | F.Dirty;
     cell.getter = (): unknown => v;
-    // Parentless `_bwd`: `writeBack` absorbs a `BK.Pin` sink, no closure.
-    const b = (cell._bwd = new BwdSpec());
-    b.kind = BK.Pin;
+    // Parentless `_bwd`: `writeBack` absorbs it (no parent edges, no closure).
+    cell._bwd = new BwdSpec();
     return cell as unknown as Writable<InstanceType<C>>;
   }
 }
@@ -942,8 +976,8 @@ function arrayGetter(
 
 // One writable-lens constructor for both shapes. The `Array.isArray` branch is paid
 // once at construction and installs the matching specialized hot closures — scalar
-// `getter`/`put` + `BK.Lens` for 1→1, the buffer-loop getter + tuple `put` +
-// `BK.Split` for N→M — so neither hot path changes. A 2-arg call is the
+// scalar `getter`/`put` for 1→1, the buffer-loop getter + tuple `put` (`scatter`)
+// for N→M — so neither hot path changes. A 2-arg call is the
 // complement-carrying form and routes to `buildStateful`. `bwd` is always present
 // (a read-only N view is a `derive`, built via `buildDerive`).
 // biome-ignore lint/suspicious/noExplicitAny: dispatch over the untyped call forms
@@ -963,7 +997,7 @@ function buildLens<C extends Cell<any>>(Cls: CellCtor<C>, args: any[]): C {
     const parents = parent as Cell<unknown>[];
     const n = parents.length;
     cell.getter = arrayGetter(parents, fwd as (vals: readonly unknown[]) => unknown) as () => never;
-    b.kind = BK.Split;
+    b.scatter = true;
     for (let i = 0; i < n; i++) linkLens(cell as Cell<unknown>, parents[i]!, i);
     if (readsSource) {
       // Own reused buffer (not the getter's) to avoid aliasing; `bwd` consumes it
@@ -986,6 +1020,7 @@ function buildLens<C extends Cell<any>>(Cls: CellCtor<C>, args: any[]): C {
     b.put = readsSource ? (t: unknown): unknown => bwd(t, backPrimal(p)) : bwd;
     linkLens(cell as Cell<unknown>, p, 0);
   }
+  setWriteBlocked(cell as Cell<unknown>);
   return cell;
 }
 
@@ -1029,25 +1064,14 @@ function buildStateful<C extends Cell<any>>(
   const sc = (b.stateful = new StatefulCore(spec.init(seed), spec.step));
   const fwd = spec.fwd as (s: unknown, c: unknown) => unknown;
   b.put = spec.bwd as (t: unknown, c?: unknown) => unknown;
-  b.kind = BK.Stateful;
+  b.scatter = true;
   for (let i = 0; i < n; i++) linkLens(cell as Cell<unknown>, parents[i]!, i);
   cell.getter = (() => {
     for (let i = 0; i < n; i++) vals[i] = parents[i]!.value;
-    // External unless the live sources still equal this lens's own last back-write.
-    let external = true;
-    const lb = sc.last;
-    if (lb !== undefined) {
-      external = false;
-      for (let i = 0; i < n; i++) {
-        if (vals[i] !== lb[i]) {
-          external = true;
-          break;
-        }
-      }
-    }
-    sc.complement = sc.step(vals, sc.complement, external);
+    sc.complement = sc.step(vals, sc.complement, sc.isExternal(vals, n));
     return fwd(vals, sc.complement);
   }) as () => never;
+  setWriteBlocked(cell as Cell<unknown>);
   return cell;
 }
 
@@ -1115,8 +1139,8 @@ Object.defineProperty(Cell.prototype, "value", {
     }
     // GetPut for a multi-parent split: absorb a write equal to the current view
     // (its `put` could redistribute sources past per-source equality). Stateful
-    // excluded (a distinct `kind`) — peeking would step its complement.
-    if (b.kind === BK.Split && this._equals(next, this.peek())) {
+    // excluded (`scatter` but `stateful` set) — peeking would step its complement.
+    if (b.scatter && b.stateful === undefined && this._equals(next, this.peek())) {
       return;
     }
     arm(this as Cell<unknown>, next);
@@ -1129,6 +1153,13 @@ Object.defineProperty(Cell.prototype, "value", {
  *  `set`). A re-write of a still-armed view keeps only the last target (the path
  *  is already marked); `autoFlush` wakes the effects the push woke. */
 function arm(node: Cell<unknown>, target: unknown): void {
+  // Structural reject first: a write whose back-spine dead-ends throws before
+  // touching any backward state (atomic — nothing armed, nothing marked).
+  if (node.bflags & BF.WriteBlocked) {
+    if (COUNTS) counts.armBlocked++;
+    throw new TypeError("Cannot write through to a computed");
+  }
+  if (COUNTS) counts.arm++;
   if (!(node.bflags & BF.Dirty)) {
     markDown(node); // flag path + wake cones FIRST (a throw arms nothing)
     node.bflags |= BF.Dirty;
@@ -1142,12 +1173,14 @@ function arm(node: Cell<unknown>, target: unknown): void {
  *  forward cone. Runs no `put`.
  *
  *  `BF.Pending` self-dedups: an already-marked node has its subtree marked, so
- *  descent stops (diamonds cost one visit). A sole read-only-derived parent has
- *  nowhere to land → throw. The 1→1 spine allocates nothing. */
+ *  descent stops (diamonds cost one visit). A read-only-derived parent is skipped
+ *  (a split routes around it; a sole one is pre-rejected by `arm`'s
+ *  `BF.WriteBlocked` check). The 1→1 spine allocates nothing. */
 function markDown(start: Cell<unknown>): void {
   let node: Cell<unknown> = start;
   let stack: Cell<unknown>[] | undefined;
   for (;;) {
+    if (COUNTS) counts.markDownVisit++;
     let next: Cell<unknown> | undefined;
     if (isSource(node)) {
       // Leaf (dual of a `Dirty` source): wake its cone ONCE.
@@ -1160,15 +1193,14 @@ function markDown(start: Cell<unknown>): void {
       // On the back-path. An already-marked intermediate (≠ start) has its
       // subtree marked — stop (diamond dedup).
       if (node !== start) node.bflags |= BF.Pending;
-      const pe = node.parentEdges;
-      const multi = pe !== undefined && pe.nextParent !== undefined;
-      for (let e = pe; e !== undefined; e = e.nextParent) {
+      for (let e = node.parentEdges; e !== undefined; e = e.nextParent) {
         linkChild(e); // register this view on the parent's up-list (arm-order)
         const p = e.parent;
-        if (isReadOnlyDerived(p)) {
-          // A split routes around it; a sole parent can't.
-          if (!multi) throw new TypeError("Cannot write through to a computed");
-        } else if (next === undefined) next = p;
+        // Read-only parent: a split routes around it (its `put` SKIPs it). A sole
+        // read-only parent can't be routed — but that's `BF.WriteBlocked`, already
+        // rejected in `arm`, so the descent never reaches such a node here.
+        if (isReadOnlyDerived(p)) continue;
+        if (next === undefined) next = p;
         else (stack ??= []).push(p);
       }
     }
@@ -1225,14 +1257,15 @@ function resolveCone(root: Cell<unknown>): void {
     node.bflags &= ~BF.Pending;
     const b = node._bwd;
     // A merge has exactly one parent-edge; fold its gathered contributions to it.
-    if (b !== undefined && b.kind === BK.Merge) foldMerge(node.parentEdges!.parent, b.merge!);
+    if (b !== undefined && b.merge !== undefined) foldMerge(node.parentEdges!.parent, b.merge);
   }
 }
 
 /** `resolveCone` pre-order work: reset a merge's buffer, drive an armed target. */
 function enterCone(node: Cell<unknown>): void {
+  if (COUNTS) counts.resolveConeVisit++;
   const b = node._bwd;
-  if (b !== undefined && b.kind === BK.Merge) b.merge!.contributions.length = 0;
+  if (b !== undefined && b.merge !== undefined) b.merge.contributions.length = 0;
   if (node.bflags & BF.Dirty) {
     node.bflags &= ~BF.Dirty;
     writeBack(node, node.pendingValue);
@@ -1319,6 +1352,7 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
   wbTarget[0] = target;
   let top = 1;
   while (top > 0) {
+    if (COUNTS) counts.writeBackVisit++;
     const cur = wbNode[--top]!;
     const tgt = wbTarget[top];
     if (isSource(cur)) {
@@ -1332,6 +1366,7 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
       // irrelevant; this is a find-any.)
       cur.bflags &= ~BF.Pending;
       for (let e = cur.childEdgesTail; e !== undefined; e = e.prevChild) {
+        if (COUNTS) counts.reassertScan++;
         if (e.child.bflags & BACK_MARKED) {
           cur.bflags |= BF.Pending;
           break;
@@ -1342,14 +1377,15 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
     cur.bflags &= ~BF.Pending; // passing through clears the path marker
     const b = cur._bwd;
     if (b === undefined) throw new TypeError("Cannot write through to a computed");
-    if (b.kind === BK.Merge) {
-      b.merge!.contributions.push(tgt); // gathered here; `resolveCone` folds post-order
+    const mn = b.merge;
+    if (mn !== undefined) {
+      mn.contributions.push(tgt); // gathered here; `resolveCone` folds post-order
       continue;
     }
-    if (b.kind === BK.Pin) continue; // pin sink: absorb
-    const pe = cur.parentEdges!; // every non-pin writable has parent-edges
+    const pe = cur.parentEdges;
+    if (pe === undefined) continue; // pin sink (parentless): absorb
     const sc = b.stateful;
-    if (b.kind === BK.Split || b.kind === BK.Stateful) {
+    if (b.scatter) {
       // Gather ordered parents (index-ordered edges) for the tuple `put`.
       let n = 0;
       for (let e: LensLink | undefined = pe; e !== undefined; e = e.nextParent) n++;
@@ -1361,18 +1397,10 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
         const vals = new Array<unknown>(n);
         for (let i = 0; i < n; i++) vals[i] = parents[i]!.value;
         // Step the complement to the current sources before `bwd` (so it measures
-        // from a prior sibling write, not a stale snapshot). External unless the
-        // sources still equal this lens's own last back-write.
-        const last = sc.last;
-        let external = last === undefined;
-        if (last !== undefined) {
-          for (let i = 0; i < n; i++)
-            if (vals[i] !== last[i]) {
-              external = true;
-              break;
-            }
-        }
-        sc.complement = sc.step(vals, sc.complement, external);
+        // from a prior sibling write, not a stale snapshot).
+        if (COUNTS) counts.step++;
+        sc.complement = sc.step(vals, sc.complement, sc.isExternal(vals, n));
+        if (COUNTS) counts.put++;
         const res = (
           b.put as (t: unknown, s: unknown, c: unknown) => StatefulBwd<unknown[], unknown>
         )(tgt, vals, sc.complement);
@@ -1381,10 +1409,12 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
         // or short-`upd` slot leaves that parent at its current `vals[i]`.
         const um = upd.length < n ? upd.length : n;
         for (let i = 0; i < um; i++) if (upd[i] !== SKIP) vals[i] = upd[i];
+        if (COUNTS) counts.step++;
         sc.complement = sc.step(vals, res.complement, false);
         sc.last = vals;
         out = upd;
       } else {
+        if (COUNTS) counts.put++;
         out = (b.put as (t: unknown) => ReadonlyArray<unknown>)(tgt);
       }
       // Push non-SKIP children in REVERSE so index 0 is popped (processed) first
@@ -1411,6 +1441,7 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
       continue;
     }
     // 1→1 lens (single index-0 parent-edge).
+    if (COUNTS) counts.put++;
     wbNode[top] = pe.parent;
     wbTarget[top] = (b.put as (t: unknown) => unknown)(tgt);
     top++;
@@ -1420,6 +1451,7 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
 /** Fold a merge's contributions once (policy; default last-writer-wins) and write
  *  the result up to its parent. Called post-order from `resolveCone`. */
 function foldMerge(parent: Cell<unknown>, mn: MergeNode<unknown>): void {
+  if (COUNTS) counts.fold++;
   const vals = mn.contributions;
   const fold = mn.foldFn;
   let folded: unknown;
@@ -1608,11 +1640,25 @@ export function effect(fn: () => (() => void) | void): () => void {
 function flush(): void {
   if (flushing) return;
   flushing = true;
+  // Error locality: one effect throwing must not strand its siblings. Drain the
+  // whole queue, catching each body; surface the first error after the queue is
+  // empty (later errors are dropped — the engine stays consistent, the user still
+  // sees a failure). A throwing body isn't re-queued (its `F.Watching` is already
+  // cleared); it re-arms on the next wake.
+  let err: unknown;
+  let threw = false;
   try {
     while (notifyIndex < queuedLength) {
       const e = queued[notifyIndex]!;
       queued[notifyIndex++] = undefined;
-      e._run();
+      try {
+        e._run();
+      } catch (ex) {
+        if (!threw) {
+          err = ex;
+          threw = true;
+        }
+      }
     }
   } finally {
     notifyIndex = 0;
@@ -1620,6 +1666,7 @@ function flush(): void {
     syncFlush = false;
     flushing = false;
   }
+  if (threw) throw err;
 }
 
 /** Queue an effect flush for the end of the current microtask turn (idempotent).
