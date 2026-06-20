@@ -54,6 +54,13 @@ export class Label<O extends LabelOpts = LabelOpts> extends Shape<O> {
     this.attr("dominant-baseline", yAttr(a.y));
     if (opts.bold) this.attr("font-weight", 700);
 
+    // Labels are decorative: never select on drag, never steal a pointer from
+    // the shape underneath (so text over a draggable doesn't break its grab).
+    const style = (this.intrinsic as SVGElement).style;
+    style.userSelect = "none";
+    style.setProperty("-webkit-user-select", "none");
+    style.pointerEvents = "none";
+
     this.effect(() => {
       (this.intrinsic as SVGElement).innerHTML = renderContent(contentSig.value);
     });

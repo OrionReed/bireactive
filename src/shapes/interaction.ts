@@ -77,45 +77,47 @@ export function draggable(
   onDrag: (local: Inner<Vec>) => void,
   onState?: (active: boolean) => void,
 ): () => void {
-  let dragging = false;
   let pointerId = -1;
   let unblock: (() => void) | null = null;
   ownTouchGesture(handle);
-  const offs: Array<() => void> = [];
-  offs.push(
-    handle.on("pointerdown", e => {
-      const pe = e as PointerEvent;
-      dragging = true;
-      pointerId = pe.pointerId;
-      handle.el.setPointerCapture(pointerId);
-      unblock = blockPageScroll();
-      onState?.(true);
-      onDrag(handle.toLocal(pe));
-    }),
-  );
-  offs.push(
-    handle.on("pointermove", e => {
-      if (!dragging) return;
-      onDrag(handle.toLocal(e as PointerEvent));
-    }),
-  );
-  const stop = () => {
-    if (dragging && pointerId !== -1) {
-      try {
-        handle.el.releasePointerCapture(pointerId);
-      } catch {
-        /* ok */
-      }
+  const onMove = (e: PointerEvent) => {
+    if (pointerId === -1 || e.pointerId !== pointerId) return;
+    onDrag(handle.toLocal(e));
+  };
+  const stop = (e?: PointerEvent) => {
+    if (pointerId === -1 || (e && e.pointerId !== pointerId)) return;
+    try {
+      handle.el.releasePointerCapture(pointerId);
+    } catch {
+      /* ok */
     }
-    dragging = false;
     pointerId = -1;
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", stop);
+    window.removeEventListener("pointercancel", stop);
     unblock?.();
     unblock = null;
     onState?.(false);
   };
-  offs.push(handle.on("pointerup", stop));
-  offs.push(handle.on("pointercancel", stop));
-  return () => offs.forEach(d => d());
+  const offDown = handle.on("pointerdown", e => {
+    const pe = e as PointerEvent;
+    pointerId = pe.pointerId;
+    try {
+      handle.el.setPointerCapture(pointerId);
+    } catch {
+      /* ok */
+    }
+    unblock = blockPageScroll();
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    onState?.(true);
+    onDrag(handle.toLocal(pe));
+  });
+  return () => {
+    offDown();
+    stop();
+  };
 }
 
 /** Bind pointer drag on `shape` directly to a writable `Vec` (no handle dot);
@@ -134,43 +136,52 @@ export function drag(
   let dy = 0;
   let pointerId = -1;
   let unblock: (() => void) | null = null;
-  const offs: Array<() => void> = [];
-  offs.push(
-    shape.on("pointerdown", e => {
-      const pe = e as PointerEvent;
-      pointerId = pe.pointerId;
-      shape.el.setPointerCapture(pointerId);
-      unblock = blockPageScroll();
-      const world = shape.toWorld(pe);
-      const v = target.value;
-      dx = world.x - v.x;
-      dy = world.y - v.y;
-      if (dragging) dragging.value = true;
-    }),
-  );
-  offs.push(
-    shape.on("pointermove", e => {
-      if (pointerId === -1) return;
-      const world = shape.toWorld(e as PointerEvent);
-      target.value = { x: world.x - dx, y: world.y - dy };
-    }),
-  );
-  const stop = () => {
-    if (pointerId !== -1) {
-      try {
-        shape.el.releasePointerCapture(pointerId);
-      } catch {
-        /* ok */
-      }
-      pointerId = -1;
+
+  // Moves/ups are tracked on `window`, not the shape: pointer capture alone
+  // drops the gesture when the element is re-parented (z-raising) or the
+  // pointer outruns the shape, so a window listener is the reliable path.
+  const onMove = (e: PointerEvent) => {
+    if (pointerId === -1 || e.pointerId !== pointerId) return;
+    const world = shape.toWorld(e);
+    target.value = { x: world.x - dx, y: world.y - dy };
+  };
+  const stop = (e?: PointerEvent) => {
+    if (pointerId === -1 || (e && e.pointerId !== pointerId)) return;
+    try {
+      shape.el.releasePointerCapture(pointerId);
+    } catch {
+      /* ok */
     }
+    pointerId = -1;
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", stop);
+    window.removeEventListener("pointercancel", stop);
     unblock?.();
     unblock = null;
     if (dragging) dragging.value = false;
   };
-  offs.push(shape.on("pointerup", stop));
-  offs.push(shape.on("pointercancel", stop));
-  return () => offs.forEach(d => d());
+  const offDown = shape.on("pointerdown", e => {
+    const pe = e as PointerEvent;
+    pointerId = pe.pointerId;
+    try {
+      shape.el.setPointerCapture(pointerId);
+    } catch {
+      /* ok */
+    }
+    unblock = blockPageScroll();
+    const world = shape.toWorld(pe);
+    const v = target.value;
+    dx = world.x - v.x;
+    dy = world.y - v.y;
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    if (dragging) dragging.value = true;
+  });
+  return () => {
+    offDown();
+    stop();
+  };
 }
 
 /** Wrap a `drag(shape, target)` call and return a local `dragging` `Cell<boolean>`.

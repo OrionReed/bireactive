@@ -1,0 +1,228 @@
+// snap.ts — model-driven drag combinators: the bireactive reading of
+// Dragology's `closest` / `between` / `whenFar`.
+//
+// Dragology obtains target positions by *speculatively re-rendering* a set
+// of candidate model states each frame and extracting the dragged element's
+// position from each. Here the candidate positions are live cells — the
+// forward layout already computed them — so selection and hull-interpolation
+// read them directly, with no speculative render and no per-frame re-layout.
+//
+//   • nearestIndex / closest — pick the candidate nearest the pointer, with
+//     hysteresis (the "stickiness" complement keeps the current branch until
+//     a rival wins by a margin). Dragology's `d.closest`.
+//   • between — barycentric weights for the pointer inside the convex hull
+//     of the candidates, feeding `mix` to blend any Linear branches.
+//     Dragology's `d.between`.
+//   • whenFar — switch a `near` (snap) behaviour for a `far` (free) one when
+//     the pointer leaves a radius of the nearest candidate. Dragology's
+//     `spec.whenFar`.
+
+import { type Cell, derive, lens, type Read, SKIP, type Writable } from "../cell";
+import { Num } from "../values/num";
+import { Vec } from "../values/vec";
+import { select } from "./domain-aggregates";
+
+type V = { x: number; y: number };
+
+const sub = (a: V, b: V): V => ({ x: a.x - b.x, y: a.y - b.y });
+const dot = (a: V, b: V): number => a.x * b.x + a.y * b.y;
+const dist2 = (a: V, b: V): number => {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
+};
+
+// ── convex-hull barycentric weights ─────────────────────────────────
+
+/** Project `q` onto segment p0→p1; weights `[1−t, t]`, t clamped to [0,1]. */
+function segmentWeights(q: V, p0: V, p1: V): [number, number] {
+  const d = sub(p1, p0);
+  const len2 = dot(d, d);
+  if (len2 < 1e-18) return [0.5, 0.5];
+  const t = Math.max(0, Math.min(1, dot(sub(q, p0), d) / len2));
+  return [1 - t, t];
+}
+
+/** Barycentric weights of `q` in triangle (p0,p1,p2), CLAMPED to the
+ *  triangle: inside → the true coords; outside → the nearest point on the
+ *  hull (an edge projection or a vertex), so the blend never extrapolates. */
+function triangleWeights(q: V, p0: V, p1: V, p2: V): [number, number, number] {
+  const v0 = sub(p1, p0);
+  const v1 = sub(p2, p0);
+  const v2 = sub(q, p0);
+  const d00 = dot(v0, v0);
+  const d01 = dot(v0, v1);
+  const d11 = dot(v1, v1);
+  const d20 = dot(v2, v0);
+  const d21 = dot(v2, v1);
+  const denom = d00 * d11 - d01 * d01;
+  if (Math.abs(denom) > 1e-18) {
+    const b1 = (d11 * d20 - d01 * d21) / denom;
+    const b2 = (d00 * d21 - d01 * d20) / denom;
+    const b0 = 1 - b1 - b2;
+    if (b0 >= -1e-9 && b1 >= -1e-9 && b2 >= -1e-9) {
+      const s = b0 + b1 + b2;
+      return [b0 / s, b1 / s, b2 / s];
+    }
+  }
+  // Outside (or degenerate): nearest point on the three edges.
+  const e01 = segmentWeights(q, p0, p1);
+  const e12 = segmentWeights(q, p1, p2);
+  const e20 = segmentWeights(q, p2, p0);
+  const at01 = { x: p0.x * e01[0] + p1.x * e01[1], y: p0.y * e01[0] + p1.y * e01[1] };
+  const at12 = { x: p1.x * e12[0] + p2.x * e12[1], y: p1.y * e12[0] + p2.y * e12[1] };
+  const at20 = { x: p2.x * e20[0] + p0.x * e20[1], y: p2.y * e20[0] + p0.y * e20[1] };
+  const c: Array<[number, [number, number, number]]> = [
+    [dist2(q, at01), [e01[0], e01[1], 0]],
+    [dist2(q, at12), [0, e12[0], e12[1]]],
+    [dist2(q, at20), [e20[1], 0, e20[0]]],
+  ];
+  c.sort((a, b) => a[0] - b[0]);
+  return c[0]![1];
+}
+
+/** Frank–Wolfe projection of `q` onto the convex hull of `pts` in
+ *  barycentric coordinates (used for K > 3). Minimises |Σ wᵢ·pᵢ − q|² over
+ *  the simplex; O(K·iters), plenty fast for the handful of targets a drag
+ *  ever offers. */
+function hullProjectWeights(q: V, pts: readonly V[], iters = 60): number[] {
+  const K = pts.length;
+  const w = new Array<number>(K).fill(1 / K);
+  for (let t = 0; t < iters; t++) {
+    let cx = 0;
+    let cy = 0;
+    for (let i = 0; i < K; i++) {
+      cx += w[i]! * pts[i]!.x;
+      cy += w[i]! * pts[i]!.y;
+    }
+    const rx = cx - q.x;
+    const ry = cy - q.y;
+    let best = 0;
+    let bestG = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < K; i++) {
+      const g = rx * pts[i]!.x + ry * pts[i]!.y;
+      if (g < bestG) {
+        bestG = g;
+        best = i;
+      }
+    }
+    const gamma = 2 / (t + 2);
+    for (let i = 0; i < K; i++) w[i] = w[i]! * (1 - gamma);
+    w[best] = w[best]! + gamma;
+  }
+  return w;
+}
+
+/** Convex-hull barycentric weights of `q` over `pts` (Σ = 1, all ≥ 0,
+ *  clamped to the hull). Closed form for K ≤ 3; Frank–Wolfe for K > 3. */
+export function hullWeights(q: V, pts: readonly V[]): number[] {
+  const K = pts.length;
+  if (K === 0) return [];
+  if (K === 1) return [1];
+  if (K === 2) return segmentWeights(q, pts[0]!, pts[1]!);
+  if (K === 3) return triangleWeights(q, pts[0]!, pts[1]!, pts[2]!);
+  return hullProjectWeights(q, pts);
+}
+
+/** Per-target barycentric weight cells for `pointer` inside the convex hull
+ *  of `targets` (Dragology's `between`). Feed straight to `mix`:
+ *
+ *      mix(between(pointer, targetPts), branches)
+ *
+ *  blends `branches` (positions, colors, sizes — any Linear class) by the
+ *  pointer's location in the hull, interpolating smoothly between the
+ *  rendered target states. */
+export function between(pointer: Read<V>, targets: readonly Read<V>[]): Read<number>[] {
+  const ws = derive([pointer, ...targets] as readonly Read<V>[], vals =>
+    hullWeights(vals[0]!, vals.slice(1)),
+  );
+  return targets.map((_, i) => Num.derive(ws, w => w[i] ?? 0));
+}
+
+// ── discrete nearest selection (closest) ────────────────────────────
+
+export interface ClosestOpts {
+  /** Hysteresis margin (px): the current pick is kept until a rival is
+   *  nearer by more than this. Dragology's stickiness. Default 0. */
+  sticky?: number;
+}
+
+function pick(sources: readonly V[], prev: number, sticky: number): number {
+  const p = sources[0]!;
+  let best = -1;
+  let bestD = Number.POSITIVE_INFINITY;
+  for (let i = 1; i < sources.length; i++) {
+    const d = dist2(sources[i]!, p);
+    if (d < bestD) {
+      bestD = d;
+      best = i - 1;
+    }
+  }
+  if (sticky > 0 && prev >= 0 && prev + 1 < sources.length) {
+    const prevD = Math.sqrt(dist2(sources[prev + 1]!, p));
+    if (prevD - Math.sqrt(bestD) < sticky) return prev;
+  }
+  return best;
+}
+
+/** Index of the candidate nearest `pointer`, with hysteresis. Read-only
+ *  selection: the stickiness state lives in the lens complement (the
+ *  sanctioned place for path-dependence), so reads stay pure. */
+export function nearestIndex(
+  pointer: Read<V>,
+  candidates: readonly Read<V>[],
+  opts: ClosestOpts = {},
+): Cell<number> {
+  const sticky = opts.sticky ?? 0;
+  const parents = [pointer, ...candidates] as readonly Read<V>[];
+  type C = { index: number };
+  return lens<V, number, C>(parents as never, {
+    init: sources => ({ index: pick(sources, -1, 0) }),
+    step: (sources, c) => ({ index: pick(sources, c.index, sticky) }),
+    fwd: (_sources, c) => c.index,
+    bwd: (_t, sources, c) => ({ updates: sources.map(() => SKIP) as never, complement: c }),
+  }) as Cell<number>;
+}
+
+/** Distance from `pointer` to its nearest candidate. */
+export function nearestDistance(pointer: Read<V>, candidates: readonly Read<V>[]): Cell<number> {
+  return Num.derive([pointer, ...candidates] as readonly Read<V>[], vals => {
+    const p = vals[0]!;
+    let best = Number.POSITIVE_INFINITY;
+    for (let i = 1; i < vals.length; i++) best = Math.min(best, dist2(vals[i]!, p));
+    return Math.sqrt(best);
+  });
+}
+
+/** Dragology's `d.closest`: the index of the nearest candidate plus the
+ *  snapped preview position (the chosen candidate's live position). On drop
+ *  the caller commits the discrete state for `index.value`. */
+export function closest(
+  pointer: Read<V>,
+  candidates: readonly Read<V>[],
+  opts: ClosestOpts = {},
+): { index: Cell<number>; pos: Vec } {
+  const index = nearestIndex(pointer, candidates, opts);
+  const pos = Vec.derive([index, ...candidates] as readonly Read<unknown>[], vals => {
+    const i = vals[0] as number;
+    return (vals[1 + i] as V) ?? { x: 0, y: 0 };
+  });
+  return { index, pos };
+}
+
+// ── behaviour switching (whenFar) ───────────────────────────────────
+
+/** Switch between a `near` (snap) behaviour and a `far` (free) behaviour by
+ *  whether the pointer has left `radius` of its nearest candidate
+ *  (Dragology's `whenFar`). Writes flow to whichever branch is live. */
+export function whenFar(
+  pointer: Read<V>,
+  candidates: readonly Read<V>[],
+  near: Writable<Vec>,
+  far: Writable<Vec>,
+  radius: number,
+): Writable<Vec> {
+  const dist = nearestDistance(pointer, candidates);
+  const isFar = derive(dist, d => d > radius);
+  return select(isFar, near, far);
+}

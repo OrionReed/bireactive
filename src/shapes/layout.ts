@@ -1,6 +1,14 @@
 // Spatial composition primitives.
 
-import { Box, boxExpand, reader, transformBox, type Val } from "@bireactive/core";
+import {
+  Box,
+  boxExpand,
+  derive,
+  type Read,
+  reader,
+  transformBox,
+  type Val,
+} from "@bireactive/core";
 import type { Shape } from "./shape";
 
 export interface ArrangeOpts {
@@ -99,4 +107,101 @@ export function grid(
   opts: { gap?: Val<number> } = {},
 ): Box[][] {
   return split(source, "y", rows, opts).map(row => split(row, "x", cols, opts));
+}
+
+export interface TreeStackBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface TreeStackOpts<Id> {
+  /** Top-level node ids, in order (read inside a derive; cell reads track). */
+  roots: () => readonly Id[];
+  /** A container's children, in order (read inside a derive). */
+  kids: (id: Id) => readonly Id[];
+  /** Containers stack their `kids`; non-containers are sized by `leaf`. */
+  container: (id: Id) => boolean;
+  /** Intrinsic size of a non-container node. */
+  leaf: (id: Id) => { w: number; h: number };
+  /** Top-left of a root node. */
+  origin: (id: Id) => { x: number; y: number };
+  /** Space reserved above a container's children (a title bar). Default 0. */
+  header?: number;
+  /** Inset around a container's children. Default 0. */
+  pad?: number;
+  /** Space between adjacent children. Default 0. */
+  gap?: number;
+  /** Minimum container width. Default 0. */
+  minWidth?: number;
+  /** Height of an empty container. Default `header + 2·pad`. */
+  emptyHeight?: number;
+}
+
+export interface TreeStack<Id> {
+  /** Reactive placement of every reachable node. */
+  readonly boxes: Read<Map<Id, TreeStackBox>>;
+  /** A node's box as a reactive `Box` (zero box when absent). */
+  box(id: Id): Box;
+}
+
+/** Intrinsic ("hug-contents") layout of a tree as nested vertical stacks:
+ *  each container's size is the bottom-up sum of its children, each child is
+ *  placed top-down from its container. Unlike `row`/`col` (which fit items
+ *  into a fixed container), the containers grow to fit. Pure function of the
+ *  inputs, so feeding it a *previewed* tree yields a previewed layout. */
+export function treeStack<Id>(opts: TreeStackOpts<Id>): TreeStack<Id> {
+  const header = opts.header ?? 0;
+  const pad = opts.pad ?? 0;
+  const gap = opts.gap ?? 0;
+  const minW = opts.minWidth ?? 0;
+  const emptyH = opts.emptyHeight ?? header + 2 * pad;
+
+  const measure = (id: Id): { w: number; h: number } => {
+    if (!opts.container(id)) return opts.leaf(id);
+    const ks = opts.kids(id);
+    if (ks.length === 0) return { w: minW, h: emptyH };
+    let maxw = 0;
+    let h = header + pad;
+    for (const c of ks) {
+      const m = measure(c);
+      maxw = Math.max(maxw, m.w);
+      h += m.h + gap;
+    }
+    return { w: Math.max(minW, maxw + 2 * pad), h: h + pad - gap };
+  };
+  const place = (id: Id, x: number, y: number, out: Map<Id, TreeStackBox>): void => {
+    const m = measure(id);
+    out.set(id, { x, y, w: m.w, h: m.h });
+    if (opts.container(id)) {
+      let cy = y + header + pad;
+      for (const c of opts.kids(id)) {
+        place(c, x + pad, cy, out);
+        cy += measure(c).h + gap;
+      }
+    }
+  };
+
+  const boxes = derive(() => {
+    const out = new Map<Id, TreeStackBox>();
+    for (const r of opts.roots()) {
+      const o = opts.origin(r);
+      place(r, o.x, o.y, out);
+    }
+    return out;
+  });
+
+  const cache = new Map<Id, Box>();
+  return {
+    boxes,
+    box(id: Id): Box {
+      let b = cache.get(id);
+      if (!b) {
+        b = Box.derive(() => boxes.value.get(id) ?? { x: 0, y: 0, w: 0, h: 0 });
+        cache.set(id, b);
+      }
+      return b;
+    },
+  };
 }

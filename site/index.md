@@ -711,3 +711,56 @@ A waveform and its spectrum:
 <md-skeletal-rig></md-skeletal-rig>
 
 <md-propagation></md-propagation>
+
+
+## Dragging
+
+Some interaction experiments inspired by [Dragology](https://joshuahhh.com/dragology/). This is all very imperative and less polished, but it at least hints that lenses *could* be a compelling way to do complex drag-heavy interactions, with closed-form inverses, while still being very composable.
+
+```ts
+const { index } = closest(pointer, slotCenters); // O(slots), not O(perms)
+order.value = move(order.peek(), from, index.peek()); // on drop
+```
+
+<md-reorder></md-reorder>
+
+`between` is like `closest` but continuous. `ctrl → nodeᵢ` is affine and and invertible, so dragging *any* node steers the one control point.
+
+```ts
+const w = between(ctrl, corners); // weights, clamped to the hull
+const node = mix(w, [stack, ring, splay]); // and the inverse steers ctrl from a node
+```
+
+<md-twisted></md-twisted>
+
+```ts
+const pos = mix(tent(playhead), keyframes); // continuous morph
+const snap = nearestIndex(playhead, ticks); // discrete settle
+```
+
+<md-algebra></md-algebra>
+
+Drag a planet to any orbit, around either sun.
+
+```ts
+const rings = ORBITS.map(o => project(pointer, o)); // nearest point per orbit
+const { index } = closest(pointer, rings); // which orbit, across suns
+floating(planet, pos, orbitPosition); // follow, then settle on the ring
+```
+
+<md-planets></md-planets>
+
+```ts
+const preview = treeStack({ roots, kids, origin, ... });   // tree → box per node
+const draft = derive(() => insert(without(tree.value, id), id, drop.value)); // slot opens live
+tree.value = draft.peek(); // release commits the previewed tree, unchanged
+```
+
+<md-nested></md-nested>
+
+```ts
+const mode = nearestIndex(knob, markers); // the spec is a cell
+const home = derive(() => [gridClosest, free, ringClosest][mode.value].value);
+```
+
+<md-spec></md-spec>

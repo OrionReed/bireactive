@@ -34,6 +34,15 @@ export {
   remember,
 } from "./memory";
 export {
+  between,
+  type ClosestOpts,
+  closest,
+  hullWeights,
+  nearestDistance,
+  nearestIndex,
+  whenFar,
+} from "./snap";
+export {
   bundle,
   type FactorOpts,
   type FactorResult,

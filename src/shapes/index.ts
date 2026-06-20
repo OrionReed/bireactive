@@ -11,11 +11,22 @@ export { type ArrowOpts, arrow, connect, ensureArrowMarker } from "./connect";
 export { Curve, type CurveOpts, type CurveSegment, curve, ellipse } from "./curve";
 export { dashedPath } from "./dashed";
 export { debug } from "./debug";
+export { type FloatingOpts, type FloatingResult, floating, floatingAt } from "./drag-behaviors";
 export { group } from "./group";
 export { type HandleOpts, handle } from "./handle";
 export { cursor, drag, draggable, dragRotate, dragWithState, hoverSignal } from "./interaction";
 export { Label, type LabelOpts, label } from "./label";
-export { type ArrangeOpts, arrange, expand, grid, split } from "./layout";
+export {
+  type ArrangeOpts,
+  arrange,
+  expand,
+  grid,
+  split,
+  type TreeStack,
+  type TreeStackBox,
+  type TreeStackOpts,
+  treeStack,
+} from "./layout";
 export { Line, type LineOpts, line } from "./line";
 export { type ForEachOptions, forEach } from "./list";
 export { type Mount, mount } from "./mount";
