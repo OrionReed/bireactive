@@ -1,6 +1,13 @@
 dist/
 dist-web/
 .DS_Store
+
+# TypeDoc-generated Markdown (VitePress source for /api/ — rebuilt from src)
+/docs/*
+!/docs/.vitepress
+!/docs/.vitepress/**
+/docs/.vitepress/cache/
+/docs/.vitepress/dist/
 bun.lockb
 yarn.lock
 

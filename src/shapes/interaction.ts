@@ -173,9 +173,8 @@ export function drag(
   return () => offs.forEach(d => d());
 }
 
-/** Wrap a `drag(shape, target)` call and return a local `dragging`
- *  Cell<boolean>. Sugar for "give me a drag handle that exposes its
- *  own state." */
+/** Wrap a `drag(shape, target)` call and return a local `dragging` `Cell<boolean>`.
+ *  Sugar for "give me a drag handle that exposes its own state." */
 export function dragWithState(
   shape: AnyShape,
   target: Writable<Vec>,

@@ -21,7 +21,9 @@
   ],
   "scripts": {
     "dev": "vite --host",
-    "site": "vite build && typedoc",
+    "site": "vite build && typedoc && vitepress build docs",
+    "docs": "typedoc && vitepress build docs",
+    "docs:dev": "typedoc && vitepress dev docs",
     "preview": "vite preview",
     "prebuild": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json --resolve-full-paths",
@@ -54,9 +56,12 @@
     "reactive-framework-test-suite": "^0.0.2",
     "tsc-alias": "^1.8.17",
     "typedoc": "^0.28.19",
+    "typedoc-plugin-markdown": "^4.12.0",
+    "typedoc-vitepress-theme": "^1.1.3",
     "typescript": "^6.0.3",
     "vite": "^7.3.3",
     "vite-node": "^5.3.0",
+    "vitepress": "^1.6.4",
     "vitest": "^4.1.7"
   },
   "keywords": [
