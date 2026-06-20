@@ -547,6 +547,16 @@ export type Writable<R> = R & WritableBrand & { value: Inner<R> };
 // biome-ignore lint/suspicious/noExplicitAny: variance escape, mirrors `Inner`
 export type Init<C extends Cell<any>> = Inner<C> | Writable<C>;
 
+/** Per-position value types behind a tuple of read shapes (the tuple form of {@link Inner}). */
+type ReadValues<P extends readonly Read<unknown>[]> = { [K in keyof P]: Inner<P[K]> };
+
+/** {@link ReadValues} with each slot also admitting `SKIP` — the per-parent back-update shape. */
+type ReadValuesOrSkip<P extends readonly Read<unknown>[]> = { [K in keyof P]: Inner<P[K]> | Skip };
+
+/** Any `Cell` subclass constructor — the constraint for polymorphic-`this` statics. */
+// biome-ignore lint/suspicious/noExplicitAny: variance escape for polymorphic-this statics
+type AnyCellCtor = new (...args: never[]) => Cell<any>;
+
 /** Snapshot a `Val<T>` to plain `T` (one-shot, no tracking). */
 export function readNow<T>(v: Val<T>): T {
   if (v instanceof Cell) return v.value as T;
@@ -793,22 +803,17 @@ export class Cell<T = unknown> implements ReactiveNode {
   /** Read-only typed view. `Cls.derive(parent, fn)` (1-input),
    *  `Cls.derive(parents, fn)` (N-input), or `Cls.derive(fn)` (closure).
    *  Polymorphic-`this`: `Vec.derive(...)` → `Vec`. */
-  // biome-ignore lint/suspicious/noExplicitAny: variance escape
-  static derive<C extends new (...args: never[]) => Cell<any>, P>(
+  static derive<C extends AnyCellCtor, P>(
     this: C,
     parent: Read<P>,
     fn: (v: P) => Inner<InstanceType<C>>,
   ): InstanceType<C>;
-  // biome-ignore lint/suspicious/noExplicitAny: variance escape
-  static derive<C extends new (...args: never[]) => Cell<any>, P extends readonly Read<unknown>[]>(
+  static derive<C extends AnyCellCtor, P extends readonly Read<unknown>[]>(
     this: C,
     parents: P,
-    fn: (
-      vals: { [K in keyof P]: P[K] extends Read<infer V> ? V : never },
-    ) => Inner<InstanceType<C>>,
+    fn: (vals: ReadValues<P>) => Inner<InstanceType<C>>,
   ): InstanceType<C>;
-  // biome-ignore lint/suspicious/noExplicitAny: variance escape
-  static derive<C extends new (...args: never[]) => Cell<any>>(
+  static derive<C extends AnyCellCtor>(
     this: C,
     fn: () => Inner<InstanceType<C>>,
   ): InstanceType<C>;
@@ -821,46 +826,27 @@ export class Cell<T = unknown> implements ReactiveNode {
    *  `Cls.lens(parents, fwd, bwd)` for N; a 2-arg `bwd` reads the source,
    *  a 1-arg `bwd` reconstructs it. `Cls.lens(parent(s), spec)` builds a
    *  complement-carrying lens from `{ init, step, fwd, bwd }`. */
-  // biome-ignore lint/suspicious/noExplicitAny: variance escape
-  static lens<C extends new (...args: never[]) => Cell<any>, P>(
+  static lens<C extends AnyCellCtor, P>(
     this: C,
     parent: Read<P>,
     fwd: (v: P) => Inner<InstanceType<C>>,
     bwd: (target: Inner<InstanceType<C>>, v: P) => P,
   ): Writable<InstanceType<C>>;
-  // biome-ignore lint/suspicious/noExplicitAny: variance escape
-  static lens<C extends new (...args: never[]) => Cell<any>, P extends readonly Read<unknown>[]>(
+  static lens<C extends AnyCellCtor, P extends readonly Read<unknown>[]>(
     this: C,
     parents: P,
-    fwd: (
-      vals: { [K in keyof P]: P[K] extends Read<infer V> ? V : never },
-    ) => Inner<InstanceType<C>>,
-    bwd: (
-      target: Inner<InstanceType<C>>,
-      vals: { [K in keyof P]: P[K] extends Read<infer V> ? V : never },
-    ) => BackUpdates<{ [K in keyof P]: (P[K] extends Read<infer V> ? V : never) | Skip }>,
+    fwd: (vals: ReadValues<P>) => Inner<InstanceType<C>>,
+    bwd: (target: Inner<InstanceType<C>>, vals: ReadValues<P>) => BackUpdates<ReadValuesOrSkip<P>>,
   ): Writable<InstanceType<C>>;
-  // biome-ignore lint/suspicious/noExplicitAny: variance escape
-  static lens<C extends new (...args: never[]) => Cell<any>, P, Cm>(
+  static lens<C extends AnyCellCtor, P, Cm>(
     this: C,
     parent: Read<P>,
     spec: StatefulLensSpec<readonly [P], Inner<InstanceType<C>>, Cm>,
   ): Writable<InstanceType<C>>;
-  static lens<
-    C extends new (
-      ...args: never[]
-      // biome-ignore lint/suspicious/noExplicitAny: variance escape
-    ) => Cell<any>,
-    P extends readonly Read<unknown>[],
-    Cm,
-  >(
+  static lens<C extends AnyCellCtor, P extends readonly Read<unknown>[], Cm>(
     this: C,
     parents: P,
-    spec: StatefulLensSpec<
-      { [K in keyof P]: P[K] extends Read<infer V> ? V : never },
-      Inner<InstanceType<C>>,
-      Cm
-    >,
+    spec: StatefulLensSpec<ReadValues<P>, Inner<InstanceType<C>>, Cm>,
   ): Writable<InstanceType<C>>;
   // biome-ignore lint/suspicious/noExplicitAny: dispatch
   static lens(this: any, ...args: any[]): any {
@@ -869,18 +855,13 @@ export class Cell<T = unknown> implements ReactiveNode {
 
   /** Type predicate against this class: `Vec.is(x)` narrows `x` to `Vec`.
    *  Inherited static; works for any subclass via polymorphic `this`. */
-  // biome-ignore lint/suspicious/noExplicitAny: variance escape
-  static is<C extends new (...args: never[]) => Cell<any>>(
-    this: C,
-    v: unknown,
-  ): v is InstanceType<C> {
+  static is<C extends AnyCellCtor>(this: C, v: unknown): v is InstanceType<C> {
     return v instanceof this;
   }
 
   /** Coerce `Val<Inner<Cls>>` → `Cls`: instance → identity, RO cell →
    *  tracked `derive`, literal → fresh seed. */
-  // biome-ignore lint/suspicious/noExplicitAny: variance escape
-  static coerce<C extends new (...args: never[]) => Cell<any>>(
+  static coerce<C extends AnyCellCtor>(
     this: C,
     v: Val<Inner<InstanceType<C>>>,
   ): InstanceType<C> {
@@ -896,8 +877,7 @@ export class Cell<T = unknown> implements ReactiveNode {
 
   /** Writable-shaped constant: always reads `v`, absorbs writes
    *  (parentless sink lens), for APIs demanding bidirectionality. */
-  // biome-ignore lint/suspicious/noExplicitAny: variance escape
-  static pin<C extends new (...args: never[]) => Cell<any>>(
+  static pin<C extends AnyCellCtor>(
     this: C,
     v: Inner<InstanceType<C>>,
   ): Writable<InstanceType<C>> {
@@ -912,8 +892,7 @@ export class Cell<T = unknown> implements ReactiveNode {
 
 /** Typed field lens onto `parent.value[key]`. RO parent → RO derive;
  *  writable parent → bidirectional lens with spread-replace `put`. */
-// biome-ignore lint/suspicious/noExplicitAny: variance escape
-export function fieldOf<C extends new (...args: never[]) => Cell<any>>(
+export function fieldOf<C extends AnyCellCtor>(
   // biome-ignore lint/suspicious/noExplicitAny: parent is contravariant on put
   parent: Cell<any>,
   key: string | number | symbol,
@@ -1495,7 +1474,7 @@ const CELL_CTOR = Cell as unknown as CellCtor<Cell<unknown>>;
 export function derive<P, R>(parent: Read<P>, fn: (v: P) => R): Cell<R>;
 export function derive<P extends readonly Read<unknown>[], R>(
   parents: P,
-  fn: (vals: { [K in keyof P]: P[K] extends Read<infer V> ? V : never }) => R,
+  fn: (vals: ReadValues<P>) => R,
 ): Cell<R>;
 export function derive<R>(fn: () => R): Cell<R>;
 // biome-ignore lint/suspicious/noExplicitAny: dispatch
@@ -1513,11 +1492,8 @@ export function lens<P, R>(
 ): Writable<Cell<R>>;
 export function lens<P extends readonly Read<unknown>[], R>(
   parents: P,
-  fwd: (vals: { [K in keyof P]: P[K] extends Read<infer V> ? V : never }) => R,
-  bwd: (
-    target: R,
-    vals: { [K in keyof P]: P[K] extends Read<infer V> ? V : never },
-  ) => { [K in keyof P]: (P[K] extends Read<infer V> ? V : never) | Skip },
+  fwd: (vals: ReadValues<P>) => R,
+  bwd: (target: R, vals: ReadValues<P>) => ReadValuesOrSkip<P>,
 ): Writable<Cell<R>>;
 export function lens<P, R, C>(
   parent: Read<P>,
@@ -1525,7 +1501,7 @@ export function lens<P, R, C>(
 ): Writable<Cell<R>>;
 export function lens<P extends readonly Read<unknown>[], R, C>(
   parents: P,
-  spec: StatefulLensSpec<{ [K in keyof P]: P[K] extends Read<infer V> ? V : never }, R, C>,
+  spec: StatefulLensSpec<ReadValues<P>, R, C>,
 ): Writable<Cell<R>>;
 // biome-ignore lint/suspicious/noExplicitAny: dispatch
 export function lens(...args: any[]): any {
@@ -1873,7 +1849,7 @@ export function fieldLens<
  *        return cachedDerive(this, "magnitude", Num, v => Math.hypot(v.x, v.y));
  *      } */
 // biome-ignore lint/suspicious/noExplicitAny: variance escape, mirrors Cls.derive
-export function cachedDerive<S extends Cell<any>, C extends new (...args: never[]) => Cell<any>>(
+export function cachedDerive<S extends Cell<any>, C extends AnyCellCtor>(
   parent: S,
   key: string | symbol,
   Cls: C,
