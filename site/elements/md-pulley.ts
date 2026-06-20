@@ -1,4 +1,8 @@
 // Rope-length conservation composed across two pulleys.
+//
+// Total rope = aDrop + tangent_length(B → P1).  Because B sits at the
+// midpoint, tangent_length(B → P1) = tangent_length(B → P2) exactly, so
+// cDrop mirrors aDrop.  Sliding a pulley changes the diagonal and moves B.
 
 import {
   circle,
@@ -19,10 +23,22 @@ const H = 380;
 const PY = 110; // pulley axle height
 const GY = PY - 32; // girder height
 const R = 26; // pulley radius
-const L1 = 250;
-const L2 = 250;
+
+// Initial drops — ROPE is inferred so the scene opens in exactly this state.
+const A0 = 130;
+const B0 = 120;
+const H0 = 100; // = (P2x₀ − P1x₀) / 2  =  (380 − 180) / 2
+const ROPE = A0 + Math.sqrt(H0 * H0 + B0 * B0 - R * R);
+
+const M = 44; // min drop below the axle
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+/** Upper bound on aDrop (= cDrop) for half-separation h, keeping B ≥ M below axle. */
+const aMax = (h: number) => ROPE - Math.sqrt(Math.max(0, M * M + h * h - R * R));
+
+/** Upper bound on bDrop for half-separation h, keeping A ≥ M below axle. */
+const bMax = (h: number) => Math.sqrt(Math.max(0, (ROPE - M) * (ROPE - M) - h * h + R * R));
 
 /** Tangent point from external point E to circle (C, R) — the upper one,
  *  so the rope reads as wrapping over the top of the wheel. */
@@ -59,29 +75,40 @@ export class MdPulley extends Diagram {
       (t, [, b]) => [{ x: clamp(t.x, b.x + 120, W - 40 - R - 10), y: PY }],
     );
 
-    // Conservation chain: each pulley is one invertible affine edge.
-    const aDrop = num(130);
-    const bDrop = aDrop.affine(-1, L1);
-    const cDrop = bDrop.affine(-1, L2);
+    // Single source of truth: aDrop (= cDrop by symmetry).
+    // bDrop is derived from the real diagonal rope length:
+    //   ROPE = aDrop + sqrt(h² + bDrop² − R²)  →  bDrop = sqrt((ROPE−a)² + R² − h²)
+    const aDrop = num(A0);
 
-    // Weights: vertical-only drag writes the drop; x rides the pulleys.
-    // Each drop is clamped so no weight rises above the girder — the affine
-    // links carry the bound to the others (a up ⇒ b down ⇒ c up, etc.).
-    const M = 44; // min drop below the axle
     const aPos = Vec.lens(
-      [aDrop, p1] as const,
+      [aDrop, p1, p2] as const,
       ([d, P1]) => ({ x: P1.x - R, y: PY + d }),
-      t => [clamp(t.y - PY, M, L1 - M)],
+      (t, [, P1, P2]) => {
+        const h = (P2.x - P1.x) / 2;
+        return [clamp(t.y - PY, M, aMax(h))];
+      },
     );
     const cPos = Vec.lens(
-      [cDrop, p2] as const,
-      ([d, P2]) => ({ x: P2.x + R, y: PY + d }),
-      t => [clamp(t.y - PY, M, L2 - M)],
+      [aDrop, p1, p2] as const,
+      ([a, , P2]) => ({ x: P2.x + R, y: PY + a }),
+      (t, [, P1, P2]) => {
+        const h = (P2.x - P1.x) / 2;
+        return [clamp(t.y - PY, M, aMax(h))];
+      },
     );
     const bPos = Vec.lens(
-      [bDrop, p1, p2] as const,
-      ([d, P1, P2]) => ({ x: (P1.x + P2.x) / 2, y: PY + d }),
-      t => [clamp(t.y - PY, M, L1 - M)],
+      [aDrop, p1, p2] as const,
+      ([a, P1, P2]) => {
+        const h = (P2.x - P1.x) / 2;
+        const drop = Math.sqrt(Math.max(M * M, (ROPE - a) * (ROPE - a) + R * R - h * h));
+        return { x: (P1.x + P2.x) / 2, y: PY + drop };
+      },
+      (t, [, P1, P2]) => {
+        const h = (P2.x - P1.x) / 2;
+        const bd = clamp(t.y - PY, M, bMax(h));
+        const tanLen = Math.sqrt(Math.max(0, h * h + bd * bd - R * R));
+        return [clamp(ROPE - tanLen, M, aMax(h))];
+      },
     );
 
     s(line(vec(40, GY), vec(W - 40, GY), { strokeWidth: 3 }));
@@ -130,12 +157,12 @@ export class MdPulley extends Diagram {
       ),
     );
 
-    for (const [p, h] of [
+    for (const [p, ph] of [
       [p1, p1h],
       [p2, p2h],
     ] as const) {
       const wheel = s(circle(p, R, { thin: true }));
-      drag(wheel, h);
+      drag(wheel, ph);
       wheel.el.style.cursor = "ew-resize";
       wheel.el.style.pointerEvents = "all"; // grab the whole disc, not just the rim
       const hub = s(circle(p, 2.5, { fill: true }));
@@ -156,7 +183,7 @@ export class MdPulley extends Diagram {
       label(view.top.down(20), "drag a weight — or slide a pulley along the girder"),
       label(
         view.bottom.up(16),
-        "b = a.affine(−1, L₁) · c = b.affine(−1, L₂) · two invertible edges composed",
+        "ROPE = aDrop + √(h² + bDrop² − R²)  ·  cDrop = aDrop  ·  slide pulleys to see B respond",
         { size: 10 },
       ),
     );

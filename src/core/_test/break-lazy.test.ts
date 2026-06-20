@@ -528,19 +528,28 @@ describe("re-entrancy: back-writes observed by effects", () => {
 // ════════════════════════════════════════════════════════════════════════
 // G. No unbounded reverse-edge growth (leak guard).
 //
-// The reverse edge a view registers on its parent (`_lensSubs`) is a PERMANENT
-// structural fact, deduped by the dedicated `_linkedBack` field so it links
-// exactly once. The field lives OFF the `flags` word precisely so a forward
-// recompute (`_update`) that resets `flags` can't wipe it — a wipe would make
-// every later back-write re-push a duplicate, an unbounded `_lensSubs` +
-// per-tick-time leak that only shows up under sustained write→read churn.
+// The reverse edge a view registers on its parent (a `LensLink` in the parent's
+// `childEdges` up-list) is a PERMANENT structural fact, spliced exactly once and
+// deduped by the edge's own `linked` flag. It lives OFF the `flags`/`bflags`
+// words precisely so a forward recompute (`_update`) that resets flags can't
+// wipe it — a wipe would make every later back-write re-splice a duplicate, an
+// unbounded `childEdges` + per-tick-time leak that only shows under sustained
+// write→read churn.
 // ════════════════════════════════════════════════════════════════════════
 
 describe("no reverse-edge leak under sustained churn", () => {
-  const subsLen = (c: Cell<number>) =>
-    ((c as unknown as { _lensSubs?: unknown[] })._lensSubs ?? []).length;
+  const subsLen = (c: Cell<number>) => {
+    let n = 0;
+    for (
+      let e = (c as unknown as { childEdges?: { nextChild?: unknown } }).childEdges;
+      e !== undefined;
+      e = (e as { nextChild?: { nextChild?: unknown } }).nextChild
+    )
+      n++;
+    return n;
+  };
 
-  it("source-reading chain: _lensSubs stays flat over many write→read ticks", () => {
+  it("source-reading chain: childEdges stays flat over many write→read ticks", () => {
     let cur = cell(0) as unknown as Cell<number>;
     const src = cur;
     const nodes: Cell<number>[] = [cur];

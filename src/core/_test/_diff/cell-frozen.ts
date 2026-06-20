@@ -1,16 +1,15 @@
 // cell.ts — symmetric bidirectional reactive engine.
 //
 // Forward propagation is alien-signals verbatim. Backward is the same lazy
-// push-pull run on the transpose of the lens graph, carried by one `LensLink`
-// structure (the backward dual of forward's `Link`): `parentEdges` down,
-// `childEdges` up, created eagerly at lens construction. One traversal each
-// direction:
+// push-pull run on the transpose of the lens graph — no dynamic side tables,
+// state on flags plus two static adjacencies (`_bwd.parent` down, `_lensSubs`
+// up) that mirror forward's `deps`/`subs`. One traversal each direction:
 //
 //   role            forward (source → view)      backward (view → source)
-//   down edge       subs (who reads me)          parentEdges (my parents)
-//   up edge         deps (my deps)               childEdges (my lens-children)
-//   push (mark)     propagate (down `subs`)      markDown (down `parentEdges`)
-//   pull (resolve)  checkDirty (up `deps`)       resolveCone (up `childEdges`)
+//   down edge       subs (who reads me)          _bwd.parent (my parents)
+//   up edge         deps (my deps)               _lensSubs (my lens-children)
+//   push (mark)     propagate (down `subs`)      markDown (down `_bwd.parent`)
+//   pull (resolve)  checkDirty (up `deps`)       resolveCone (up `_lensSubs`)
 //   commit/compute  _update / getter             writeBack
 //   "dirty" flag    F.Dirty (source staged)      BF.Dirty (view holds target)
 //   "pending" flag  F.Pending (on the cone)      BF.Pending (on the back-path)
@@ -107,52 +106,16 @@ function backPrimal(c: Cell<unknown>): unknown {
   return c.currentValue;
 }
 
-/** Create a lens-edge `child →[index] parent`, appending it to `child`'s
- *  `parentEdges` (down) eagerly at construction, in tuple order (so
- *  `parentEdges` is index-ordered). The up-list (`parent.childEdges`) is spliced
- *  lazily on first back-mark (`linkChild`), so child order is arm-order. */
-function linkLens(child: Cell<unknown>, parent: Cell<unknown>, index: number): void {
-  const e: LensLink = {
-    index,
-    parent,
-    child,
-    linked: false,
-    nextParent: undefined,
-    prevChild: undefined,
-    nextChild: undefined,
-  };
-  if (child.parentEdgesTail !== undefined) child.parentEdgesTail.nextParent = e;
-  else child.parentEdges = e;
-  child.parentEdgesTail = e;
-}
-
-/** Splice a lens-edge into its parent's `childEdges` (the up-traversal list),
- *  once, on first back-mark — so a parent's child order is arm-order and
- *  co-writer resolution is last-write-wins. Idempotent via `linked`. */
-function linkChild(e: LensLink): void {
-  if (e.linked) return;
-  e.linked = true;
-  const parent = e.parent;
-  e.prevChild = parent.childEdgesTail;
-  if (parent.childEdgesTail !== undefined) parent.childEdgesTail.nextChild = e;
-  else parent.childEdges = e;
-  parent.childEdgesTail = e;
-}
-
-/** Remove a lens-edge from its parent's `childEdges` up-list in O(1), and mark it
- *  re-linkable — the backward dual of `unlink` dropping a subscriber from `subs`.
- *  Called when a view is unwatched, to release the parent→child retaining edge (a
- *  later arm re-`linkChild`s). The child's own down-list (`parentEdges`) stays:
- *  it's intrinsic to the view and dies with it. */
-function unlinkChild(e: LensLink): void {
-  const { parent, prevChild, nextChild } = e;
-  if (nextChild !== undefined) nextChild.prevChild = prevChild;
-  else parent.childEdgesTail = prevChild;
-  if (prevChild !== undefined) prevChild.nextChild = nextChild;
-  else parent.childEdges = nextChild;
-  e.linked = false;
-  e.prevChild = undefined;
-  e.nextChild = undefined;
+/** Register `node` on each backward parent's `_lensSubs` (the edge `resolveCone`
+ *  ascends), once, lazily on first back-write. Idempotent via `_linkedBack`. */
+function linkBack(node: Cell<unknown>): void {
+  if (node._linkedBack) return;
+  node._linkedBack = true;
+  const parent = node._bwd!.parent; // set for every mode except `pin` (parentless)
+  if (parent === undefined) return;
+  if (Array.isArray(parent))
+    for (let i = 0; i < parent.length; i++) (parent[i]!._lensSubs ??= []).push(node);
+  else (parent._lensSubs ??= []).push(node);
 }
 
 let cycle = 0;
@@ -181,18 +144,8 @@ let draining = false;
 // across calls — no per-call allocation).
 /** `backResolve` phase-1 source worklist (collect, then resolve in phase 2). */
 const backSources: Cell<unknown>[] = [];
-/** Monotone epoch stamped onto `Cell.bEpoch` during a `backResolve` collect, so
- *  diamonds visit each node once without a Set (the backward dual of `cycle`). */
-let backCycle = 0;
-/** `writeBack`'s explicit descent stack (depth-first, left-to-right), as two
- *  parallel pooled columns. Non-reentrant — a `writeBack` triggers no nested
- *  `writeBack` — so one shared stack suffices (no per-call allocation). */
-const wbNode: Cell<unknown>[] = [];
-const wbTarget: unknown[] = [];
-/** `resolveCone`'s pooled post-order frame stack: the node and its next-child
- *  cursor. Non-reentrant (no nested `resolveCone`), so shared pools suffice. */
-const rcNode: Cell<unknown>[] = [];
-const rcEdge: (LensLink | undefined)[] = [];
+/** `backResolve` phase-1 dedup of the descent (diamonds visit each node once). */
+const backVisited = new Set<Cell<unknown>>();
 
 const EMPTY_DIRTY: ReadonlySet<Cell<unknown>> = new Set();
 
@@ -215,31 +168,6 @@ interface Link {
   nextSub: Link | undefined;
   prevDep: Link | undefined;
   nextDep: Link | undefined;
-}
-
-// LensLink — the backward dual of `Link`, the one structure both backward
-// traversals ride. A lens-edge connects a `child` (a writable view) to one
-// `parent` (a back-target) at tuple position `index`. It lives in two lists,
-// the backward mirror of forward's `deps`/`subs`:
-//   child.parentEdges  (down: my back-targets)      via nextParent
-//   parent.childEdges  (up:   my lens-children)      via prevChild/nextChild
-// The down-list is built eagerly at construction (the lens topology is static,
-// unlike dynamic forward deps), append-only, and never removed — it's intrinsic
-// to the view and dies with it (so it needs no back-pointer). The up-list is
-// spliced lazily on first back-mark (`linkChild`) and removed in O(1) when a view
-// is unwatched (`unlinkChild`), mirroring forward `unlink` — hence doubly-linked.
-// `markDown`/`backResolve` descend `parentEdges`; `resolveCone` ascends `childEdges`.
-interface LensLink {
-  index: number;
-  parent: Cell<unknown>;
-  child: Cell<unknown>;
-  /** Spliced into `parent.childEdges` yet? The down-list (`parentEdges`) is
-   *  eager at construction; the up-list is lazy on first back-mark so the
-   *  parent's child order is arm-order (co-writer resolution is last-write-wins). */
-  linked: boolean;
-  nextParent: LensLink | undefined;
-  prevChild: LensLink | undefined;
-  nextChild: LensLink | undefined;
 }
 
 interface Stack<T> {
@@ -486,10 +414,8 @@ class MergeNode<T> {
 // pin) carries one; writable iff `_bwd !== undefined`. `merge` and `stateful` are
 // rare named payloads, so a plain lens leaves them `undefined`.
 class BwdSpec {
-  /** `put` returns a per-parent tuple (multi-out / stateful split) vs a single
-   *  source value (1→1). Topology lives on the cell's `parentEdges`; this only
-   *  discriminates the put shape. `merge`/`pin` ignore it. */
-  split = false;
+  /** Backward target(s): one `Cell` (1→1 / merge) or `Cell[]` (multi-out). */
+  parent: Cell<unknown> | Cell<unknown>[] | undefined = undefined;
   /** Lens `put` (dual of `getter`): `put(target)` for 1→1 / multi-out (a
    *  source-reading lens reads its parents at walk time), `put(target, sources, c)`
    *  for stateful. */
@@ -621,23 +547,14 @@ export class Cell<T = unknown> implements ReactiveNode {
   /** @internal Backward sidecar; `undefined` iff read-only. Writability is `_bwd !== undefined`. */
   _bwd: BwdSpec | undefined;
 
-  /** @internal Lens-edges to my back-targets (down); dual of `deps`. `markDown`/
-   *  `backResolve` descend this toward sources. Index-ordered. */
-  parentEdges: LensLink | undefined;
-  /** @internal */
-  parentEdgesTail: LensLink | undefined;
-  /** @internal Lens-edges to my lens-children (up); dual of `subs`. `resolveCone`
-   *  ascends this toward the armed views. */
-  childEdges: LensLink | undefined;
-  /** @internal */
-  childEdgesTail: LensLink | undefined;
+  /** @internal Backward dual of `subs`: direct lens-children for back-write cone traversal. */
+  _lensSubs: Cell<unknown>[] | undefined;
 
   /** @internal Backward flag word (`BF`), dual of forward `flags`. */
   bflags: number;
 
-  /** @internal Visit epoch for `backResolve`'s collect phase (dedups diamonds
-   *  without a Set; compared against the global `backCycle`). */
-  bEpoch: number;
+  /** @internal Guards against `linkBack` re-registering a duplicate in `_lensSubs`. */
+  _linkedBack: boolean;
 
   // Every slot assigned once, in declaration order, for a stable V8 hidden class.
   constructor(initial: T, opts?: CellOptions<T>) {
@@ -653,12 +570,9 @@ export class Cell<T = unknown> implements ReactiveNode {
     this.currentValue = initial;
     this.pendingValue = initial;
     this._bwd = undefined;
-    this.parentEdges = undefined;
-    this.parentEdgesTail = undefined;
-    this.childEdges = undefined;
-    this.childEdgesTail = undefined;
+    this._lensSubs = undefined;
     this.bflags = BF.None;
-    this.bEpoch = 0;
+    this._linkedBack = false;
     if (opts !== undefined) {
       if (opts.equals !== undefined) this._equals = opts.equals;
       if (opts.watched !== undefined) this._watched = opts.watched;
@@ -725,16 +639,6 @@ export class Cell<T = unknown> implements ReactiveNode {
 
   /** @internal */
   _unwatched(): void {
-    // Backward dual of `unlink` clearing us from each parent's `subs`: release
-    // the parent→child retaining edge (the `childEdges` up-list) so a disposed
-    // view stops being pinned by a long-lived source. Our own down-list
-    // (`parentEdges`) stays — a later arm re-links via `markDown`. Skip a still
-    // back-marked view (a pending write needs its edge); rare and bounded.
-    if (!(this.bflags & BACK_MARKED)) {
-      for (let e = this.parentEdges; e !== undefined; e = e.nextParent) {
-        if (e.linked) unlinkChild(e);
-      }
-    }
     if (this.getter !== undefined && this.depsTail !== undefined) {
       this.flags = F.Mutable | F.Dirty;
       disposeAllDepsInReverse(this);
@@ -785,8 +689,8 @@ export class Cell<T = unknown> implements ReactiveNode {
     cell.flags = F.Mutable | F.Dirty;
     cell.getter = (): T => parent.value;
     const b = (cell._bwd = new BwdSpec());
+    b.parent = parent as Cell<unknown>;
     b.merge = new MergeNode<T>(fold) as MergeNode<unknown>;
-    linkLens(cell as Cell<unknown>, parent as Cell<unknown>, 0);
     return cell as Cell<T>;
   }
 
@@ -962,7 +866,7 @@ function buildLens1<C extends Cell<any>>(
   // Source-reading lenses linearize at the parent's primal (`backPrimal`), so the
   // engine always calls the 1-arg form and never recomputes the parent's cone.
   b.put = readsSource ? (t: unknown): unknown => bwd(t, backPrimal(parent)) : bwd;
-  linkLens(cell as Cell<unknown>, parent, 0);
+  b.parent = parent;
   return cell;
 }
 
@@ -984,8 +888,7 @@ function buildLensN<C extends Cell<any>>(
   }) as () => never;
   if (bwd === undefined) return cell; // read-only derive-N
   const b = (cell._bwd = new BwdSpec());
-  b.split = true;
-  for (let i = 0; i < n; i++) linkLens(cell as Cell<unknown>, parents[i]!, i);
+  b.parent = parents;
   if (readsSource) {
     // Own reused buffer (not the getter's `vals`) to avoid aliasing; `bwd`
     // consumes it synchronously and must not retain it.
@@ -1040,8 +943,7 @@ function buildStateful<C extends Cell<any>>(
   const sc = (b.stateful = new StatefulCore(spec.init(seed), spec.step));
   const fwd = spec.fwd as (s: unknown, c: unknown) => unknown;
   b.put = spec.bwd as (t: unknown, c?: unknown) => unknown;
-  b.split = true;
-  for (let i = 0; i < n; i++) linkLens(cell as Cell<unknown>, parents[i]!, i);
+  b.parent = parents;
   cell.getter = (() => {
     for (let i = 0; i < n; i++) vals[i] = parents[i]!.value;
     // External unless the live sources still equal this lens's own last back-write.
@@ -1063,8 +965,8 @@ function buildStateful<C extends Cell<any>>(
 }
 
 // Single-source stateful lens: the `buildLens1` of the complement path, with
-// direct index-0 access. The spec stays array-shaped (`split`) for the shared
-// stateful backward path; topology is a single index-0 lens-edge.
+// direct index-0 access. The spec stays array-shaped, so `b.parent` stays an
+// array for the shared split backward path.
 // biome-ignore lint/suspicious/noExplicitAny: variance escape
 function buildStateful1<C extends Cell<any>>(
   Cls: CellCtor<C>,
@@ -1078,8 +980,7 @@ function buildStateful1<C extends Cell<any>>(
   const sc = (b.stateful = new StatefulCore(spec.init([parent.peek()]), spec.step));
   const fwd = spec.fwd as (s: unknown, c: unknown) => unknown;
   b.put = spec.bwd as (t: unknown, c?: unknown) => unknown;
-  b.split = true;
-  linkLens(cell as Cell<unknown>, parent, 0);
+  b.parent = [parent];
   const vals: unknown[] = [undefined];
   cell.getter = (() => {
     const v = (vals[0] = parent.value);
@@ -1165,7 +1066,7 @@ Object.defineProperty(Cell.prototype, "value", {
     // GetPut for a multi-parent split: absorb a write equal to the current view
     // (its `put` could redistribute sources past per-source equality). Stateful
     // excluded — peeking would step its complement.
-    if (b.split && b.stateful === undefined && this._equals(next, this.peek())) {
+    if (Array.isArray(b.parent) && b.stateful === undefined && this._equals(next, this.peek())) {
       return;
     }
     arm(this as Cell<unknown>, next);
@@ -1187,8 +1088,8 @@ function arm(node: Cell<unknown>, target: unknown): void {
 }
 
 /** MARK (push), dual of `propagate`: descend `start`'s static back-path down
- *  `parentEdges` to its sources, flag each `BF.Pending`, and wake every source's
- *  forward cone. Runs no `put`.
+ *  `_bwd.parent` to its sources, flag each `BF.Pending`, register the reverse edge
+ *  (`linkBack`), and wake every source's forward cone. Runs no `put`.
  *
  *  `BF.Pending` self-dedups: an already-marked node has its subtree marked, so
  *  descent stops (diamonds cost one visit). A sole read-only-derived parent has
@@ -1209,16 +1110,25 @@ function markDown(start: Cell<unknown>): void {
       // On the back-path. An already-marked intermediate (≠ start) has its
       // subtree marked — stop (diamond dedup).
       if (node !== start) node.bflags |= BF.Pending;
-      const pe = node.parentEdges;
-      const multi = pe !== undefined && pe.nextParent !== undefined;
-      for (let e = pe; e !== undefined; e = e.nextParent) {
-        linkChild(e); // register this view on the parent's up-list (arm-order)
-        const p = e.parent;
-        if (isReadOnlyDerived(p)) {
-          // A split routes around it; a sole parent can't.
-          if (!multi) throw new TypeError("Cannot write through to a computed");
-        } else if (next === undefined) next = p;
-        else (stack ??= []).push(p);
+      linkBack(node);
+      // `b.parent` is the back-target for every mode, so one descent covers all.
+      const parent = node._bwd!.parent;
+      if (parent !== undefined) {
+        if (Array.isArray(parent)) {
+          const multi = parent.length > 1;
+          for (let i = 0; i < parent.length; i++) {
+            const p = parent[i]!;
+            if (isReadOnlyDerived(p)) {
+              // A split routes around it; a sole parent can't.
+              if (!multi) throw new TypeError("Cannot write through to a computed");
+            } else if (next === undefined) next = p;
+            else (stack ??= []).push(p);
+          }
+        } else if (isReadOnlyDerived(parent)) {
+          throw new TypeError("Cannot write through to a computed");
+        } else {
+          next = parent;
+        }
       }
     }
     if (next !== undefined) {
@@ -1232,55 +1142,15 @@ function markDown(start: Cell<unknown>): void {
 }
 
 /** RESOLVE (pull), dual of `checkDirty`: resolve one node's whole back-cone.
- *  Ascend `childEdges` (only `BACK_MARKED` children) to the armed views,
+ *  Ascend `_lensSubs` (only `BACK_MARKED` children) to the armed views,
  *  `writeBack`ing each. Source-centric — a source reflects all its writers, so a
  *  call on it resolves every co-writer together and commits once.
  *
- *  Iterative post-order over the back-cone (was a recursion bounded by lens-nesting
- *  depth), via an explicit frame stack of {node, next-child cursor}. On entering a
- *  node (pre): clear a merge's contributions, then `writeBack` if it holds an armed
- *  target. After its children drain (post): clear `BF.Pending`, then fold a merge.
- *  Children are walked in forward `childEdges` order (so a co-writer's last write
- *  wins) and a per-call `bEpoch` dedups diamonds — the merge fold lands at its true
- *  post-order position, interleaved with sibling writes, not deferred.
- *  Idempotent, so phase-2 of `backResolve` can call it unconditionally. */
-function resolveCone(root: Cell<unknown>): void {
-  const epoch = ++backCycle;
-  root.bEpoch = epoch;
-  enterCone(root);
-  rcNode[0] = root;
-  rcEdge[0] = root.childEdges;
-  let fp = 1;
-  while (fp > 0) {
-    let e = rcEdge[fp - 1];
-    let descended = false;
-    while (e !== undefined) {
-      const c = e.child;
-      e = e.nextChild;
-      if (c.bflags & BACK_MARKED && c.bEpoch !== epoch) {
-        c.bEpoch = epoch;
-        rcEdge[fp - 1] = e; // resume here when we pop back to this frame
-        enterCone(c);
-        rcNode[fp] = c;
-        rcEdge[fp] = c.childEdges;
-        fp++;
-        descended = true;
-        break;
-      }
-    }
-    if (descended) continue;
-    // Children exhausted → post-order work for this frame's node.
-    const node = rcNode[--fp]!;
-    node.bflags &= ~BF.Pending;
-    const b = node._bwd;
-    const merge = b !== undefined ? b.merge : undefined;
-    // A merge has exactly one parent-edge; fold its gathered contributions to it.
-    if (merge !== undefined) foldMerge(node.parentEdges!.parent, merge);
-  }
-}
-
-/** `resolveCone` pre-order work: reset a merge's buffer, drive an armed target. */
-function enterCone(node: Cell<unknown>): void {
+ *  Post-order: drive own armed target first (last-writer-wins among co-writers),
+ *  recurse children, clear `BF.Pending`, then fold a merge once its contributors
+ *  have cascaded in. Recursion depth is the (small) lens-nesting depth. Idempotent,
+ *  so phase-2 can call it unconditionally. */
+function resolveCone(node: Cell<unknown>): void {
   const b = node._bwd;
   const merge = b !== undefined ? b.merge : undefined;
   if (merge !== undefined) merge.contributions.length = 0;
@@ -1288,6 +1158,15 @@ function enterCone(node: Cell<unknown>): void {
     node.bflags &= ~BF.Dirty;
     writeBack(node, node.pendingValue);
   }
+  const children = node._lensSubs;
+  if (children !== undefined) {
+    for (let i = 0; i < children.length; i++) {
+      const c = children[i]!;
+      if (c.bflags & BACK_MARKED) resolveCone(c);
+    }
+  }
+  node.bflags &= ~BF.Pending;
+  if (merge !== undefined) foldMerge(b!.parent as Cell<unknown>, merge);
 }
 
 /** PULL entry for a back-marked `start`. A source resolves its own cone; a view
@@ -1296,15 +1175,14 @@ function enterCone(node: Cell<unknown>): void {
  *
  *  Two-phase: phase 1 collects the distinct sources (clearing nothing), phase 2
  *  `resolveCone`s each. Capturing the full source set before any `writeBack` runs
- *  means a sibling commit can't drop a co-writer's source from the worklist. A
- *  per-call `bEpoch` stamp dedups the descent (diamonds visit each node once). */
+ *  means a sibling commit can't drop a co-writer's source from the worklist.
+ *  `backVisited` dedups the descent. */
 function backResolve(start: Cell<unknown>): void {
   draining = true;
   ++batchDepth;
   const prev = activeSub;
   activeSub = undefined;
   const sourcesBase = backSources.length;
-  const epoch = ++backCycle;
   try {
     if (isSource(start)) {
       resolveCone(start);
@@ -1317,15 +1195,27 @@ function backResolve(start: Cell<unknown>): void {
     let reached = false;
     for (;;) {
       let next: Cell<unknown> | undefined;
-      for (let e = node.parentEdges; e !== undefined; e = e.nextParent) {
-        const p = e.parent;
-        if (!(p.bflags & BF.Pending) || p.bEpoch === epoch) continue;
-        p.bEpoch = epoch;
-        if (isSource(p)) {
-          reached = true;
-          backSources.push(p);
-        } else if (next === undefined) next = p;
-        else (stack ??= []).push(p);
+      const b = node._bwd;
+      const parent = b !== undefined ? b.parent : undefined; // merge's parent IS b.parent
+      if (parent !== undefined) {
+        if (Array.isArray(parent)) {
+          for (let i = 0; i < parent.length; i++) {
+            const p = parent[i]!;
+            if (!(p.bflags & BF.Pending) || backVisited.has(p)) continue;
+            backVisited.add(p);
+            if (isSource(p)) {
+              reached = true;
+              backSources.push(p);
+            } else if (next === undefined) next = p;
+            else (stack ??= []).push(p);
+          }
+        } else if (parent.bflags & BF.Pending && !backVisited.has(parent)) {
+          backVisited.add(parent);
+          if (isSource(parent)) {
+            reached = true;
+            backSources.push(parent);
+          } else next = parent;
+        }
       }
       if (next !== undefined) node = next;
       else if (stack !== undefined && stack.length > 0) node = stack.pop()!;
@@ -1339,6 +1229,7 @@ function backResolve(start: Cell<unknown>): void {
     }
   } finally {
     backSources.length = sourcesBase;
+    backVisited.clear();
     activeSub = prev;
     --batchDepth;
     draining = false;
@@ -1359,113 +1250,89 @@ function resolveBackDeps(node: ReactiveNode): void {
 /** Backward commit/compute (dual of `_update`): drive a back-write of `target`
  *  toward the sources, applying each lens's `put` and staging each source as it's
  *  reached (so a later sibling composes rather than clobbers). A `SKIP` slot prunes
- *  a branch; every other slot is written verbatim, `undefined` included.
- *
- *  Iterative depth-first, left-to-right (children pushed in reverse onto the
- *  pooled `wbNode`/`wbTarget` stack), so a sibling read sees a prior sibling's
- *  staged write exactly as the old recursion did — bounded by stack memory, not
- *  the call stack. */
+ *  a branch; every other slot is written verbatim, `undefined` included. */
 function writeBack(node: Cell<unknown>, target: unknown): void {
-  wbNode[0] = node;
-  wbTarget[0] = target;
-  let top = 1;
-  while (top > 0) {
-    const cur = wbNode[--top]!;
-    const tgt = wbTarget[top];
-    if (isSource(cur)) {
-      cur._writeSource(tgt); // staged now, visible to later siblings
-      // Clear this source's `BF.Pending`, then re-assert iff a lens-child is STILL
-      // armed (an overlapping co-writer) — else that write is lost, and leaving it
-      // set unconditionally would strand `BF.Pending` on every fan-in source.
-      // Scan from the TAIL: `resolveCone` drives children head→tail, so the last
-      // still-armed co-writer sits near the tail — found in O(1) until the final
-      // one, turning a fan-in's re-assert from O(N²) into O(N). (Order is
-      // irrelevant; this is a find-any.)
-      cur.bflags &= ~BF.Pending;
-      for (let e = cur.childEdgesTail; e !== undefined; e = e.prevChild) {
-        if (e.child.bflags & BACK_MARKED) {
-          cur.bflags |= BF.Pending;
+  if (isSource(node)) {
+    node._writeSource(target); // staged now, visible to later siblings
+    // Clear this source's `BF.Pending`, then re-assert iff a lens-child is STILL
+    // armed (an overlapping co-writer) — else that write is lost, and leaving it
+    // set unconditionally would strand `BF.Pending` on every fan-in source.
+    node.bflags &= ~BF.Pending;
+    const subs = node._lensSubs;
+    if (subs !== undefined) {
+      for (let i = 0; i < subs.length; i++)
+        if (subs[i]!.bflags & BACK_MARKED) {
+          node.bflags |= BF.Pending;
           break;
         }
-      }
-      continue;
     }
-    cur.bflags &= ~BF.Pending; // passing through clears the path marker
-    const b = cur._bwd;
-    if (b === undefined) throw new TypeError("Cannot write through to a computed");
-    if (b.merge !== undefined) {
-      b.merge.contributions.push(tgt); // gathered here; `resolveCone` folds post-order
-      continue;
-    }
-    const pe = cur.parentEdges;
-    if (pe === undefined) continue; // pin sink: absorb
-    const sc = b.stateful;
-    if (b.split || sc !== undefined) {
-      // Gather ordered parents (index-ordered edges) for the tuple `put`.
-      let n = 0;
-      for (let e: LensLink | undefined = pe; e !== undefined; e = e.nextParent) n++;
-      const parents = new Array<Cell<unknown>>(n);
-      for (let e: LensLink | undefined = pe; e !== undefined; e = e.nextParent)
-        parents[e.index] = e.parent;
-      let out: ReadonlyArray<unknown>;
-      if (sc !== undefined) {
-        const vals = new Array<unknown>(n);
-        for (let i = 0; i < n; i++) vals[i] = parents[i]!.value;
-        // Step the complement to the current sources before `bwd` (so it measures
-        // from a prior sibling write, not a stale snapshot). External unless the
-        // sources still equal this lens's own last back-write.
-        const last = sc.last;
-        let external = last === undefined;
-        if (last !== undefined) {
-          for (let i = 0; i < n; i++)
-            if (vals[i] !== last[i]) {
-              external = true;
-              break;
-            }
-        }
-        sc.complement = sc.step(vals, sc.complement, external);
-        const res = (
-          b.put as (t: unknown, s: unknown, c: unknown) => StatefulBwd<unknown[], unknown>
-        )(tgt, vals, sc.complement);
-        const upd = res.updates as ReadonlyArray<unknown>;
-        // Build the committed candidate in `vals` and keep it as `last`. A `SKIP`
-        // or short-`upd` slot leaves that parent at its current `vals[i]`.
-        const um = upd.length < n ? upd.length : n;
-        for (let i = 0; i < um; i++) if (upd[i] !== SKIP) vals[i] = upd[i];
-        sc.complement = sc.step(vals, res.complement, false);
-        sc.last = vals;
-        out = upd;
-      } else {
-        out = (b.put as (t: unknown) => ReadonlyArray<unknown>)(tgt);
-      }
-      // Push non-SKIP children in REVERSE so index 0 is popped (processed) first
-      // — depth-first, left-to-right. A short `out` skips the trailing parents.
-      let wrote = false;
-      const m = out.length < n ? out.length : n;
-      for (let i = m - 1; i >= 0; i--) {
-        const u = out[i];
-        if (u !== SKIP) {
-          wrote = true;
-          wbNode[top] = parents[i]!;
-          wbTarget[top] = u;
-          top++;
-        }
-      }
-      // A stateful lens can change its VIEW through the complement alone, moving no
-      // source (a "stash"; `!wrote` ⇒ no children pushed). The forward cone never
-      // fires, so invalidate this node's cache and propagate to its observers here.
-      if (!wrote && sc !== undefined) {
-        cur.flags |= F.Dirty;
-        const subs = cur.subs;
-        if (subs !== undefined) propagate(subs, runDepth > 0, activeExcluded);
-      }
-      continue;
-    }
-    // 1→1 lens (single index-0 parent-edge).
-    wbNode[top] = pe.parent;
-    wbTarget[top] = (b.put as (t: unknown) => unknown)(tgt);
-    top++;
+    return;
   }
+  node.bflags &= ~BF.Pending; // passing through clears the path marker
+  const b = node._bwd;
+  if (b === undefined) throw new TypeError("Cannot write through to a computed");
+  if (b.merge !== undefined) {
+    b.merge.contributions.push(target); // gathered here; `resolveCone` folds post-order
+    return;
+  }
+  const parent = b.parent;
+  if (parent === undefined) return; // pin sink: absorb
+  if (Array.isArray(parent)) {
+    const n = parent.length;
+    let out: ReadonlyArray<unknown>;
+    const sc = b.stateful;
+    if (sc !== undefined) {
+      const vals = new Array<unknown>(n);
+      for (let i = 0; i < n; i++) vals[i] = parent[i]!.value;
+      // Step the complement to the current sources before `bwd` (so it measures
+      // from a prior sibling write, not a stale snapshot). External unless the
+      // sources still equal this lens's own last back-write.
+      const last = sc.last;
+      let external = last === undefined;
+      if (last !== undefined) {
+        for (let i = 0; i < n; i++)
+          if (vals[i] !== last[i]) {
+            external = true;
+            break;
+          }
+      }
+      sc.complement = sc.step(vals, sc.complement, external);
+      const res = (
+        b.put as (t: unknown, s: unknown, c: unknown) => StatefulBwd<unknown[], unknown>
+      )(target, vals, sc.complement);
+      const upd = res.updates as ReadonlyArray<unknown>;
+      // Build the committed candidate in `vals` and keep it as `last`. A `SKIP`
+      // or short-`upd` slot leaves that parent at its current `vals[i]`.
+      const um = upd.length < n ? upd.length : n;
+      for (let i = 0; i < um; i++) if (upd[i] !== SKIP) vals[i] = upd[i];
+      sc.complement = sc.step(vals, res.complement, false);
+      sc.last = vals;
+      out = upd;
+    } else {
+      out = (b.put as (t: unknown) => ReadonlyArray<unknown>)(target);
+    }
+    // A short `out` skips the trailing parents; `SKIP` skips a slot
+    let wrote = false;
+    const m = out.length < n ? out.length : n;
+    for (let i = 0; i < m; i++) {
+      const u = out[i];
+      if (u !== SKIP) {
+        wrote = true;
+        writeBack(parent[i]!, u);
+      }
+    }
+    // A stateful lens can change its VIEW through the complement alone, moving no
+    // source (a "stash"). The forward cone never fires, so invalidate this node's
+    // cache and propagate to its observers here.
+    if (!wrote && sc !== undefined) {
+      node.flags |= F.Dirty;
+      const subs = node.subs;
+      if (subs !== undefined) propagate(subs, runDepth > 0, activeExcluded);
+    }
+    return;
+  }
+  // 1→1 lens.
+  writeBack(parent, (b.put as (t: unknown) => unknown)(target));
 }
 
 /** Fold a merge's contributions once (policy; default last-writer-wins) and write
