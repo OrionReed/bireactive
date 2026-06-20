@@ -783,13 +783,7 @@ export class Cell<T = unknown> implements ReactiveNode {
   /** Endomorphic lens. A 2-arg `bwd(view, current)` consults the current
    *  source; a 1-arg `bwd(view)` reconstructs it from the view alone. */
   lens(this: Cell<T>, fwd: (v: T) => T, bwd: (target: T, current: T) => T): this {
-    return buildLens1(
-      this.constructor as CellCtor<Cell<T>>,
-      this as Cell<unknown>,
-      fwd as (v: unknown) => unknown,
-      bwd as (t: unknown, s?: unknown) => unknown,
-      bwd.length >= 2,
-    ) as this;
+    return buildLens(this.constructor as CellCtor<Cell<T>>, [this, fwd, bwd]) as this;
   }
 
   /** Read-only same-type view: the RO dual of the endo `.lens`. For a cross-type view use the typed static
@@ -831,7 +825,7 @@ export class Cell<T = unknown> implements ReactiveNode {
   static derive<C extends AnyCellCtor>(this: C, fn: () => Inner<InstanceType<C>>): InstanceType<C>;
   // biome-ignore lint/suspicious/noExplicitAny: dispatch
   static derive(this: any, ...args: any[]): any {
-    return dispatchDerive(this, args);
+    return buildDerive(this, args);
   }
 
   /** Writable lens. `Cls.lens(parent, fwd, bwd)` for one input,
@@ -862,7 +856,7 @@ export class Cell<T = unknown> implements ReactiveNode {
   ): Writable<InstanceType<C>>;
   // biome-ignore lint/suspicious/noExplicitAny: dispatch
   static lens(this: any, ...args: any[]): any {
-    return dispatchLens(this, args);
+    return buildLens(this, args);
   }
 
   /** Type predicate against this class: `Vec.is(x)` narrows `x` to `Vec`.
@@ -911,13 +905,11 @@ export function fieldOf<C extends AnyCellCtor>(
   if (ro) {
     return buildDerived(ctor, () => get(parent.value)) as InstanceType<C>;
   }
-  return buildLens1(
-    ctor,
+  return buildLens(ctor, [
     parent as Cell<unknown>,
     get,
-    (v, s) => ({ ...(s as object), [key]: v }),
-    true,
-  ) as InstanceType<C>;
+    (v: unknown, s: unknown) => ({ ...(s as object), [key]: v }),
+  ]) as InstanceType<C>;
 }
 
 // Each `new Cls()` yields the right subclass, then sets the mode fields.
@@ -933,55 +925,66 @@ function buildDerived<C extends Cell<any>>(Cls: CellCtor<C>, getter: () => unkno
   return cell;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: variance escape
-function buildLens1<C extends Cell<any>>(
-  Cls: CellCtor<C>,
-  parent: Cell<unknown>,
-  fwd: (v: unknown) => unknown,
-  bwd: (t: unknown, s?: unknown) => unknown,
-  readsSource: boolean,
-): C {
-  const cell = new Cls();
-  cell.flags = F.Mutable | F.Dirty;
-  cell.getter = (() => fwd(parent.value)) as () => never;
-  const b = (cell._bwd = new BwdSpec());
-  // Source-reading lenses linearize at the parent's primal (`backPrimal`), so the
-  // engine always calls the 1-arg form and never recomputes the parent's cone.
-  b.put = readsSource ? (t: unknown): unknown => bwd(t, backPrimal(parent)) : bwd;
-  linkLens(cell as Cell<unknown>, parent, 0);
-  return cell;
-}
-
-// biome-ignore lint/suspicious/noExplicitAny: variance escape
-function buildLensN<C extends Cell<any>>(
-  Cls: CellCtor<C>,
+// Shared N-input read getter: refill a construction-owned buffer from the parents
+// each read (no per-read alloc), then apply `fwd`. Identical hot closure whether
+// the node is a read-only derive-N or a writable split lens.
+function arrayGetter(
   parents: Cell<unknown>[],
   fwd: (vals: readonly unknown[]) => unknown,
-  bwd: ((target: unknown, vals?: readonly unknown[]) => ReadonlyArray<unknown>) | undefined,
-  readsSource: boolean,
-): C {
+): () => unknown {
   const n = parents.length;
   const vals = new Array<unknown>(n);
-  const cell = new Cls();
-  cell.flags = F.Mutable | F.Dirty;
-  cell.getter = (() => {
+  return () => {
     for (let i = 0; i < n; i++) vals[i] = parents[i]!.value;
     return fwd(vals);
-  }) as () => never;
-  if (bwd === undefined) return cell; // read-only derive-N
+  };
+}
+
+// One writable-lens constructor for both shapes. The `Array.isArray` branch is paid
+// once at construction and installs the matching specialized hot closures — scalar
+// `getter`/`put` + `BK.Lens` for 1→1, the buffer-loop getter + tuple `put` +
+// `BK.Split` for N→M — so neither hot path changes. A 2-arg call is the
+// complement-carrying form and routes to `buildStateful`. `bwd` is always present
+// (a read-only N view is a `derive`, built via `buildDerive`).
+// biome-ignore lint/suspicious/noExplicitAny: dispatch over the untyped call forms
+function buildLens<C extends Cell<any>>(Cls: CellCtor<C>, args: any[]): C {
+  const parent = args[0];
+  if (args.length === 2) {
+    const ps = Array.isArray(parent) ? (parent as Cell<unknown>[]) : [parent as Cell<unknown>];
+    return buildStateful(Cls, ps, args[1]);
+  }
+  const fwd = args[1];
+  const bwd = args[2] as (t: unknown, s?: unknown) => unknown;
+  const readsSource = (bwd as (...xs: unknown[]) => unknown).length >= 2;
+  const cell = new Cls();
+  cell.flags = F.Mutable | F.Dirty;
   const b = (cell._bwd = new BwdSpec());
-  b.kind = BK.Split;
-  for (let i = 0; i < n; i++) linkLens(cell as Cell<unknown>, parents[i]!, i);
-  if (readsSource) {
-    // Own reused buffer (not the getter's `vals`) to avoid aliasing; `bwd`
-    // consumes it synchronously and must not retain it.
-    const args = new Array<unknown>(n);
-    b.put = (target: unknown): unknown => {
-      for (let i = 0; i < n; i++) args[i] = backPrimal(parents[i]!);
-      return bwd(target, args);
-    };
+  if (Array.isArray(parent)) {
+    const parents = parent as Cell<unknown>[];
+    const n = parents.length;
+    cell.getter = arrayGetter(parents, fwd as (vals: readonly unknown[]) => unknown) as () => never;
+    b.kind = BK.Split;
+    for (let i = 0; i < n; i++) linkLens(cell as Cell<unknown>, parents[i]!, i);
+    if (readsSource) {
+      // Own reused buffer (not the getter's) to avoid aliasing; `bwd` consumes it
+      // synchronously and must not retain it.
+      const argbuf = new Array<unknown>(n);
+      const bwdN = bwd as (target: unknown, vals: readonly unknown[]) => unknown;
+      b.put = (target: unknown): unknown => {
+        for (let i = 0; i < n; i++) argbuf[i] = backPrimal(parents[i]!);
+        return bwdN(target, argbuf);
+      };
+    } else {
+      const bwd0 = bwd as (target: unknown) => unknown;
+      b.put = (target: unknown): unknown => bwd0(target);
+    }
   } else {
-    b.put = (target: unknown): unknown => bwd(target);
+    const p = parent as Cell<unknown>;
+    cell.getter = (() => (fwd as (v: unknown) => unknown)(p.value)) as () => never;
+    // Source-reading lenses linearize at the parent's primal (`backPrimal`), so the
+    // engine always calls the 1-arg form and never recomputes the parent's cone.
+    b.put = readsSource ? (t: unknown): unknown => bwd(t, backPrimal(p)) : bwd;
+    linkLens(cell as Cell<unknown>, p, 0);
   }
   return cell;
 }
@@ -1048,55 +1051,17 @@ function buildStateful<C extends Cell<any>>(
   return cell;
 }
 
-// Single-source stateful lens: the `buildLens1` of the complement path, with
-// direct index-0 access. The spec stays array-shaped (`split`) for the shared
-// stateful backward path; topology is a single index-0 lens-edge.
-// biome-ignore lint/suspicious/noExplicitAny: variance escape
-function buildStateful1<C extends Cell<any>>(
-  Cls: CellCtor<C>,
-  parent: Cell<unknown>,
-  // biome-ignore lint/suspicious/noExplicitAny: opaque spec
-  spec: StatefulLensSpec<any, any, any>,
-): C {
-  const cell = new Cls();
-  cell.flags = F.Mutable | F.Dirty;
-  const b = (cell._bwd = new BwdSpec());
-  const sc = (b.stateful = new StatefulCore(spec.init([parent.peek()]), spec.step));
-  const fwd = spec.fwd as (s: unknown, c: unknown) => unknown;
-  b.put = spec.bwd as (t: unknown, c?: unknown) => unknown;
-  b.kind = BK.Stateful;
-  linkLens(cell as Cell<unknown>, parent, 0);
-  const vals: unknown[] = [undefined];
-  cell.getter = (() => {
-    const v = (vals[0] = parent.value);
-    const lb = sc.last;
-    const external = lb === undefined || lb[0] !== v;
-    sc.complement = sc.step(vals, sc.complement, external);
-    return fwd(vals, sc.complement);
-  }) as () => never;
-  return cell;
-}
-
-// Shared runtime dispatch for `derive`/`lens` — statics pass the typed subclass,
-// free functions pass plain `Cell`, so the two forms can't drift.
-// biome-ignore lint/suspicious/noExplicitAny: dispatch
-function dispatchDerive(ctor: CellCtor<Cell<any>>, args: any[]): unknown {
-  if (args.length === 1) return buildDerived(ctor, args[0]);
-  const [parent, fn] = args;
-  if (Array.isArray(parent)) return buildLensN(ctor, parent, fn, undefined, false);
-  return buildDerived(ctor, () => fn((parent as Cell<unknown>).value));
-}
-
-// biome-ignore lint/suspicious/noExplicitAny: dispatch
-function dispatchLens(ctor: CellCtor<Cell<any>>, args: any[]): unknown {
-  const [parent, a, b] = args;
-  if (args.length === 2) {
-    const ps = Array.isArray(parent) ? (parent as Cell<unknown>[]) : [parent as Cell<unknown>];
-    return ps.length === 1 ? buildStateful1(ctor, ps[0]!, a) : buildStateful(ctor, ps, a);
-  }
-  const readsSource = (b as (...xs: unknown[]) => unknown).length >= 2;
-  if (Array.isArray(parent)) return buildLensN(ctor, parent, a, b, readsSource);
-  return buildLens1(ctor, parent, a, b, readsSource);
+// One read-only-derive constructor: a bare closure (`derive(fn)`), a single tracked
+// read (`derive(p, fn)`), or an N-parent read (`derive(ps, fn)`) — each lands in
+// `buildDerived` with the matching getter. (Writable `lens(...)` is `buildLens`;
+// statics pass the typed subclass, free functions plain `Cell`, so neither drifts.)
+// biome-ignore lint/suspicious/noExplicitAny: dispatch over the untyped call forms
+function buildDerive<C extends Cell<any>>(Cls: CellCtor<C>, args: any[]): C {
+  if (args.length === 1) return buildDerived(Cls, args[0]);
+  const parent = args[0];
+  const fn = args[1];
+  if (Array.isArray(parent)) return buildDerived(Cls, arrayGetter(parent as Cell<unknown>[], fn));
+  return buildDerived(Cls, () => fn((parent as Cell<unknown>).value));
 }
 
 // Installed on the prototype (not a class accessor): V8 JITs it better and keeps
@@ -1484,7 +1449,7 @@ export function derive<P extends readonly Read<unknown>[], R>(
 export function derive<R>(fn: () => R): Cell<R>;
 // biome-ignore lint/suspicious/noExplicitAny: dispatch
 export function derive(...args: any[]): any {
-  return dispatchDerive(CELL_CTOR, args);
+  return buildDerive(CELL_CTOR, args);
 }
 
 /** Untyped lens, inferring `R` from the closures. A 2-arg `bwd` reads the
@@ -1510,7 +1475,7 @@ export function lens<P extends readonly Read<unknown>[], R, C>(
 ): Writable<Cell<R>>;
 // biome-ignore lint/suspicious/noExplicitAny: dispatch
 export function lens(...args: any[]): any {
-  return dispatchLens(CELL_CTOR, args);
+  return buildLens(CELL_CTOR, args);
 }
 
 // Effect — one watcher class for both auto-tracked effects and explicit-topology

@@ -27,7 +27,7 @@ export type NodeSpec =
   // SKIP / short-tuple path. `fwd = sum`, `bwd = [t - Σothers, SKIP...]`.
   | { kind: "skipN"; parents: number[] }
   // Minimal complement-carrying (stateful) lens — identity through the stateful
-  // path, to fuzz `buildStateful1`/`writeBack`'s stateful branch.
+  // path, to fuzz the single-source stateful build + `writeBack`'s stateful branch.
   | { kind: "stateful1"; parent: number };
 
 export type Op =
