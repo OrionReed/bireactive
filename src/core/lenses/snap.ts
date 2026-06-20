@@ -3,8 +3,8 @@
 // speculative re-render to recover them:
 //
 //   • hullWeights — barycentric weights of a point in the convex hull of K
-//     targets (closed form for K ≤ 3, Frank–Wolfe above). Powers `d.between`'s
-//     blend and any pointer-in-hull interpolation.
+//     targets (closed form for K ≤ 3, Frank–Wolfe for K > 3). Powers
+//     `d.between`'s blend and any pointer-in-hull interpolation.
 //   • nearestIndex — the candidate nearest the pointer, with hysteresis. The
 //     "stickiness" lives in the lens complement (the sanctioned home for
 //     path-dependence), so reads stay pure.
