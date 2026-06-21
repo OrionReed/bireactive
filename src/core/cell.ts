@@ -674,6 +674,20 @@ export interface CellOptions<T = unknown> {
   unwatched?: () => void;
   /** Per-instance value equality; defaults to `Object.is`. */
   equals?: (a: T, b: T) => boolean;
+  /** Debug label; surfaces in cyclic-read errors and graph dumps (see debug.ts). */
+  name?: string;
+}
+
+/** A lens as a first-class value, unbound from any source: `get` projects A→B,
+ *  `put` writes B back into an A. Apply with `cell.through(optic)`; build with
+ *  `optic` / `iso` / `atKey` / `compose` (optic.ts). `readsSource` is `false`
+ *  only for an `iso`, letting `through` bind a cheaper 1-arg backward. */
+export interface Optic<A, B> {
+  readonly get: (a: A) => B;
+  readonly put: (b: B, a: A) => A;
+  readonly readsSource: boolean;
+  /** Compose with a following optic (this first, then `next`). */
+  through<C>(next: Optic<B, C>): Optic<A, C>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -733,6 +747,9 @@ export class Cell<T = unknown> implements ReactiveNode {
    *  the lazy provenance that replaces a value witness (see the stateful header). */
   version: number;
 
+  /** Optional debug label (`cell(0, { name })`); used by errors and graph dumps. */
+  name: string | undefined;
+
   // Every slot assigned once, in declaration order, for a stable V8 hidden class.
   constructor(initial: T, opts?: CellOptions<T>) {
     this.flags = F.Mutable;
@@ -754,10 +771,12 @@ export class Cell<T = unknown> implements ReactiveNode {
     this.bflags = BF.None;
     this.bEpoch = 0;
     this.version = 0;
+    this.name = undefined;
     if (opts !== undefined) {
       if (opts.equals !== undefined) this._equals = opts.equals;
       if (opts.watched !== undefined) this._watched = opts.watched;
       if (opts.unwatched !== undefined) this._unwatchedHook = opts.unwatched;
+      if (opts.name !== undefined) this.name = opts.name;
     }
   }
 
@@ -865,6 +884,29 @@ export class Cell<T = unknown> implements ReactiveNode {
    *  `Target.derive(src, fn)`. */
   derive(this: Cell<T>, fn: (v: T) => T): this {
     return buildDerived(this.constructor as CellCtor<Cell<T>>, () => fn(this.value)) as this;
+  }
+
+  /** Apply optic value(s) as a writable lens: `c.through(o)` ≡ `lens(c, o.get,
+   *  o.put)`; multiple optics compose left-to-right (`c.through(a, b)` = `a`
+   *  then `b`). Cross-type, unlike the endomorphic instance `.lens`. */
+  through<B>(this: Cell<T>, o: Optic<T, B>): Writable<Cell<B>>;
+  through<B, C>(this: Cell<T>, o1: Optic<T, B>, o2: Optic<B, C>): Writable<Cell<C>>;
+  through<B, C, D>(
+    this: Cell<T>,
+    o1: Optic<T, B>,
+    o2: Optic<B, C>,
+    o3: Optic<C, D>,
+  ): Writable<Cell<D>>;
+  // biome-ignore lint/suspicious/noExplicitAny: heterogeneous optic chain
+  through(this: Cell<T>, ...optics: Optic<any, any>[]): Writable<Cell<unknown>> {
+    // Fold via each optic's own `through` (no import of optic.ts → no cycle).
+    const o = optics.length === 1 ? optics[0]! : optics.reduce((a, b) => a.through(b));
+    // Preserve put arity: a source-reading optic binds 2-arg; an iso binds 1-arg
+    // (reconstruct, no source read), matching `lens`'s `bwd.length` dispatch.
+    const bwd = o.readsSource
+      ? (target: unknown, cur: unknown) => o.put(target, cur)
+      : (target: unknown) => o.put(target, undefined);
+    return lens(this as Read<unknown>, o.get, bwd) as Writable<Cell<unknown>>;
   }
 
   /** Backward fan-in: forward the identity view of its parent, backward the point
@@ -1280,7 +1322,7 @@ Object.defineProperty(Cell.prototype, "value", {
     if (this.getter !== undefined) {
       if (flags & F.RecursedCheck) {
         throw new RangeError(
-          `Cyclic computed: ${(this.constructor as { name?: string }).name ?? "?"} read its own value`,
+          `Cyclic computed: ${this.name ?? (this.constructor as { name?: string }).name ?? "?"} read its own value`,
         );
       }
       if (

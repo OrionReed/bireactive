@@ -1,3 +1,4 @@
+export { type Counts, counts, resetCounts, snapshotCounts, withCounts } from "./_counts";
 export {
   batch,
   Cell,
@@ -17,6 +18,7 @@ export {
   lens,
   type Network,
   network,
+  type Optic,
   type Read,
   reader,
   readNow,
@@ -34,10 +36,21 @@ export {
   type Writable,
   type WritableBrand,
 } from "./cell";
+export {
+  type DumpOpts,
+  dumpGraph,
+  explain,
+  kind as cellKind,
+  label as cellLabel,
+  traceWrites,
+  upstream,
+} from "./debug";
 export { bezier2, bezier3 } from "./derived-geometry";
 export * from "./lenses";
 export { each, type Lifecycle } from "./lifecycle";
+export { atKey, compose, iso, optic } from "./optic";
 export { at, fields } from "./optics";
+export { type Store, store } from "./store";
 export {
   type Equals,
   type Lerp,

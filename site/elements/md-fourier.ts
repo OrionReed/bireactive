@@ -1,5 +1,5 @@
 // Time ↔ frequency as a unitary change-of-basis lens: the waveform is
-// `coeffs.lens(synthesize, analyze)`, a perfectly invertible transform pair.
+// `coeffs.through(iso(synthesize, analyze))`, a perfectly invertible transform.
 
 import {
   cell,
@@ -7,6 +7,7 @@ import {
   Diagram,
   derive,
   drag,
+  iso,
   label,
   line,
   type Mount,
@@ -64,9 +65,10 @@ export class MdFourier extends Diagram {
 
     const init = new Array<number>(K).fill(0);
     init[0] = 1;
-    // Canonical = harmonic amplitudes; the waveform is a lens onto it.
+    // Canonical = harmonic amplitudes; the waveform is a lens onto it. The
+    // transform pair is an exact inverse, so it reads as an `iso`.
     const a = cell([...init]);
-    const samples = a.lens(synthesize, sNew => analyze(sNew));
+    const samples = a.through(iso(synthesize, analyze));
 
     s(line(vec(WAVE_X0, WAVE_CY), vec(WAVE_X1, WAVE_CY), { thin: true, opacity: 0.4 }));
     const waveD = () => {

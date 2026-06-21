@@ -1,16 +1,17 @@
 /** @jsxImportSource @bireactive */
-// RGB ⇌ HSV picker as one bidirectional graph. Three cells hold hue/saturation/
-// value in their *home* scales (h ∈ [0, 360], s, v ∈ [0, 100]); a single
-// object-keyed lens derives RGB in [0, 255] forward (hsvToRgb) and inverts it
-// backward (rgbToHsv). `fields(rgb)` exposes the writable r/g/b channels, the
-// hex input is a parse/print lens, and every control is a `lens=` terminal on
-// the one graph — no per-control event/effect wiring, no value↔display scaling.
+// RGB ⇌ HSV picker as one bidirectional graph. An HSV source cell holds hue/
+// saturation/value in their *home* scales (h ∈ [0, 360], s, v ∈ [0, 100]); a
+// single lens derives RGB in [0, 255] forward (hsvToRgb) and inverts it backward
+// (rgbToHsv). `fields()` splits each side into writable channel cells — symmetric
+// across the source and the view — the hex input is an `optic` applied with
+// `.through`, and every control is a `lens=` terminal on the one graph: no
+// per-control event/effect wiring, no value↔display scaling.
 //
-// HSV is degenerate where RGB is achromatic: hue is undefined at grey,
-// saturation at black. The backward omits those keys (≡ SKIP) so the stored
-// hue/saturation survive a round-trip through grey/black.
+// HSV is degenerate where RGB is achromatic: hue is undefined at grey, saturation
+// at black. The backward reads the current HSV and keeps the stored hue/saturation
+// there, so they survive a round-trip through grey/black.
 
-import { type Cell, cell, fields, lens, type Writable } from "@bireactive";
+import { type Cell, cell, fields, lens, optic, type Writable } from "@bireactive";
 import { css } from "./base-element";
 
 /** RGB (each [0, 255]) → HSV (h ∈ [0, 360], s, v ∈ [0, 100]). */
@@ -54,6 +55,7 @@ function hsvToRgb(h: number, s: number, v: number) {
   return { r: (r + m) * 255, g: (g + m) * 255, b: (b + m) * 255 };
 }
 
+type Hsv = { h: number; s: number; v: number };
 type Rgb = { r: number; g: number; b: number };
 
 const hx = (n: number) => Math.round(n).toString(16).padStart(2, "0");
@@ -78,26 +80,26 @@ function Slider(props: { name: string; max: number; unit: string; lens: Writable
 }
 
 export default function ColorPicker() {
-  const seed = rgbToHsv(0x87, 0x3c, 0x3c); // #873c3c — a desaturated red
-  const h = cell(seed.h);
-  const s = cell(seed.s);
-  const v = cell(seed.v);
+  // HSV source in home scales (#873c3c — a desaturated red).
+  const hsv = cell<Hsv>(rgbToHsv(0x87, 0x3c, 0x3c));
 
-  // HSV (source) → RGB (view). The backward omits hue at grey / saturation at
-  // black (≡ SKIP), leaving those source cells put through achromatic colours.
+  // HSV (source) → RGB (view). The backward reads the current HSV and keeps the
+  // stored hue at grey / saturation at black, so they survive achromatic colours.
   const rgb = lens(
-    { h, s, v },
+    hsv,
     ({ h, s, v }) => hsvToRgb(h, s, v),
-    (target): Partial<{ h: number; s: number; v: number }> => {
+    (target: Rgb, cur: Hsv): Hsv => {
       const c = rgbToHsv(target.r, target.g, target.b);
-      const out: Partial<{ h: number; s: number; v: number }> = { v: c.v };
-      if (c.s !== 0) out.h = c.h;
-      if (c.v !== 0) out.s = c.s;
-      return out;
+      return { h: c.s !== 0 ? c.h : cur.h, s: c.v !== 0 ? c.s : cur.s, v: c.v };
     },
   );
+
+  // `fields` splits both sides into writable channel cells; the hex terminal is an
+  // optic (print forward, parse backward) applied with `.through`. Invalid text is
+  // a no-op write — the input's focus guard holds it until it parses.
+  const { h, s, v } = fields(hsv);
   const { r, g, b } = fields(rgb);
-  const hexed = lens(rgb, toHex, (text: string, cur: Rgb) => parseHex(text) ?? cur);
+  const hex = rgb.through(optic(toHex, (text: string, cur: Rgb) => parseHex(text) ?? cur));
 
   return (
     <div class="picker">
@@ -106,7 +108,7 @@ export default function ColorPicker() {
         class="swatch"
         style={() => `background:rgb(${rgb.value.r} ${rgb.value.g} ${rgb.value.b})`}
       />
-      <input class="hex" lens={hexed} />
+      <input class="hex" lens={hex} />
       <fieldset>
         <legend>RGB</legend>
         <Slider name="Red" max={255} unit="" lens={r} />
