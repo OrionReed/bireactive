@@ -85,20 +85,17 @@ describe("footgun: numeric / symbol keys", () => {
   });
 });
 
-describe("footgun: spread on arrays (semantic difference)", () => {
-  it("spread on array preserves array prototype only sometimes", () => {
+describe("array-aware field writes", () => {
+  it("plain object-spread on an array would drop the Array prototype (the trap)", () => {
     const arr = [10, 20, 30];
     const spread = { ...arr, 0: 99 };
-    // The result is an OBJECT, not an array, because object-spread
-    // discards the array prototype.
+    // Pure-JS fact: object-spreading an array yields a plain record. The field
+    // setter must NOT do this — see the next test for the array-aware path.
     expect(Array.isArray(spread)).toBe(false);
     expect(spread).toEqual({ 0: 99, 1: 20, 2: 30 });
-    // This means writing to an array via the field-fast-path SETTER
-    // (which uses object-spread) silently converts the array to a
-    // plain object. THIS IS A REAL FOOTGUN.
   });
 
-  it("FOOTGUN: writing through field path ON AN ARRAY converts to object", () => {
+  it("writing through a field path on an array keeps it an array", () => {
     type S = { items: number[] };
     const root = cell<S>({ items: [10, 20, 30] });
     const itemsLens = fieldOf(root, "items", Cell as new (...args: never[]) => Cell<number[]>);
@@ -106,11 +103,10 @@ describe("footgun: spread on arrays (semantic difference)", () => {
 
     expect(Array.isArray(root.value.items)).toBe(true);
     (idx0 as unknown as { value: number }).value = 99;
-    // After the write, items is no longer an array — it's a plain
-    // object. The spread-replace at the items level uses {...arr, [k]: v}
-    // which loses the Array prototype.
-    expect(Array.isArray(root.value.items)).toBe(false);
-    // Still indexable, but missing array methods, length tracking, etc.
-    expect((root.value.items as unknown as Record<number, number>)[0]).toBe(99);
+    // The setter clones array parents via `slice` (not object-spread), so the
+    // Array prototype, `length`, and methods all survive the write.
+    expect(Array.isArray(root.value.items)).toBe(true);
+    expect(root.value.items).toEqual([99, 20, 30]);
+    expect(root.value.items.length).toBe(3);
   });
 });

@@ -1,0 +1,94 @@
+// doc-cell.ts — bridge an Automerge document to the reactive graph.
+//
+// An Automerge `DocHandle` is a writable source of truth that lives outside the
+// cell graph: it emits `change` events and is mutated through `handle.change`.
+// `connectDoc` wires it to a `Writable<Cell<T>>` in both directions so the doc
+// becomes an ordinary cell you can lens, `store`, and bind in JSX.
+//
+//   doc → cell : on every `change`, snapshot the doc into the cell.
+//   cell → doc : an effect mirrors each commit back via `reconcile` (minimal
+//                ops, so concurrent edits merge).
+//
+// The cell uses structural equality, so the two directions converge in one hop:
+// a write reconciles into the doc, the doc echoes a `change`, the snapshot is
+// deep-equal to what we already hold, and the engine stops. No flags, no echo
+// storm. Because the doc is the apex, many independent lens/`store` views can
+// hang off one `connectDoc` — that's the symmetric, no-primary topology: the
+// CRDT is the shared core, every schema is just a projection.
+
+import type { DocHandle } from "@automerge/automerge-repo";
+import { type Cell, cell, effect, type Writable } from "../core/cell";
+import { type Store, store } from "../core/store";
+import { reconcile } from "./reconcile";
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+  const aArr = Array.isArray(a);
+  if (aArr !== Array.isArray(b)) return false;
+  const ak = Object.keys(a as object);
+  const bk = Object.keys(b as object);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) {
+    if (!Object.hasOwn(b as object, k)) return false;
+    if (!deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]))
+      return false;
+  }
+  return true;
+}
+
+/** Two-way bridge between an Automerge doc and the reactive graph. */
+export interface DocBridge<T> {
+  /** Source cell mirroring the doc; writes (direct or via a lens) flow back to the CRDT. */
+  cell: Writable<Cell<T>>;
+  /** Deep `store` view over `cell` — `bridge.store.a.b.value = x` commits to the doc. */
+  store: Store<T>;
+  /** Point the same cell at a different doc, keeping every bound lens/view alive. */
+  retarget: (handle: DocHandle<T>) => void;
+  /** Detach both directions (call from `disconnectedCallback`). */
+  dispose: () => void;
+}
+
+/** Wire an existing cell to a handle in both directions; returns an unbind. */
+function bind<T extends object>(c: Writable<Cell<T>>, handle: DocHandle<T>): () => void {
+  const onChange = (): void => {
+    c.value = structuredClone(handle.doc()) as T;
+  };
+  handle.on("change", onChange);
+  const stop = effect(() => {
+    const next = c.value;
+    handle.change((d: T) => reconcile(d, next));
+  });
+  return () => {
+    stop();
+    handle.off("change", onChange);
+  };
+}
+
+/** Connect a `DocHandle` to a reactive cell + store, syncing both ways. */
+export function connectDoc<T extends object>(handle: DocHandle<T>): DocBridge<T> {
+  const c = cell<T>(structuredClone(handle.doc()) as T, { equals: deepEqual, name: "doc" });
+  let unbind = bind(c, handle);
+  return {
+    cell: c,
+    store: store(c),
+    retarget: next => {
+      unbind();
+      // Seed the cell from the new doc *before* re-binding, so the cell→doc
+      // effect doesn't push the old value into the freshly targeted doc.
+      c.value = structuredClone(next.doc()) as T;
+      unbind = bind(c, next);
+    },
+    dispose: () => unbind(),
+  };
+}
+
+/** Doc as a writable cell (page-lifetime; use {@link connectDoc} when you need disposal). */
+export function docCell<T extends object>(handle: DocHandle<T>): Writable<Cell<T>> {
+  return connectDoc(handle).cell;
+}
+
+/** Doc as a deep store (page-lifetime; use {@link connectDoc} when you need disposal). */
+export function docStore<T extends object>(handle: DocHandle<T>): Store<T> {
+  return connectDoc(handle).store;
+}

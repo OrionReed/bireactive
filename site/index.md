@@ -770,3 +770,28 @@ const spec = select(mode, by); // closest snaps, vary frees — no rewiring
 ```
 
 <md-spec></md-spec>
+
+
+## Collaborative Documents
+
+We can create an adapter to [Automerge](https://automerge.org/) CRDT documents, making automerge docs into writable cells or a deep `store`. 
+
+Below there are 3 UIs with different schemas. It is not too hard to make multiple UIs for the same document, but because lenses compose, we can chain and stack lensed views together arbitrarily. So here we have views **A ▸ B ▸ C** where each is a collection of lenses over the previous ones:
+
+- **canvas** — a spatial view of the doc (A): drag a shape to write its `x/y`.
+- **inspector** — one card per shape, each bound to `shapeLens(doc, id)` (B), with raw `x/y/w/h/hue/sat/lum` controls composed on top of it.
+- **spreadsheet** — a view *of the inspector*: the same shape lens, but reprojected through a different basis — centre, area, aspect ratio, hex (C).
+
+```ts
+const shape  = doc.through(byId(id));         // A ▸ B   the inspector's per-shape lens
+const area   = shape.through(areaOptic);      // B ▸ C   edit it and w·h scale, aspect held
+const hex    = shape.through(hexOptic);        // B ▸ C   the HSL triple as one #rrggbb
+```
+
+So editing `area` in the spreadsheet scales the box on the canvas; nudging a slider in the inspector moves the centre in the sheet. Edit in any view and the whole chain runs both ways — across tabs too. Copy the scene's id (shown under the canvas) into a second tab to collaborate.
+
+<md-scene-canvas></md-scene-canvas>
+
+<md-scene-inspector></md-scene-inspector>
+
+<md-scene-table></md-scene-table>

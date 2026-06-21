@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { cell, lens } from "../cell";
 import { dumpGraph, explain, label, traceWrites } from "../debug";
 import { atKey, compose, iso, optic } from "../optic";
+import { at } from "../optics";
 import { store } from "../store";
 
 type Rgb = { r: number; g: number; b: number };
@@ -98,6 +99,17 @@ describe("lens-backed store", () => {
     expect(s.value.user.name).toBe("ada lovelace");
     expect(s.value.user.age).toBe(36);
     expect(s.value.theme).toEqual({ dark: false });
+  });
+
+  it("at over an array element preserves array type on write", () => {
+    // Object-spread cloning would demote the array to a plain record; `at` must
+    // keep it an array so list-shaped docs survive a field write.
+    const c = cell<number[]>([1, 2, 3]);
+    const one = at(c, 1);
+    expect(one.value).toBe(2);
+    one.value = 20;
+    expect(Array.isArray(c.value)).toBe(true);
+    expect(c.value).toEqual([1, 20, 3]);
   });
 
   it("memoizes child stores and field lenses (stable identity)", () => {

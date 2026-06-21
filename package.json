@@ -11,6 +11,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./automerge": {
+      "types": "./dist/automerge/index.d.ts",
+      "import": "./dist/automerge/index.js"
+    },
     "./jsx-runtime": {
       "types": "./dist/jsx-runtime.d.ts",
       "import": "./dist/jsx-runtime.js"
@@ -48,6 +52,9 @@
     "postversion": "npm publish && git push --follow-tags"
   },
   "dependencies": {
+    "@automerge/automerge-repo": "^2.6.0-subduction.34",
+    "@automerge/automerge-repo-network-broadcastchannel": "^2.6.0-subduction.34",
+    "@automerge/automerge-repo-storage-indexeddb": "^2.6.0-subduction.34",
     "prism-esm": "^1.29.0-fix.6",
     "temml": "^0.13.3"
   },
@@ -69,6 +76,8 @@
     "typescript": "^6.0.3",
     "vite": "^7.3.3",
     "vite-node": "^5.3.0",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.6.0",
     "vitepress": "^1.6.4",
     "vitest": "^4.1.7"
   },

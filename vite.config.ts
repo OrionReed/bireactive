@@ -1,5 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
+import topLevelAwait from "vite-plugin-top-level-await";
+import wasm from "vite-plugin-wasm";
 import { buildSite, PROD_BASE } from "./site/build";
 
 const src = fileURLToPath(new URL("./src", import.meta.url));
@@ -12,6 +14,13 @@ export default defineConfig(({ command }) => ({
     alias: {
       "@bireactive": src,
     },
+  },
+  // Automerge's `initSubduction()` dynamically imports a WASM module via the
+  // ESM-integration proposal (`import * from "*.wasm"`); vite-plugin-wasm +
+  // top-level-await handle it. Exclude the WASM package from pre-bundling so
+  // esbuild doesn't try to optimize the binary.
+  optimizeDeps: {
+    exclude: ["@automerge/automerge-subduction"],
   },
   server: {
     port: 5555,
@@ -56,6 +65,8 @@ export default defineConfig(({ command }) => ({
     jsxImportSource: "@bireactive",
   },
   plugins: [
+    wasm(),
+    topLevelAwait(),
     {
       name: "bireactive-site",
       // `buildStart` writes the root index.html that vite consumes as the

@@ -1021,11 +1021,17 @@ export function fieldOf<C extends AnyCellCtor>(
   if (ro) {
     return buildDerived(ctor, () => get(parent.value)) as InstanceType<C>;
   }
-  return buildLens(ctor, [
-    parent as Cell<unknown>,
-    get,
-    (v: unknown, s: unknown) => ({ ...(s as object), [key]: v }),
-  ]) as InstanceType<C>;
+  // Spread-replace put, array-aware: cloning an array with object spread would
+  // demote it to a plain record, so copy via `slice` and set the index.
+  const put = (v: unknown, s: unknown): unknown => {
+    if (Array.isArray(s)) {
+      const next = s.slice();
+      next[key as number] = v;
+      return next;
+    }
+    return { ...(s as object), [key]: v };
+  };
+  return buildLens(ctor, [parent as Cell<unknown>, get, put]) as InstanceType<C>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

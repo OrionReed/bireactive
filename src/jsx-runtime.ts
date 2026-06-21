@@ -9,7 +9,7 @@
 // leaf. Components are plain `props → Node`; reactive expressions are passed as
 // thunks (`{() => expr}`) or cells, since there is no compile step to wrap them.
 
-import { Cell, effect, type Writable } from "./core/cell";
+import { Cell, effect, untracked, type Writable } from "./core/cell";
 
 /** Marker for `<>…</>`; lowered to `jsx(Fragment, …)`. */
 export const Fragment = Symbol.for("bireactive.jsx.Fragment");
@@ -23,6 +23,13 @@ let currentOwner: Disposer[] | null = null;
 
 function track(d: Disposer): void {
   currentOwner?.push(d);
+}
+
+/** Register a teardown with the active scope (`mount` / `scope` / an `each`
+ *  item) — for raw `effect`s or listeners created in a component body, which
+ *  the JSX helpers otherwise track for you. No-op outside a scope. */
+export function onCleanup(fn: Disposer): void {
+  track(fn);
 }
 
 type Props = Record<string, unknown> & { children?: unknown };
@@ -143,18 +150,77 @@ function bindLens(el: HTMLInputElement, lens: Writable<Cell<unknown>>): void {
 /** Render `component` into `host`, collecting reactive teardowns. The returned
  *  disposer releases them — call it on unmount (e.g. `disconnectedCallback`). */
 export function mount(component: () => Node, host: Node): Disposer {
+  const [node, dispose] = scope(component);
+  host.appendChild(node);
+  return dispose;
+}
+
+/** Run `fn` under a fresh reactive scope, returning its result and a disposer
+ *  for every effect created during it — `mount` without a host. `each` gives
+ *  each keyed item its own scope so its effects die when the item leaves. */
+export function scope<T>(fn: () => T): [T, Disposer] {
   const prev = currentOwner;
   const owner: Disposer[] = [];
   currentOwner = owner;
   try {
-    host.appendChild(component());
+    return [
+      fn(),
+      () => {
+        for (const d of owner) d();
+        owner.length = 0;
+      },
+    ];
   } finally {
     currentOwner = prev;
   }
-  return () => {
-    for (const d of owner) d();
-    owner.length = 0;
-  };
+}
+
+/** Keyed list rendering: keep `parent`'s children in sync with a reactive array,
+ *  reusing and reordering nodes by key, disposing those that leave. Each item is
+ *  rendered in its own `scope` (untracked from the list effect, so item-internal
+ *  reads don't retrigger the whole list). Attach via `ref`:
+ *  `<div ref={el => each(el, items, s => s.id, render)} />`. */
+export function each<T>(
+  parent: Element,
+  items: Cell<T[]> | (() => readonly T[]),
+  key: (item: T, index: number) => string,
+  render: (item: T, index: number) => Node,
+): void {
+  const read = typeof items === "function" ? items : () => items.value;
+  const cache = new Map<string, { node: Node; dispose: Disposer }>();
+  const stop = effect(() => {
+    const arr = read();
+    const seen = new Set<string>();
+    const nodes: Node[] = [];
+    arr.forEach((item, i) => {
+      const k = key(item, i);
+      seen.add(k);
+      let entry = cache.get(k);
+      if (entry === undefined) {
+        const [node, dispose] = untracked(() => scope(() => render(item, i)));
+        entry = { node, dispose };
+        cache.set(k, entry);
+      }
+      nodes.push(entry.node);
+    });
+    for (const [k, entry] of cache) {
+      if (!seen.has(k)) {
+        entry.dispose();
+        cache.delete(k);
+      }
+    }
+    // Only touch the DOM when the ordered node set actually changed — re-inserting
+    // identical children mid-interaction would steal focus and reset clicks.
+    const cur = parent.childNodes;
+    let same = cur.length === nodes.length;
+    for (let i = 0; same && i < nodes.length; i++) same = cur[i] === nodes[i];
+    if (!same) parent.replaceChildren(...nodes);
+  });
+  track(() => {
+    stop();
+    for (const entry of cache.values()) entry.dispose();
+    cache.clear();
+  });
 }
 
 // JSX typing. Tag names are checked against the DOM tag maps; attribute value
