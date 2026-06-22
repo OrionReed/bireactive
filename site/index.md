@@ -9,6 +9,7 @@ description: A bi-directional reactive programming library.
 
 ## Introduction
 
+### Reactive systems
 Ordinary reactive systems (often called "signals") flows one way: write an input, everything derived updates. Reactive systems assure ~4 properties:
 
 1. **Minimality** — only the affected nodes recompute.
@@ -30,6 +31,15 @@ c.value = 100; // → 100°C = 212°F
 f.value = 32;  // Error: cannot write to a derived value.
 ```
 
+### Problems with two-way binding
+
+// two-way binding stuff
+
+### Lenses
+// lens stuff
+
+### Bi-reactivity (reactive lenses)
+
 *Bi-directional reactivity* adds backward edges, allowing us to write a derived value and have the change propagate backward.
 ```ts
 const c = cell(20);
@@ -43,11 +53,9 @@ f.value = 32;  // → 0°C = 32°F
 
 Bi-directional reactivity maintains the same properties as ordinary reactivity. *Propagation* is still acyclic by treating the backward and forward directions as seperate directed acyclic graphs.
 
-## Lenses & Bi-directional Transformations
+## Kinds of lenses
 
-// brief intro to bi-directional transformations in general and lenses in particular. and an apology for missapropriating the term lens... in many domains, an exact "canonical inverse" is under-defined...
-
-## Examples
+### Bijections
 
 ```ts
 let p = a;
@@ -55,14 +63,6 @@ for (let i = 0; i < N; i++) p = p.rotate(θ, pivot).scale(k, pivot);
 ```
 
 <md-invertible></md-invertible>
-
-```ts
-const angle = time.affine(τ / period, offset);
-const pos   = polar(sun, dist, angle); // drag any body to scrub time
-```
-
-<md-solar-system></md-solar-system>
-
 
 Each field is a lens onto one SI-base cell, `si.lens(u.fromBase, u.toBase)`.
 
@@ -81,13 +81,32 @@ Coordinate spaces via a `world.lens(fwd, bwd)`: euclidean, oblique, polar, log-p
 
 <md-coordinate-spaces></md-coordinate-spaces>
 
+### Lossy lenses
+
+`clamp`, `quantize`, and `snap` discard information idempotently, so the backward direction just projects again:
+
+```ts
+const t  = num(0.5);
+const tC = t.clamp(lo, hi); // lo, hi can be cells too
+const tQ = tC.quantize(0.1);
+```
+
+<md-clamp-quantize></md-clamp-quantize>
+
+```ts
+const angle = time.affine(τ / period, offset);
+const pos   = polar(sun, dist, angle); // drag any body to scrub time
+```
+
+<md-solar-system></md-solar-system>
+
+
+
 RGB ⇌ HSV, bidirectionally:
 
 <md-color-hsv></md-color-hsv>
 
 <md-gears></md-gears>
-
-
 
 
 Exact bijections — reflections, rotations, scales, affine maps, polar/cartesian, unit conversions — have closed-form inverses.
@@ -109,18 +128,7 @@ const c = b.affine(-1, L₂);
 <md-conformal-disc></md-conformal-disc>
 
 
-## Lossy Transformations
-`clamp`, `quantize`, and `snap` discard information idempotently, so the backward direction just projects again:
-
-```ts
-const t  = num(0.5);
-const tC = t.clamp(lo, hi); // lo, hi can be cells too
-const tQ = tC.quantize(0.1);
-```
-
-<md-clamp-quantize></md-clamp-quantize>
-
-## Transforming between types
+### Cross-type lenses
 
 An edge's two ends needn't share a type. With a boolean target, forward is a predicate (`v > t`, `box.contains(p)`, `a ≈ b`) and backward nudges the source to satisfy it:
 
@@ -135,7 +143,7 @@ same idea but with a `(Box, Box) ⇌ RCC-8` relation.
 
 <md-rcc8></md-rcc8>
 
-## 1-1, N-1, and M-N relationships
+### 1-1, N-1, and M-N lenses
 
 A residual edge loses information but keeps the lost part in the source. A centroid reads as the average of its points; writing it moves them all evenly.
 
@@ -166,10 +174,9 @@ const { center, radius }   = bestFitCircle(points);
 
 <md-traits-cross-domain></md-traits-cross-domain>
 
+### "Symmetric" lenses
 
-
-
-
+// lenses that need complement state
 
 ## Collections & Hierarchical Values
 
@@ -199,15 +206,15 @@ A `Flags` value is one integer with named bits; `flag(name)` is a `Bool` lens ov
 <md-budget-tree></md-budget-tree>
 
 
-A `coll(items)` holds stable element handles — records of cells — and each view is a *writable* structural lens.
+An array cell, `arr(items)`, has writeable lens views (`filter` / `sortBy` / `groupBy`) allowing you to do things like:.
 
 ```ts
-const visible = tasks.filter(is(c => c.done, false));
-const board   = visible.groupBy(c => c.status, { order: COLUMNS, sort: c => c.rank });
+const visible = tasks.filter(is(c => c.value.done, false));
+const board   = visible.groupBy(c => c.value.status, { order: COLUMNS });
 ```
 
 
-The predicate that derives the view, `is(c => c.done, false)` runs forward (test) and backward (assert).
+The predicate that derives the view, `is(c => c.value.done, false)`, runs forward (test) and backward (assert). A drop is `board.move(card, column, i)`: its backward pass writes the group field, splices the base order and asserts the filter.
 
 <md-kanban></md-kanban>
 
@@ -226,11 +233,11 @@ A `Template` is a multi-parent lens over typed slot cells — `lit₀ slot₀ li
 <md-route-params></md-route-params>
 
 
-Strings, arrays, and sets can't recover dropped detail from the result alone, so each cell carries a private _complement_ state. Editing any pane updates the source; the detail each projection dropped is recovered via the complement state.
+Strings can't recover dropped detail from the result alone, so a lossy projection carries a private _complement_ state. Editing any pane updates the source; the detail each projection dropped is recovered via the complement.
 
 <md-string-pipeline></md-string-pipeline>
 
-`trim` stores the padding, `lowercase` a case mask, `words` the separator runs, and so on.
+`Str` has `trim` / `reverse` / `slice` / `split`. Where `split(/\s+/)` returns an `Arr` of positional segment lenses, so editing a word, or adding/removing/reordering one, rewrites the source string.
 
 Here is a (slightly broken) attempt to reactively edit multiple syntaxes of JSON, YAML, TOML, and EDN.
 
@@ -595,7 +602,7 @@ The runtime's test suite runs in the browser on a fresh `Anim` driven by `step(d
 
 <md-runtime-tests></md-runtime-tests>
 
-# Misc ~~~~~~~~~~~~~~~~~
+## Misc ~~~~~~~~~~~~~~~~~
 
 Loose demos that may not survive the final cut.
 
@@ -724,9 +731,12 @@ d.closest([...]); // pick the smallest residual          d.between(pointer, [...
 d.whenFar(near, far, r); // switch on distance            d.withFloating(pointer, b); // float the handle
 ```
 
+`order.indexOf(tile)` is a *writable* `Num` lens
+over it (read = the index, write = a reorder.
+
 ```ts
-// reorder: dragging a tile reinserts it at each slot — the reachable states
-d.withFloating(pointer, d.closest(states.map(st => d.fixed(pointer, st, locate))));
+const idx = order.indexOf(tile);          // Writable<Num> — read the index, write a reorder
+const pos = Vec.lens(idx, place, locate); // one layout map: forward renders, backward locates
 ```
 
 <md-reorder></md-reorder>

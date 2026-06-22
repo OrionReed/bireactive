@@ -35,6 +35,14 @@ export {
 } from "./memory";
 export { type ClosestOpts, hullWeights, nearestIndex } from "./snap";
 export {
+  applyCaseMask,
+  applyCasePattern,
+  caseFold,
+  caseMaskOf,
+  parseWords,
+  rebuildWords,
+} from "./text";
+export {
   bundle,
   type FactorOpts,
   type FactorResult,

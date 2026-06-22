@@ -68,6 +68,15 @@ export {
   type Traits,
 } from "./traits";
 export { Anchor, Dir } from "./values/anchor";
+export {
+  Arr,
+  allPass,
+  arr,
+  type CellPred,
+  type Group,
+  GroupArr,
+  is,
+} from "./values/arr";
 export { Audio, type AudioClip, audio, stamp as audioStamp } from "./values/audio";
 export { Bool, bool } from "./values/bool";
 export {

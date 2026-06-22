@@ -1,28 +1,28 @@
-// A kanban where every view is one `Coll<Card>` seen through a different
+// A kanban where every view is one `Arr<Card>` seen through a different
 // *writable* structural lens. You edit the view, not the source: a drag is
 // `board.move(card, column, index)` — the lens's backward pass writes the
-// card's `status` (the group key), its `rank` (the order field), and, since
-// the board is also `filter`ed, asserts whatever the filter demands
-// (assignee, not-done). One call; the table re-sorts, the timeline slides,
-// the tallies move. Add is `board.insert`, delete is `tasks.remove`. The
-// renderer never names a field — the chain owns the backward writes.
+// card's `status` (the group key), splices the base order (the position is
+// structural, not a rank field), and, since the board is also `filter`ed,
+// asserts whatever the filter demands (assignee, not-done). One call; the
+// table re-sorts, the timeline slides, the tallies move. Add is
+// `board.insert`, delete is `tasks.remove`. The renderer never names a field
+// — the chain owns the backward writes.
 
 import {
+  type Arr,
+  arr,
   Bool,
   batch,
   bool,
   type Cell,
-  type Coll,
   cell,
-  coll,
   derive,
   effect,
-  type GroupView,
+  type GroupArr,
   type Num,
   num,
   type Str,
   str,
-  type View,
   type Writable,
 } from "@bireactive";
 import { BaseElement, css } from "./base-element";
@@ -40,7 +40,6 @@ interface Card {
   priority: Writable<Num>;
   estimate: Writable<Num>;
   due: Writable<Num>;
-  rank: Writable<Num>;
   /** Bool lens over `status`: true ⟺ "done"; writing rewrites the column. */
   done: Writable<Bool>;
 }
@@ -72,7 +71,6 @@ const card = (
   priority: number,
   estimate: number,
   due: number,
-  rank: number,
 ): Card => {
   const statusCell = str(status);
   return {
@@ -83,7 +81,6 @@ const card = (
     priority: num(priority),
     estimate: num(estimate),
     due: num(due),
-    rank: num(rank),
     done: Bool.lens(
       statusCell,
       s => s === "done",
@@ -93,20 +90,20 @@ const card = (
 };
 
 const SEED = (): Card[] => [
-  card("Design landing page", "todo", "Grace", 2, 5, 1, 1),
-  card("Set up CI pipeline", "doing", "Linus", 1, 3, 0, 1),
-  card("Write API docs", "todo", "Ada", 0, 2, 4, 2),
-  card("Fix auth redirect bug", "doing", "Ada", 2, 2, 1, 2),
-  card("Migrate to Postgres", "todo", "Rich", 2, 8, 3, 3),
-  card("Add dark mode", "done", "Grace", 0, 3, 0, 1),
-  card("Refactor cell engine", "doing", "Linus", 1, 5, 5, 3),
-  card("Onboarding emails", "todo", "Ada", 1, 1, 6, 4),
-  card("Load-test checkout", "todo", "Rich", 2, 3, 8, 5),
-  card("Ship release notes", "done", "Grace", 0, 1, 2, 2),
-  card("Audit dependencies", "doing", "Rich", 0, 2, 7, 4),
-  card("Mobile nav polish", "todo", "Grace", 1, 2, 9, 6),
-  card("Cache invalidation", "done", "Linus", 2, 5, 1, 3),
-  card("Triage inbox", "doing", "Ada", 0, 1, 10, 5),
+  card("Design landing page", "todo", "Grace", 2, 5, 1),
+  card("Set up CI pipeline", "doing", "Linus", 1, 3, 0),
+  card("Write API docs", "todo", "Ada", 0, 2, 4),
+  card("Fix auth redirect bug", "doing", "Ada", 2, 2, 1),
+  card("Migrate to Postgres", "todo", "Rich", 2, 8, 3),
+  card("Add dark mode", "done", "Grace", 0, 3, 0),
+  card("Refactor cell engine", "doing", "Linus", 1, 5, 5),
+  card("Onboarding emails", "todo", "Ada", 1, 1, 6),
+  card("Load-test checkout", "todo", "Rich", 2, 3, 8),
+  card("Ship release notes", "done", "Grace", 0, 1, 2),
+  card("Audit dependencies", "doing", "Rich", 0, 2, 7),
+  card("Mobile nav polish", "todo", "Grace", 1, 2, 9),
+  card("Cache invalidation", "done", "Linus", 2, 5, 1),
+  card("Triage inbox", "doing", "Ada", 0, 1, 10),
 ];
 
 interface AxisDesc {
@@ -636,9 +633,10 @@ export class MdKanban extends BaseElement {
   #viewDisposers: Array<() => void> = [];
   #cardDisposers = new Map<string, Array<() => void>>();
 
-  #tasks: Coll<Card> = coll<Card>([], c => (c as Card).id);
-  #visible!: View<Card>;
-  #board!: GroupView<string | number, Card>;
+  #tasks: Arr<Card> = arr<Card>([]);
+  #cellOf = new Map<string, Cell<Card>>();
+  #visible!: Arr<Card>;
+  #board!: GroupArr<string | number, Card>;
   #cardById = new Map<string, Card>();
   #cardEls = new Map<string, HTMLElement>();
   #rowEls = new Map<string, HTMLElement>();
@@ -681,6 +679,7 @@ export class MdKanban extends BaseElement {
 
     uidN = 0;
     this.#cardById = new Map();
+    this.#cellOf = new Map();
     this.#cardEls = new Map();
     this.#rowEls = new Map();
     this.#barEls = new Map();
@@ -689,14 +688,19 @@ export class MdKanban extends BaseElement {
     this.#sort = cell<{ key: SortKey; dir: 1 | -1 }>({ key: "priority", dir: -1 });
 
     const cards = SEED();
-    for (const c of cards) this.#cardById.set(c.id, c);
-    this.#tasks = coll(cards, c => c.id);
+    const taskCells = cards.map(c => cell(c));
+    for (const tc of taskCells) {
+      this.#cardById.set(tc.value.id, tc.value);
+      this.#cellOf.set(tc.value.id, tc);
+    }
+    this.#tasks = arr<Card>(taskCells);
 
     // One reactive, assertable predicate drives every view. Reading the
     // toggle cells makes filtering reactive; `assert` makes a drop into a
     // filtered view set the fields that satisfy it.
     const pred = Object.assign(
-      (c: Card) => {
+      (cc: Cell<Card>) => {
+        const c = cc.value;
         if (this.#activeOnly.value && c.done.value) return false;
         const q = this.#query.value.trim().toLowerCase();
         if (q)
@@ -706,8 +710,8 @@ export class MdKanban extends BaseElement {
         return true;
       },
       {
-        assert: (c: Card) => {
-          if (this.#activeOnly.value) c.done.value = false;
+        assert: (cc: Cell<Card>) => {
+          if (this.#activeOnly.value) cc.value.done.value = false;
         },
       },
     );
@@ -716,7 +720,7 @@ export class MdKanban extends BaseElement {
     const hint = document.createElement("p");
     hint.className = "hint";
     hint.textContent =
-      "One Coll<Card>, three views of it. A drag is board.move(card, column, i) — the lens writes status, rank, and (with the filter on) assignee in one batch. Switch views and edit any of them; the shared collection keeps them all in sync.";
+      "One Arr<Card>, three views of it. A drag is board.move(card, column, i) — the lens writes status, splices the order, and (with the filter on) asserts assignee in one batch. Switch views and edit any of them; the shared collection keeps them all in sync.";
     this.shadow.append(hint);
 
     const frame = document.createElement("div");
@@ -855,10 +859,10 @@ export class MdKanban extends BaseElement {
     const axis = AXES[this.#axis];
     // `axis.field` is a per-axis cell of differing type (Str / Num); the cast
     // unifies the key type so one board pipeline serves all three axes.
-    this.#board = this.#visible.groupBy(c => axis.field(c) as Writable<Cell<string | number>>, {
-      order: axis.keys,
-      sort: c => c.rank,
-    });
+    this.#board = this.#visible.groupBy(
+      cc => axis.field(cc.value) as Writable<Cell<string | number>>,
+      { order: axis.keys },
+    );
 
     const board = document.createElement("div");
     board.className = "board";
@@ -897,11 +901,12 @@ export class MdKanban extends BaseElement {
       for (const g of this.#board.value) {
         const slot = bodies.get(String(g.key));
         if (!slot) continue;
+        const items = g.items.cells;
         this.#reconcile(
           slot.body,
-          g.items.map(c => this.#cardEl(c)),
+          items.map(cc => this.#cardEl(cc.value)),
         );
-        slot.count.textContent = String(g.items.length);
+        slot.count.textContent = String(items.length);
       }
     });
 
@@ -922,11 +927,11 @@ export class MdKanban extends BaseElement {
       e.preventDefault();
       col.classList.remove("dragover");
       const id = this.#dragId ?? e.dataTransfer?.getData("text/plain") ?? "";
-      const dragged = this.#cardById.get(id);
+      const dragged = this.#cellOf.get(id);
       if (!dragged) return;
       const index = this.#dropIndex(body, e.clientY, id);
-      // The entire move: backward pass writes the group key, the rank, and
-      // asserts the active filters — one call, every view re-flows.
+      // The entire move: backward pass writes the group key, splices the base
+      // order, and asserts the active filters — one call, every view re-flows.
       this.#board.move(dragged, key, index);
       for (const m of this.shadow.querySelectorAll(".drop-before"))
         m.classList.remove("drop-before");
@@ -1142,9 +1147,9 @@ export class MdKanban extends BaseElement {
 
     const rows = derive(() => {
       const { key, dir } = this.#sort.value;
-      const arr = [...this.#visible.items];
-      arr.sort((a, b) => dir * cmp(fieldValue(a, key), fieldValue(b, key)));
-      return arr;
+      const list = [...this.#visible.values.value];
+      list.sort((a, b) => dir * cmp(fieldValue(a, key), fieldValue(b, key)));
+      return list;
     });
 
     this.#bind(() => {
@@ -1240,7 +1245,7 @@ export class MdKanban extends BaseElement {
     axis.append(spacer, ticks);
     tl.append(axis);
 
-    const lanes = this.#visible.groupBy(c => c.assignee, { order: ASSIGNEES });
+    const lanes = this.#visible.groupBy(cc => cc.value.assignee, { order: ASSIGNEES });
     const tracks = new Map<string, HTMLElement>();
     for (const name of ASSIGNEES) {
       const lane = document.createElement("div");
@@ -1262,11 +1267,12 @@ export class MdKanban extends BaseElement {
       for (const g of lanes.value) {
         const track = tracks.get(String(g.key));
         if (!track) continue;
+        const items = g.items.cells.map(cc => cc.value);
         this.#reconcile(
           track,
-          g.items.map(c => this.#barEl(c, track)),
+          items.map(c => this.#barEl(c, track)),
         );
-        this.#packLane(track, g.items);
+        this.#packLane(track, items);
       }
     });
 
@@ -1357,12 +1363,13 @@ export class MdKanban extends BaseElement {
 
   // ---- mutations --------------------------------------------------------
   #addCard(key: string | number): void {
-    const maxRank = this.#tasks.items.reduce((m, c) => Math.max(m, c.rank.value), 0);
-    const c = card("New task", "todo", ASSIGNEES[0], 1, 1, 0, maxRank + 1);
+    const c = card("New task", "todo", ASSIGNEES[0], 1, 1, 0);
+    const cc = cell(c);
     this.#cardById.set(c.id, c);
+    this.#cellOf.set(c.id, cc);
     // Insert into the chosen column of the (possibly filtered) board: sets
-    // the group key, the rank, and asserts the filter — one call.
-    this.#board.insert(c, key, 0);
+    // the group key, splices it to the front, and asserts the filter — one call.
+    this.#board.insert(cc, key, 0);
     requestAnimationFrame(() => {
       const title = this.#cardEls.get(c.id)?.querySelector(".title") as HTMLElement | null;
       if (title) {
@@ -1377,8 +1384,10 @@ export class MdKanban extends BaseElement {
   }
 
   #deleteCard(c: Card): void {
-    this.#tasks.remove(c);
+    const cc = this.#cellOf.get(c.id);
+    if (cc) this.#tasks.remove(cc);
     this.#cardById.delete(c.id);
+    this.#cellOf.delete(c.id);
     const bucket = this.#cardDisposers.get(c.id);
     if (bucket) for (const d of bucket) d();
     this.#cardDisposers.delete(c.id);
@@ -1429,7 +1438,7 @@ export class MdKanban extends BaseElement {
       check.addEventListener("change", () => {
         const v = check.checked;
         batch(() => {
-          for (const c of this.#tasks.items) if (c.assignee.value === name) c.done.value = v;
+          for (const c of this.#tasks.values.value) if (c.assignee.value === name) c.done.value = v;
         });
       });
       const who = document.createElement("span");
@@ -1450,7 +1459,7 @@ export class MdKanban extends BaseElement {
     }
 
     this.#bind(() => {
-      const items = this.#tasks.items;
+      const items = this.#tasks.values.value;
       const total = items.length;
       const doneCount = items.filter(c => c.done.value).length;
       const pct = total ? (doneCount / total) * 100 : 0;

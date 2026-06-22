@@ -11,7 +11,7 @@
 //   - reactive-param invertible (`gain(k)`) — reads `Val<number>`.
 //   - complement projection (`normalize`) — the lossy view (peak-scaled) plus a
 //     complement (the original peak) recovered on write-back, the audio analog of
-//     str.lowercase()/canvas.grayscale().
+//     caseFold/canvas.grayscale().
 //   - cross-type lens (`rms` → Num).
 
 import { Cell, type Init, reader, type Val, type Writable } from "../cell";
@@ -101,7 +101,7 @@ export class Audio extends Cell<V> {
 
   /** Peak-normalize to reactive `target` (default 1). The view alone can't
    *  know the source's loudness, so the complement carries the original peak and
-   *  the backward pass restores it. The audio analog of str.lowercase(). */
+   *  the backward pass restores it. The audio analog of `caseFold`. */
   normalize(target: Val<number> = 1): Writable<Audio> {
     const tf = reader(target);
     const self: Audio = this;

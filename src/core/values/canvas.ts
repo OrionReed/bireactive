@@ -265,7 +265,7 @@ export class Canvas extends Cell<V> {
 
   /** Grayscale (Rec.601 luma) view; complement is the per-pixel chroma
    *  residual `(r−Y, g−Y, b−Y)`, so editing the gray view recolours the
-   *  source. The raster analog of `str.lowercase()`. */
+   *  source. The raster analog of `caseFold`. */
   grayscale(): Writable<Canvas> {
     const sc = scratch();
     const sf = scratch();

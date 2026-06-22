@@ -8,8 +8,6 @@ export * from "./assert";
 // explicitly so the wildcard below lets `tex`'s `Part` win.
 /** @group Rendering */
 export { type CodeOpts, CodeShape, code, codeStyles, type Token, tokenize } from "./code";
-/** @group Utilities */
-export * from "./coll";
 export * from "./core";
 /** @group Utilities */
 export * from "./ext";
