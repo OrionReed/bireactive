@@ -78,10 +78,7 @@ video {
 main {
   max-width: 60em;
   margin: 0 auto;
-  padding-left: 4em;
-  padding-right: 4em;
-  padding-top: 3em;
-  padding-bottom: 3em;
+  padding: 3em 4em;
   font-family: "Recursive";
   font-variation-settings: "CASL" 1;
   color: var(--text-color);
@@ -105,6 +102,30 @@ h5,
 h6 {
   margin-top: 0;
   margin-bottom: 0.5em;
+  scroll-margin-top: 0.25em;
+  position: relative;
+}
+
+/* Section links: a "#" marker appears to the left of any heading on hover. */
+.heading-anchor {
+  color: inherit;
+  text-decoration: none;
+  font: inherit;
+}
+
+.heading-anchor::before {
+  content: "#";
+  position: absolute;
+  left: -0.9em;
+  opacity: 0;
+  color: var(--text-secondary);
+  font-variation-settings: "wght" 400, "CASL" 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+
+:is(h1, h2, h3, h4):hover > .heading-anchor::before {
+  opacity: 1;
 }
 
 header {
@@ -150,11 +171,9 @@ strong {
 }
 
 blockquote {
-  margin: 0em;
+  margin: 1em 0;
   padding: 1em;
   background-color: var(--blockquote-bg);
-  margin-top: 1em;
-  margin-bottom: 1em;
   border-radius: 4px;
   & p {
     font-variation-settings: "CASL" 1;
@@ -249,15 +268,215 @@ img {
   }
 }
 
-/* Some conditional spacing */
+/* ── Table of Contents ──────────────────────────────────────────────────── */
+
+/* Shared panel styles */
+.toc-panel {
+  font-family: "Recursive", sans-serif;
+  font-variation-settings: "CASL" 0.5, "wght" 350;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.toc-heading {
+  font-variation-settings: "wght" 600, "CASL" 0;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+  margin: 0 0 0.6em 0;
+}
+
+.toc-panel ol {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 1em;
+}
+
+.toc-panel li {
+  padding: 0;
+  text-indent: 0;
+}
+
+/* Sub-list for h3 entries */
+.toc-panel ol ol {
+  padding-left: 0.75em;
+  margin-top: 0;
+  border-left: 1px solid light-dark(rgba(0,0,0,0.08), rgba(255,255,255,0.08));
+  margin-left: 0.4em;
+  margin-bottom: 0.15em;
+}
+
+.toc-panel a {
+  display: block;
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  text-decoration: none;
+  color: var(--text-secondary);
+  transition: color 0.15s, background 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toc-panel a:hover {
+  color: var(--text-color);
+  background: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.06));
+}
+
+.toc-panel a[aria-current="true"] {
+  color: var(--text-color);
+  font-variation-settings: "wght" 500, "CASL" 0.5;
+}
+
+/* ── Wide: fixed sidebar + buttons row to the right of the content column ── */
+@media (min-width: 70em) {
+  .toc-toggle {
+    display: none;
+  }
+
+  /* Three phases as viewport widens:
+     1. Left-anchored 1.5em from text, width grows to fill right space (min wins).
+     2. Width caps at 20em; centering takes over — equal gap on both sides (preferred).
+        Transition at ~92em where 50%+24.5em = 75%+1.5em.
+     3. Gap capped at 8em — TOC stops drifting (max wins).
+        Transition at ~118em where 75%+1.5em = 50%+31em. */
+  .page-chrome,
+  .toc {
+    --toc-left: clamp(calc(50% + 24.5em), calc(75% + 1.5em), calc(50% + 31em));
+    --toc-w: clamp(10em, calc(50vw - 25em), 20em);
+  }
+
+  /* Buttons: horizontal row at the top of the column, right-aligned. */
+  .page-chrome {
+    position: fixed;
+    left: var(--toc-left);
+    top: 2rem;
+    width: var(--toc-w);
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-end;
+    gap: 0;
+    z-index: 1001;
+  }
+
+  /* Override shadow-DOM :host { position: fixed } — document author styles
+     win over :host rules, so this repositions the buttons into the flex row. */
+  .page-chrome > dark-mode-toggle,
+  .page-chrome > github-link,
+  .page-chrome > docs-link {
+    position: static;
+  }
+
+  .toc {
+    position: fixed;
+    left: var(--toc-left);
+    top: calc(2rem + 40px + 0.75rem);
+    width: var(--toc-w);
+  }
+
+  /* Panel visibility at wide is controlled by JS (toc.open = true) — no override needed. */
+  .toc-panel {
+    max-height: calc(100vh - 2rem - 40px - 0.75rem - 1rem);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: light-dark(rgba(0,0,0,0.15), rgba(255,255,255,0.1)) transparent;
+  }
+}
+
+/* ── Narrow (tablet): stack page buttons with centers 2em from the right edge.
+     right = 2em − half_button_width = 2em − 1.25em = 0.75em. */
+@media (min-width: 38em) and (max-width: 69.99em) {
+  .page-chrome {
+    position: fixed;
+    right: 0.75em;
+    top: 2rem;
+    width: 2.5em;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+    z-index: 1000;
+  }
+
+  .page-chrome > dark-mode-toggle,
+  .page-chrome > github-link,
+  .page-chrome > docs-link {
+    position: static;
+  }
+}
+
+/* ── Narrow: floating toggle button + overlay panel; buttons restore naturally ── */
+@media (max-width: 69.99em) {
+  .toc {
+    position: fixed;
+    bottom: 1.5em;
+    right: 0.75em;
+    z-index: 100;
+  }
+
+  .toc-panel {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 0.75em);
+    right: 0;
+    width: min(18em, calc(100vw - 3em));
+    max-height: min(22em, 60vh);
+    overflow-y: auto;
+    background: light-dark(#fff, #1e222a);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px light-dark(rgba(0,0,0,0.12), rgba(0,0,0,0.45));
+    padding: 0.9em 0.9em;
+    scrollbar-width: thin;
+    scrollbar-color: light-dark(rgba(0,0,0,0.15), rgba(255,255,255,0.1)) transparent;
+  }
+
+  details.toc[open] .toc-panel {
+    display: block;
+  }
+
+  .toc-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.6em;
+    height: 2.6em;
+    border-radius: 50%;
+    border: 1px solid var(--border-color);
+    background: light-dark(#fff, #1e222a);
+    box-shadow: 0 2px 8px light-dark(rgba(0,0,0,0.12), rgba(0,0,0,0.4));
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: color 0.15s, box-shadow 0.15s;
+    list-style: none;
+  }
+
+  /* Hide the browser's built-in disclosure triangle on <summary>. */
+  .toc-toggle::-webkit-details-marker { display: none; }
+
+  .toc-toggle:hover,
+  details.toc[open] .toc-toggle {
+    color: var(--text-color);
+    box-shadow: 0 4px 14px light-dark(rgba(0,0,0,0.16), rgba(0,0,0,0.5));
+  }
+
+  .toc-toggle-icon {
+    font-size: 1.1rem;
+    font-family: "Recursive";
+    font-variation-settings: "CASL" 1;
+    line-height: 1;
+  }
+}
+
+/* ── Some conditional spacing ── */
+
 table:not(:has(+ p)) {
   margin-bottom: 2em;
 }
 
-p:has(+ ul) {
-  margin-bottom: 0.5em;
-}
-p:has(+ ol) {
+p:has(+ ul, + ol) {
   margin-bottom: 0.5em;
 }
 p:has(+ md-syntax) {

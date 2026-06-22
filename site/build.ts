@@ -64,21 +64,70 @@ const markedTemml: MarkedExtension = {
   ],
 };
 
+interface TocEntry {
+  level: number;
+  id: string;
+  text: string;
+}
+
 interface Page {
   title: string;
   description: string;
   content: string;
+  toc: TocEntry[];
+}
+
+/** Slugify a heading's plain text into a valid HTML id. */
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+/** Strip HTML tags (used to clean marked's rendered heading text). */
+function stripTags(html: string): string {
+  return html.replace(/<[^>]*>/g, "");
+}
+
+/** Decode the handful of HTML entities marked emits in heading text. */
+function decodeEntities(html: string): string {
+  return html
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+/** Normalize whitespace runs. */
+function normalizeWs(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }
 
 function renderPage(): Page {
   const raw = readFileSync(SOURCE, "utf-8");
   const { content: markdown, data: frontmatter } = matter(raw);
 
+  const toc: TocEntry[] = [];
+
   marked
     .use(markedFootnote())
     .use(markedTemml)
     .use({
       renderer: {
+        heading(text: string, level: number) {
+          // `text` is marked's rendered HTML. Strip tags to get the display
+          // text (entities like &amp; stay encoded, rendering correctly in HTML).
+          // Also decode entities for the slug so "&amp;" → "&" → "-" not "amp-".
+          const stripped = normalizeWs(stripTags(text));
+          const id = slugify(decodeEntities(stripped));
+          // h1 is the page title — omit from the outline.
+          if (level === 2 || level === 3) {
+            toc.push({ level, id, text: stripped });
+          }
+          return `<h${level} id="${id}"><a class="heading-anchor" href="#${id}">${text}</a></h${level}>\n`;
+        },
         code(code: string, language?: string) {
           // md-syntax tokenizes innerText, so HTML-escape the raw source
           // before embedding (parse5 treats `<` as a tag start).
@@ -101,12 +150,110 @@ function renderPage(): Page {
     title: frontmatter.title || "Bireactive",
     description: frontmatter.description || frontmatter.title || "Bireactive",
     content: marked.parse(markdown) as string,
+    toc,
   };
 }
+
+function renderToc(toc: TocEntry[]): string {
+  if (toc.length === 0) return "";
+
+  // Build nested HTML: h3s are wrapped in a sub-<ol> inside their parent h2 <li>.
+  const lines: string[] = [];
+  for (let i = 0; i < toc.length; i++) {
+    const { level, id, text } = toc[i];
+    const next = toc[i + 1];
+    if (level === 2) {
+      const hasChildren = next?.level === 3;
+      if (hasChildren) {
+        lines.push(`<li><a href="#${id}">${text}</a>\n        <ol>`);
+      } else {
+        lines.push(`<li><a href="#${id}">${text}</a></li>`);
+      }
+    } else {
+      // level === 3: close sub-list when the next entry is not also h3
+      const closeSub = !next || next.level !== 3;
+      lines.push(
+        closeSub
+          ? `  <li><a href="#${id}">${text}</a></li>\n        </ol></li>`
+          : `  <li><a href="#${id}">${text}</a></li>`,
+      );
+    }
+  }
+
+  return `<details class="toc" open>
+    <summary class="toc-toggle" aria-label="Toggle outline">
+      <span class="toc-toggle-icon">§</span>
+    </summary>
+    <div class="toc-panel">
+      <p class="toc-heading">Contents</p>
+      <ol>
+        ${lines.join("\n        ")}
+      </ol>
+    </div>
+  </details>`;
+}
+
+// Inline script: runs synchronously before first paint (placed at end of <body>).
+// Uses plain ES2015+ — no bundling, no TypeScript — so keep it self-contained.
+const scrollSpyScript = `
+(function () {
+  const toc = document.querySelector('.toc');
+  if (!toc) return;
+
+  // HTML ships with <details open> so the panel is present before JS runs.
+  // Close it on narrow screens immediately (before first paint); keep in sync
+  // on resize via matchMedia.
+  const mql = window.matchMedia('(min-width: 70em)');
+  const syncOpen = e => { toc.open = e.matches; };
+  mql.addEventListener('change', syncOpen);
+  syncOpen(mql);
+
+  // Close panel on link click (narrow only — wide panel stays open always).
+  toc.querySelector('.toc-panel').addEventListener('click', e => {
+    if (e.target.tagName === 'A' && !mql.matches) toc.open = false;
+  });
+
+  // Scroll spy. Active entry = last heading whose top edge is above 25% of the
+  // viewport — i.e. the section currently being read. Correct in both scroll
+  // directions: going up past a heading removes it from contention immediately.
+  const headings = Array.from(document.querySelectorAll('main h2[id], main h3[id]'));
+  const linkMap = new Map();
+  headings.forEach(h => {
+    const a = toc.querySelector('a[href="#' + h.id + '"]');
+    if (a) linkMap.set(h, a);
+  });
+
+  let active = null;
+  const setActive = h => {
+    const a = h ? linkMap.get(h) : null;
+    if (a === active) return;
+    active?.removeAttribute('aria-current');
+    active = a;
+    active?.setAttribute('aria-current', 'true');
+    active?.closest('li')?.scrollIntoView({ block: 'nearest' });
+  };
+
+  // Reads pre-computed bounding rects inside the IO callback — no forced reflow.
+  const findActive = () => {
+    const threshold = window.innerHeight * 0.25;
+    for (let i = headings.length - 1; i >= 0; i--) {
+      if (headings[i].getBoundingClientRect().top <= threshold) return headings[i];
+    }
+    return null;
+  };
+
+  // Wide observation zone (20% → viewport bottom): a heading scrolled past at
+  // any speed always crosses it. Fast-scroll batches collapse into one call.
+  const obs = new IntersectionObserver(() => setActive(findActive()),
+    { threshold: 0, rootMargin: '-20% 0px 0px 0px' });
+  headings.forEach(h => obs.observe(h));
+})();
+`;
 
 function pageHTML(page: Page, isProduction: boolean): string {
   const base = isProduction ? PROD_BASE : "/";
   const elementsScript = isProduction ? `${base}js/elements.js` : "/site/elements/index.ts";
+  const tocNav = renderToc(page.toc);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -146,13 +293,17 @@ function pageHTML(page: Page, isProduction: boolean): string {
     <meta name="twitter:description" content="${page.description}" />
   </head>
   <body>
-    <dark-mode-toggle></dark-mode-toggle>
-    <github-link></github-link>
-    <docs-link></docs-link>
+    <div class="page-chrome">
+      <dark-mode-toggle></dark-mode-toggle>
+      <github-link></github-link>
+      <docs-link></docs-link>
+    </div>
+    ${tocNav}
     <main class="post">
       ${page.content}
     </main>
     <script type="module" src="${elementsScript}"></script>
+    <script>${scrollSpyScript}</script>
   </body>
 </html>`;
 }
