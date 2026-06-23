@@ -9,6 +9,8 @@ description: A bi-directional reactive programming library.
 
 ## Introduction
 
+> NOTE: This page is a work in progress.
+
 ### Reactive systems
 Ordinary reactive systems (often called "signals") flows one way: write an input, everything derived updates. Reactive systems assure ~4 properties:
 
@@ -31,16 +33,15 @@ c.value = 100; // → 100°C = 212°F
 f.value = 32;  // Error: cannot write to a derived value.
 ```
 
-### Problems with two-way binding
+### Lenses vs two-way binding
 
-// two-way binding stuff
+// two-way binding stuff, see notes doc
+// lens stuff and how they might address the problems with two-way binding
 
-### Lenses
-// lens stuff
 
-### Bi-reactivity (reactive lenses)
+### Bireactivity
 
-*Bi-directional reactivity* adds backward edges, allowing us to write a derived value and have the change propagate backward.
+*Bi-directional reactivity* extends the lazy propagation model of signals to allow *backward* propagation, allowing us to write to a derived value.
 ```ts
 const c = cell(20);
 const f = c.lens(c => c * 9/5 + 32, f => (f - 32) * 5/9);
@@ -51,11 +52,17 @@ c.value = 100; // → 100°C = 212°F
 f.value = 32;  // → 0°C = 32°F
 ```
 
-Bi-directional reactivity maintains the same properties as ordinary reactivity. *Propagation* is still acyclic by treating the backward and forward directions as seperate directed acyclic graphs.
+Bireactive systems maintain many of the same properties as forward-only reactivity. *Propagation* is still acyclic despite the addition of backward edges, so cycles are as hard to create as they were before. Consistency and glitch-freedom are maintained by the same mechanisms as forward-only reactivity.
 
-## Kinds of lenses
 
-### Bijections
+## A brief tour of lenses
+Lenses are a way to express bi-directional relationships. Many lenses are easy to write, some are more complex. This section hopes to provide a brief overview of the simplest to most complex lenses.
+
+### Isomorphic lenses
+Isomorphic lenses are the simplest kind of lens, where for every value of the source, there is a unique value of the target and vice versa. For example `a+10 = b ⇌ b-10 = a` can be viewed as a lens:
+
+$$a \begin{array}{c} \xrightarrow{\;a+10\;} \\[-1.6ex] \xleftarrow[\;b-10\;]{} \end{array} b$$
+
 
 ```ts
 let p = a;
@@ -238,6 +245,26 @@ Strings can't recover dropped detail from the result alone, so a lossy projectio
 <md-string-pipeline></md-string-pipeline>
 
 `Str` has `trim` / `reverse` / `slice` / `split`. Where `split(/\s+/)` returns an `Arr` of positional segment lenses, so editing a word, or adding/removing/reordering one, rewrites the source string.
+
+`Reg` lifts that idea into a small bidirectional regex-lens algebra — `copy` / `lit` / `seq` / `alt` / `opt` / `star`, each combinator a lens. Leaves compile to a real regular automaton (Brzozowski derivatives), and the whole grammar compiles to a tagged Thompson program run as a PikeVM, so any *unambiguous* grammar parses in **linear time, no backtracking** — common-prefix alternations (`INFO|INes`) and longest-match splits (`copy(/\d\d/).then(digits())`) included. Genuine ambiguity is rejected at *construction* with a concrete witness string that would parse two ways (`copy(/\d+/).then(copy(/\d+/))` names `"00"`), and the most common overlaps are caught one step earlier, in the TypeScript types. A write whose source is off-language is rejected instead of clobbering the rest. `bind` exposes every named capture — including captures *inside* an `alt` branch — as an editable handle (a `copy` becomes a `Writable<Str>`, a `star` an `Arr`); the backward pass reflectively reprints the source, preserving everything the view never named. And `reg.optic()` exposes a grammar as a first-class `Optic<string, V>`, so it drops straight into `compose(...)` and `cell.through(...)` and chains with the rest of the lens algebra. Because a `star`'s element cells are themselves lenses, grammars compose too: an outer line-splitter over an inner cell-splitter turns one string into a grid editable in *both* dimensions — add, remove, reorder rows and cells — with every edit reprinted into the single source.
+
+<md-reg-table></md-reg-table>
+
+And `spans` reports where each named capture sits in the source, so the parse can be drawn directly onto the string: the coloured decomposition below is the `get` direction made visible, while the field controls — including an enum `select` for the level — drive `put`. Break the shape and the lens simply stops writing.
+
+<md-reg-log></md-reg-log>
+
+Composition pays off twice. Compose a grammar's word cells with `caseFold` and you get the textbook case-preserving find/replace for free — the grammar locates the words, `caseFold` carries each occurrence's own case (UPPER / lower / Title), and neither lens knows about the other:
+
+<md-reg-rename></md-reg-rename>
+
+And because `reg.optic()` is just an `Optic`, one backing string can be edited through several grammars at once. Each pane below is `source.through(canonical, format(other))` — the same key/value list rendered as a URL query, as `key: value` lines, and as a compact form, all kept in sync:
+
+<md-reg-formats></md-reg-formats>
+
+What makes all of this safe is the two-sided guarantee underneath. A lens is only a function if its grammar is unambiguous, so the parser accepts the full unambiguous regular class in linear time — and anything genuinely ambiguous is refused at *construction*, with a concrete witness string. The playground makes both halves visible: pick a grammar a single-pass parser can't handle (a common-prefix alternation, an optional longest-match tail, fixed-width fields with no delimiters), watch the coloured parse re-derive as you type, then see four tempting-but-ambiguous grammars get rejected — each naming the exact input that would parse two ways.
+
+<md-reg-playground></md-reg-playground>
 
 Here is a (slightly broken) attempt to reactively edit multiple syntaxes of JSON, YAML, TOML, and EDN.
 

@@ -119,6 +119,17 @@ export {
 export { Num, num } from "./values/num";
 export { Pose, pose } from "./values/pose";
 export { Range, range, span } from "./values/range";
+export {
+  type AltVal,
+  type BindOpts,
+  type Handle,
+  type HandleKind,
+  type HandleOf,
+  Reg,
+  type RegVal,
+  type Silent,
+  type StarVal,
+} from "./values/reg";
 export { Str, str } from "./values/str";
 export {
   type Codec,
