@@ -119,7 +119,9 @@ h6 {
   left: -0.9em;
   opacity: 0;
   color: var(--text-secondary);
-  font-variation-settings: "wght" 400, "CASL" 0;
+  font-variation-settings:
+    "wght" 400,
+    "CASL" 0;
   transition: opacity 0.15s;
   pointer-events: none;
 }
@@ -273,13 +275,17 @@ img {
 /* Shared panel styles */
 .toc-panel {
   font-family: "Recursive", sans-serif;
-  font-variation-settings: "CASL" 0.5, "wght" 350;
+  font-variation-settings:
+    "CASL" 0.5,
+    "wght" 350;
   font-size: 0.78rem;
   line-height: 1.4;
 }
 
 .toc-heading {
-  font-variation-settings: "wght" 600, "CASL" 0;
+  font-variation-settings:
+    "wght" 600,
+    "CASL" 0;
   text-transform: uppercase;
   letter-spacing: 0.07em;
   font-size: 0.65rem;
@@ -303,7 +309,7 @@ img {
 .toc-panel ol ol {
   padding-left: 0.75em;
   margin-top: 0;
-  border-left: 1px solid light-dark(rgba(0,0,0,0.08), rgba(255,255,255,0.08));
+  border-left: 1px solid light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
   margin-left: 0.4em;
   margin-bottom: 0.15em;
 }
@@ -314,7 +320,9 @@ img {
   border-radius: 3px;
   text-decoration: none;
   color: var(--text-secondary);
-  transition: color 0.15s, background 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -327,7 +335,9 @@ img {
 
 .toc-panel a[aria-current="true"] {
   color: var(--text-color);
-  font-variation-settings: "wght" 500, "CASL" 0.5;
+  font-variation-settings:
+    "wght" 500,
+    "CASL" 0.5;
 }
 
 /* ── Wide: fixed sidebar + buttons row to the right of the content column ── */
@@ -381,7 +391,7 @@ img {
     max-height: calc(100vh - 2rem - 40px - 0.75rem - 1rem);
     overflow-y: auto;
     scrollbar-width: thin;
-    scrollbar-color: light-dark(rgba(0,0,0,0.15), rgba(255,255,255,0.1)) transparent;
+    scrollbar-color: light-dark(rgba(0, 0, 0, 0.15), rgba(255, 255, 255, 0.1)) transparent;
   }
 }
 
@@ -427,10 +437,10 @@ img {
     background: light-dark(#fff, #1e222a);
     border: 1px solid var(--border-color);
     border-radius: 8px;
-    box-shadow: 0 8px 24px light-dark(rgba(0,0,0,0.12), rgba(0,0,0,0.45));
+    box-shadow: 0 8px 24px light-dark(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.45));
     padding: 0.9em 0.9em;
     scrollbar-width: thin;
-    scrollbar-color: light-dark(rgba(0,0,0,0.15), rgba(255,255,255,0.1)) transparent;
+    scrollbar-color: light-dark(rgba(0, 0, 0, 0.15), rgba(255, 255, 255, 0.1)) transparent;
   }
 
   details.toc[open] .toc-panel {
@@ -446,20 +456,24 @@ img {
     border-radius: 50%;
     border: 1px solid var(--border-color);
     background: light-dark(#fff, #1e222a);
-    box-shadow: 0 2px 8px light-dark(rgba(0,0,0,0.12), rgba(0,0,0,0.4));
+    box-shadow: 0 2px 8px light-dark(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.4));
     cursor: pointer;
     color: var(--text-secondary);
-    transition: color 0.15s, box-shadow 0.15s;
+    transition:
+      color 0.15s,
+      box-shadow 0.15s;
     list-style: none;
   }
 
   /* Hide the browser's built-in disclosure triangle on <summary>. */
-  .toc-toggle::-webkit-details-marker { display: none; }
+  .toc-toggle::-webkit-details-marker {
+    display: none;
+  }
 
   .toc-toggle:hover,
   details.toc[open] .toc-toggle {
     color: var(--text-color);
-    box-shadow: 0 4px 14px light-dark(rgba(0,0,0,0.16), rgba(0,0,0,0.5));
+    box-shadow: 0 4px 14px light-dark(rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0.5));
   }
 
   .toc-toggle-icon {
