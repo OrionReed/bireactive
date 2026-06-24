@@ -11,13 +11,25 @@
   "excludeProtected": true,
   "hideGenerator": true,
   "categorizeByGroup": true,
+  "groupOrder": [
+    "Reactivity",
+    "Values",
+    "Lenses",
+    "Animation",
+    "Shapes",
+    "Rendering",
+    "Utilities",
+    "*"
+  ],
+  "categoryOrder": ["Numeric", "Geometry", "Color", "Text", "Logic", "Collections", "Media", "*"],
   "navigationLinks": {
     "Demo": "https://orionreed.github.io/bireactive/"
   },
   "lightHighlightTheme": "github-light",
   "darkHighlightTheme": "github-dark",
   "customCss": "./theme/typedoc.css",
-  "plugin": ["@typhonjs-typedoc/typedoc-theme-dmt"],
+  "projectDocuments": ["guide/overview.md", "guide/getting-started.md"],
+  "plugin": ["./theme/group-by-source.mjs", "@typhonjs-typedoc/typedoc-theme-dmt"],
   "theme": "default-modern",
   "dmtFavicon": "./public/favicon.svg",
   "dmtLinksService": {

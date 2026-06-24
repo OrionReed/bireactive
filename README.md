@@ -61,11 +61,20 @@ inside.value = true; // assert membership…
 q.value; // { x: 100, y: 50 } — q snaps to the nearest in-box point
 ```
 
+## Documentation
+
+- **Guide** — start with the [Overview](guide/overview.md) (a map of every
+  capability) and [Getting Started](guide/getting-started.md).
+- **[API reference](https://orionreed.github.io/bireactive/api/)** — every
+  export, grouped by domain; the guide lives in its sidebar too.
+- **[Demos](https://orionreed.github.io/bireactive/)** — live, interactive examples.
+
 ## Develop
 
 ```sh
 npm run dev        # serve the landing page at :5555
-npm run site       # build the static site into dist-web/
+npm run site       # build the static site + API docs into dist-web/
+npm run docs       # build just the API reference + guide into dist-web/api/
 npm run build      # compile the library into dist/
 npm test           # run the test suite
 ```
