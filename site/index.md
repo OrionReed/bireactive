@@ -154,6 +154,10 @@ same idea but with a `(Box, Box) ⇌ RCC-8` relation.
 
 A residual edge loses information but keeps the lost part in the source. A centroid reads as the average of its points; writing it moves them all evenly.
 
+A whole figure can be a small DAG of these. Only the three vertices are roots; the edge-midpoints and the centroid are each a `mean` lens, and the medial triangle is just lines between the midpoints. It feels n-ary — grab any point and the rest reorganise — but every backward step is one average:
+
+<md-triangle></md-triangle>
+
 
 <md-handles></md-handles>
 
@@ -180,6 +184,10 @@ const { center, radius }   = bestFitCircle(points);
 `meanSpread(inputs) ⇌ {mean, spread}` any linear type with a metric — vectors, colours, poses:
 
 <md-traits-cross-domain></md-traits-cross-domain>
+
+A Sankey with a cycle: flow fans out from a hub through three branches into a collector, part of it recirculates around the bottom, and the rest leaves as output. Conservation (in = out) holds at every node, so the whole picture is pinned by four free numbers — the three branch flows and the recirculation — and every other width derives from them. Those widths are lenses: drag a branch to set its flow, drag the hub or collector to scale all of it at once, drag the return band to set how much recirculates (the input takes up the slack). Conservation stops being a constraint to solve and becomes the coordinate system:
+
+<md-sankey></md-sankey>
 
 ### "Symmetric" lenses
 
@@ -273,6 +281,12 @@ The parsers are error-tolerant, so a broken pane stops writing the hub but keeps
 
 
 <md-syntax-lens></md-syntax-lens>
+
+### A document you can run backwards
+
+A Soulver-style calculator-as-document.
+
+<md-soulver></md-soulver>
 
 ## Schema Evolution
 
@@ -632,6 +646,10 @@ The runtime's test suite runs in the browser on a fresh `Anim` driven by `step(d
 ## Misc ~~~~~~~~~~~~~~~~~
 
 Loose demos that may not survive the final cut.
+
+An optical bench: a beam from a draggable lamp bounces through a heterogeneous arrangement of flat mirrors and a concave elliptical mirror. The light path is one reactive `derive` that walks the ray surface-to-surface, reflecting off the nearest hit each step, so dragging the lamp, a mirror, or the ellipse's foci re-traces every downstream bounce at once. The controls are lenses too — each mirror's midpoint is a `mean` (drag it, both ends follow) and the ellipse's semi-major axis is a `Vec.lens` that projects the drag onto the major axis.
+
+<md-optical-bench></md-optical-bench>
 
 A clock: each hand an affine view of `time`, each tip a polar point:
 
