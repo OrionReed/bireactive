@@ -9,7 +9,11 @@ import { cell, derive, lens, settle } from "../cell";
 
 type V = { value: number };
 const idLens = (p: unknown, k: number, b: number): V =>
-  lens(p as never, ((x: number) => k * x + b) as never, ((t: number) => (t - b) / k) as never) as never;
+  lens(
+    p as never,
+    ((x: number) => k * x + b) as never,
+    ((t: number) => (t - b) / k) as never,
+  ) as never;
 
 describe("counts: minimal-work baselines", () => {
   it("a 1→1 lens chain write invokes exactly one put per lens, nothing else", () => {
@@ -76,12 +80,15 @@ describe("counts: minimal-work baselines", () => {
 
   it("a pure own back-write puts once and does not step", () => {
     const s = cell(1);
-    const st = lens(s as never, {
-      init: () => 0,
-      step: (_s: number, c: number) => c,
-      fwd: (v: number) => v,
-      bwd: (t: number) => ({ update: t, complement: 0 }),
-    } as never) as unknown as V;
+    const st = lens(
+      s as never,
+      {
+        init: () => 0,
+        step: (_s: number, c: number) => c,
+        fwd: (v: number) => v,
+        bwd: (t: number) => ({ update: t, complement: 0 }),
+      } as never,
+    ) as unknown as V;
     void st.value; // realize forward before measuring the backward path
     settle();
 
@@ -97,11 +104,14 @@ describe("counts: minimal-work baselines", () => {
 
   it("an external source change steps the complement once on the next read", () => {
     const s = cell(1);
-    const st = lens(s as never, {
-      init: (v: number) => v,
-      fwd: (v: number, c: number) => v + c,
-      bwd: (t: number) => ({ update: t, complement: 0 }),
-    } as never) as unknown as V;
+    const st = lens(
+      s as never,
+      {
+        init: (v: number) => v,
+        fwd: (v: number, c: number) => v + c,
+        bwd: (t: number) => ({ update: t, complement: 0 }),
+      } as never,
+    ) as unknown as V;
     void st.value; // sync stamp to s.version
     settle();
 

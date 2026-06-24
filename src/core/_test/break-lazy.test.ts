@@ -798,12 +798,15 @@ describe("co-writer LWW: two STATEFUL lenses sharing one source", () => {
     // view = source + a constant memory offset; `step` keeps the offset (genuine
     // complement memory, not derivable from the source), `bwd` keeps it too.
     const mk = (off: number) =>
-      lens(s as never, {
-        init: () => off,
-        step: (_x: number, c: number) => c,
-        fwd: (x: number, c: number) => x + c,
-        bwd: (t: number, _x: number, c: number) => ({ update: t - c, complement: c }),
-      } as never) as unknown as Cell<number>;
+      lens(
+        s as never,
+        {
+          init: () => off,
+          step: (_x: number, c: number) => c,
+          fwd: (x: number, c: number) => x + c,
+          bwd: (t: number, _x: number, c: number) => ({ update: t - c, complement: c }),
+        } as never,
+      ) as unknown as Cell<number>;
     const a = mk(10);
     const b = mk(20);
     expect(a.value).toBe(10);

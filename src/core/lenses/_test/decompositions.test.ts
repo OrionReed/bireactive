@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 import { approxWithin, lcg as rng } from "../../../_test/_util";
 import type { Writable } from "../../index";
 import { num, type Vec, vec } from "../../index";
-import { bbox, meanDiff, procrustes } from "../decompositions";
+import { meanDiff } from "../aggregates";
+import { bbox, procrustes } from "../point-cloud";
 
 const { near, vnear } = approxWithin(1e-6);
 

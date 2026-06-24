@@ -4,7 +4,7 @@
 // sampled at parameter `t` constrains the curve at one point, but the
 // control points have many DOF). They live here, off the lens surface,
 // to keep `lenses/` exclusively bidirectional. For the writable bezier
-// shape decomposition see `bezierGestalt` in `lenses/domain-aggregates`.
+// shape decomposition see `bezierGestalt` in `lenses/geometry`.
 
 import type { Cell } from "./cell";
 import { Vec } from "./values/vec";

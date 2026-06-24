@@ -2,15 +2,8 @@
 
 import { describe, expect, it } from "vitest";
 import { cell, num, vec } from "../index";
-import {
-  angle,
-  clampedMean,
-  diff,
-  distance,
-  pulleySum,
-  reflection,
-  vecLerp,
-} from "../lenses/geometry";
+import { clampedMean } from "../lenses/aggregates";
+import { angle, diff, distance, pulleySum, reflection, vecLerp } from "../lenses/geometry";
 
 const vnear = (a: { x: number; y: number }, b: { x: number; y: number }): boolean =>
   Math.hypot(a.x - b.x, a.y - b.y) < 1e-9;

@@ -11,7 +11,15 @@
 
 import { describe, expect, it } from "vitest";
 import * as live from "../../cell";
-import { build, type Engine, type NodeSpec, type Recipe, run, tracesEqual, writable } from "./harness";
+import {
+  build,
+  type Engine,
+  type NodeSpec,
+  type Recipe,
+  run,
+  tracesEqual,
+  writable,
+} from "./harness";
 
 function rng(seed: number): () => number {
   let a = seed >>> 0;

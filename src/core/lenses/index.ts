@@ -1,34 +1,17 @@
 export {
-  type ArgminOpts,
-  type ArgminVecOpts,
-  argminNum,
-  argminVec,
-  clampToDisc,
-} from "./aggregates";
-export {
-  bestFitCircle,
-  bestFitLine,
-  pca,
-  rigidTranslate,
-  rotateAbout,
-  scaleAbout,
-  scaleAboutXY,
-  total,
-} from "./closed-form-policies";
-export { bbox, meanDiff, procrustes } from "./decompositions";
-export {
-  bezierGestalt,
+  clampedMean,
   crossfade,
   mean,
+  meanDiff,
   meanSpread,
   mix,
   select,
   spread,
   timeSeries,
-} from "./domain-aggregates";
+} from "./aggregates";
 export {
   angle,
-  clampedMean,
+  bezierGestalt,
   diff,
   distance,
   type PolarPolicy,
@@ -43,6 +26,31 @@ export {
   type RememberOpts,
   remember,
 } from "./memory";
+export {
+  type ArgminOpts,
+  type ArgminVecOpts,
+  argminNum,
+  argminVec,
+  bundle,
+  clampToDisc,
+  type FactorOpts,
+  type FactorResult,
+  factor,
+  factorTuple,
+  type OutputSpec,
+  type PackedInput,
+} from "./numerical";
+export {
+  bbox,
+  bestFitCircle,
+  bestFitLine,
+  pca,
+  procrustes,
+  rotateAbout,
+  scaleAbout,
+  scaleAboutXY,
+  total,
+} from "./point-cloud";
 export { type ClosestOpts, hullWeights, nearestIndex } from "./snap";
 export {
   applyCaseMask,
@@ -52,12 +60,3 @@ export {
   parseWords,
   rebuildWords,
 } from "./text";
-export {
-  bundle,
-  type FactorOpts,
-  type FactorResult,
-  factor,
-  factorTuple,
-  type OutputSpec,
-  type PackedInput,
-} from "./typed-factor";

@@ -14,7 +14,11 @@ const BF_BACK_MARKED = 0b011; // Dirty | Pending — set while a back-write is l
 const BF_WRITE_BLOCKED = 0b100;
 
 const mkLens = (p: unknown, k: number, b: number): { value: number } =>
-  lens(p as never, ((x: number) => k * x + b) as never, ((t: number) => (t - b) / k) as never) as never;
+  lens(
+    p as never,
+    ((x: number) => k * x + b) as never,
+    ((t: number) => (t - b) / k) as never,
+  ) as never;
 
 describe("static writability", () => {
   it("throws writing through a lens whose sole parent is a read-only derive", () => {

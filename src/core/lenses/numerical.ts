@@ -1,12 +1,173 @@
-// Generic numerical N→M factor lens: the escape hatch when no closed form
-// fits. Typed inputs/outputs (via the `Pack` trait) are flat-packed; writing
-// one channel sends a sparse δy through the LSQ pseudoinverse of the full M×N
-// Jacobian. Invariance is approximate — prefer closed-form lenses (e.g.
-// `procrustes`) when an exact one exists.
+// Numerical lenses: writes solve a finite-differenced Jacobian (one Newton
+// step, Levenberg-Marquardt damped) rather than a closed form, so invariance
+// is approximate — prefer the exact lenses (point-cloud.ts, aggregates.ts)
+// when one fits. `argminNum`/`argminVec` are hand-rolled M=1/M=2 forms;
+// `factor` is the typed N→M generalization over the `Pack` trait.
 
-import type { Cell, Inner, Pack, Read, Traits, Writable } from "../index";
-import { SKIP, type Skip } from "../index";
+import { type Cell, type Inner, type Read, SKIP, type Skip, type Writable } from "../cell";
 import { solveSPD } from "../linalg";
+import type { Pack, Traits } from "../traits";
+import { Num } from "../values/num";
+import { Vec } from "../values/vec";
+
+export interface ArgminOpts {
+  /** Finite-difference epsilon for the Jacobian. Default 1e-4. */
+  eps?: number;
+  /** Levenberg-Marquardt damping. Default `1e-6` for `argminNum`
+   *  (Jacobian is always well-conditioned for linear constraints) and
+   *  `1e-3` for `argminVec` (IK chains hit rank-deficient regimes at
+   *  full extension). Larger → smaller, more stable updates; smaller
+   *  → closer to pure pseudoinverse. */
+  damping?: number;
+}
+
+/** Target-shaping for `argminVec`: project a write into the reachable
+ *  workspace before the Jacobian step, sidestepping the rank-deficient
+ *  swings at the boundary. For an N-link chain rooted at `R` with reach
+ *  `L`, pass `clampToDisc(R, L)`. */
+export interface ArgminVecOpts extends ArgminOpts {
+  /** Pre-write hook: transform the requested target into one that's
+   *  guaranteed solvable. Most useful as a workspace clamp. */
+  clampTarget?: (
+    target: { x: number; y: number },
+    currentInputs: readonly number[],
+  ) => { x: number; y: number };
+}
+
+/** Project `p` into the closed disc of radius `r` centred on `c` (points
+ *  inside pass through). Use as `argminVec`'s `clampTarget` to fix IK
+ *  explosion at maximum reach. */
+export function clampToDisc(
+  c: { x: number; y: number },
+  r: number,
+): (p: { x: number; y: number }) => { x: number; y: number } {
+  return p => {
+    const dx = p.x - c.x;
+    const dy = p.y - c.y;
+    const d = Math.hypot(dx, dy);
+    if (d <= r) return p;
+    const k = r / d;
+    return { x: c.x + dx * k, y: c.y + dy * k };
+  };
+}
+
+/** Scalar-output argmin lens: write does one Newton step against the FD
+ *  Jacobian, distributing the residual by `weights`. For typed/multi-
+ *  output cases use `factor()`; this M=1 path is kept for its hand-rolled
+ *  inner loop. */
+export function argminNum(
+  inputs: readonly Num[],
+  forward: (xs: readonly number[]) => number,
+  weights: readonly number[],
+  opts: ArgminOpts = {},
+): Writable<Num> {
+  if (weights.length !== inputs.length) {
+    throw new Error("argminNum: weights/inputs length mismatch");
+  }
+  const eps = opts.eps ?? 1e-4;
+  const damping = opts.damping ?? 1e-6;
+  const n = inputs.length;
+  // Pre-allocated to avoid per-write allocations.
+  const J = new Array<number>(n);
+  const out = new Array<number | Skip>(n);
+  return Num.lens(
+    inputs,
+    vals => forward(vals),
+    (target, vals) => {
+      const xs = vals as number[];
+      const y0 = forward(xs);
+      const dy = target - y0;
+      for (let i = 0; i < n; i++) {
+        const saved = xs[i]!;
+        xs[i] = saved + eps;
+        J[i] = (forward(xs) - y0) / eps;
+        xs[i] = saved;
+      }
+      let denom = damping;
+      for (let i = 0; i < n; i++) denom += weights[i]! * J[i]! * J[i]!;
+      const k = dy / denom;
+      for (let i = 0; i < n; i++) {
+        if (weights[i] === 0) {
+          out[i] = SKIP;
+        } else {
+          out[i] = xs[i]! + weights[i]! * J[i]! * k;
+        }
+      }
+      return out;
+    },
+  );
+}
+
+/** 2D-output argmin lens (scalar Num inputs, `{x, y}` forward). For IK
+ *  arms, draggable points, handle projection. Kept for its hand-rolled
+ *  2×2 inverse + `clampTarget` hook; see `factor()` for other M. */
+export function argminVec(
+  inputs: readonly Num[],
+  forward: (xs: readonly number[]) => { x: number; y: number },
+  weights: readonly number[],
+  opts: ArgminVecOpts = {},
+): Writable<Vec> {
+  if (weights.length !== inputs.length) {
+    throw new Error("argminVec: weights/inputs length mismatch");
+  }
+  const eps = opts.eps ?? 1e-4;
+  const damping = opts.damping ?? 1e-3;
+  const clamp = opts.clampTarget;
+  const n = inputs.length;
+  // Pre-allocated to avoid per-write allocations.
+  const Jx = new Array<number>(n);
+  const Jy = new Array<number>(n);
+  const out = new Array<number | Skip>(n);
+  return Vec.lens(
+    inputs,
+    vals => forward(vals),
+    (rawTarget, vals) => {
+      const xs = vals as number[];
+      const target = clamp ? clamp(rawTarget, xs) : rawTarget;
+      const y0 = forward(xs);
+      const dx = target.x - y0.x;
+      const dy = target.y - y0.y;
+      for (let i = 0; i < n; i++) {
+        const saved = xs[i]!;
+        xs[i] = saved + eps;
+        const ye = forward(xs);
+        xs[i] = saved;
+        Jx[i] = (ye.x - y0.x) / eps;
+        Jy[i] = (ye.y - y0.y) / eps;
+      }
+      // J·W·Jᵀ is the 2×2 [a b; b c]. Add damping to the diagonal, invert.
+      let a = damping;
+      let b = 0;
+      let c = damping;
+      for (let i = 0; i < n; i++) {
+        const w = weights[i]!;
+        a += w * Jx[i]! * Jx[i]!;
+        b += w * Jx[i]! * Jy[i]!;
+        c += w * Jy[i]! * Jy[i]!;
+      }
+      const det = a * c - b * b;
+      if (Math.abs(det) < 1e-14) {
+        // Singular; leave inputs unchanged.
+        for (let i = 0; i < n; i++) out[i] = SKIP;
+        return out;
+      }
+      const invA = c / det;
+      const invB = -b / det;
+      const invC = a / det;
+      const kx = invA * dx + invB * dy;
+      const ky = invB * dx + invC * dy;
+      for (let i = 0; i < n; i++) {
+        const w = weights[i]!;
+        if (w === 0) {
+          out[i] = SKIP;
+        } else {
+          out[i] = xs[i]! + w * (Jx[i]! * kx + Jy[i]! * ky);
+        }
+      }
+      return out;
+    },
+  );
+}
 
 /** Input cell: writable cell whose value class declares the `pack`
  *  trait. Vec, Num, Pose, Box, Color, Range all satisfy this. */
@@ -56,7 +217,7 @@ function getPack<T>(cell: { constructor: unknown }): Pack<T> {
   const p = ctor.traits?.pack;
   if (!p) {
     const name = (ctor as { name?: string }).name ?? "?";
-    throw new Error(`typed-factor: ${name} has no traits.pack`);
+    throw new Error(`numerical: ${name} has no traits.pack`);
   }
   return p;
 }
@@ -65,7 +226,7 @@ function getPackFromCls<T>(Cls: { traits?: { pack?: Pack<T> } }): Pack<T> {
   const p = Cls.traits?.pack;
   if (!p) {
     const name = (Cls as { name?: string }).name ?? "?";
-    throw new Error(`typed-factor: ${name} has no traits.pack`);
+    throw new Error(`numerical: ${name} has no traits.pack`);
   }
   return p;
 }
@@ -89,7 +250,7 @@ export function factor<
 >(inputs: readonly PackedInput[], outputs: O, opts: FactorOpts = {}): FactorResult<O> {
   const inputCount = inputs.length;
   if (inputCount === 0) {
-    throw new Error("typed-factor: need ≥ 1 input");
+    throw new Error("numerical: need ≥ 1 input");
   }
 
   const inputPacks = inputs.map(s => getPack(s as unknown as { constructor: unknown }));
@@ -109,7 +270,7 @@ export function factor<
   const outputKeys = Object.keys(outputs);
   const outputCount = outputKeys.length;
   if (outputCount === 0) {
-    throw new Error("typed-factor: need ≥ 1 output");
+    throw new Error("numerical: need ≥ 1 output");
   }
 
   const outputSpecs = outputKeys.map(k => outputs[k]!);
@@ -120,7 +281,7 @@ export function factor<
 
   const weights = opts.inputWeights ?? (Array.from({ length: N }, () => 1) as readonly number[]);
   if (weights.length !== N) {
-    throw new Error(`typed-factor: inputWeights length ${weights.length} ≠ flat input dim ${N}`);
+    throw new Error(`numerical: inputWeights length ${weights.length} ≠ flat input dim ${N}`);
   }
   const eps = opts.eps ?? 1e-5;
   const lambda = opts.damping ?? 1e-6;

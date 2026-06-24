@@ -4,9 +4,8 @@
 
 import { describe, expect, it } from "vitest";
 import { effect, network, settle, untracked } from "../cell";
-import { bestFitCircle, bestFitLine, scaleAbout } from "../lenses/closed-form-policies";
-import { bbox } from "../lenses/decompositions";
-import { spread as spreadView } from "../lenses/domain-aggregates";
+import { spread as spreadView } from "../lenses/aggregates";
+import { bbox, bestFitCircle, bestFitLine, scaleAbout } from "../lenses/point-cloud";
 import { num } from "../values/num";
 import { vec } from "../values/vec";
 

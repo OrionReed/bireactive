@@ -4,26 +4,25 @@
 import { describe, expect, it } from "vitest";
 import { approxWithin, lcg as rng } from "../../../_test/_util";
 import type { Num, Writable } from "../../index";
-import { num, type Pose, pose, type Vec, vec } from "../../index";
+import { mean, num, type Pose, pose, type Vec, vec } from "../../index";
 import {
   bestFitCircle,
   bestFitLine,
   pca,
-  rigidTranslate,
   rotateAbout,
   scaleAbout,
   scaleAboutXY,
   total,
-} from "../closed-form-policies";
+} from "../point-cloud";
 
 const { near, vnear } = approxWithin(1e-9);
 
 const mkPoints = (...pts: [number, number][]): Writable<Vec>[] => pts.map(([x, y]) => vec(x, y));
 
 describe("§1 Building blocks", () => {
-  it("rigidTranslate translates the whole cluster by the centroid delta", () => {
+  it("mean translates the whole cluster by the centroid delta", () => {
     const pts = mkPoints([0, 0], [10, 0], [5, 6]);
-    const t = rigidTranslate(pts);
+    const t = mean(pts);
     expect(t.value).toEqual({ x: 5, y: 2 });
     t.value = { x: 100, y: 100 };
     expect(pts[0]!.value).toEqual({ x: 95, y: 98 });
@@ -48,7 +47,7 @@ describe("§1 Building blocks", () => {
 
   it("rotateAbout with reactive pivot (centroid): cluster rotates about its centroid", () => {
     const pts = mkPoints([10, 0], [0, 10], [-10, 0], [0, -10]);
-    const c = rigidTranslate(pts);
+    const c = mean(pts);
     const angle = rotateAbout(pts, c);
     const c0 = c.value;
     angle.value = Math.PI;

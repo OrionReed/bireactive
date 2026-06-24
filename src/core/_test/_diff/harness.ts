@@ -36,9 +36,7 @@ export type NodeSpec =
   // makes provenance observable to the diff — `stateful1`'s view ignores its complement.
   | { kind: "stateMemo"; parent: number };
 
-export type Op =
-  | { kind: "write"; node: number; val: number }
-  | { kind: "read"; node: number };
+export type Op = { kind: "write"; node: number; val: number } | { kind: "read"; node: number };
 
 export interface Recipe {
   nodes: NodeSpec[];
@@ -122,7 +120,10 @@ export function build(rx: Engine, r: Recipe): Built {
             ps,
             (vals: number[]) => vals.reduce((a: number, x: number) => a + x, 0),
             // readsSource (2-arg): write target into parent 0, SKIP the rest.
-            (t: number, vals: number[]) => [t - (vals.reduce((a: number, x: number) => a + x, 0) - vals[0]!), ...vals.slice(1).map(() => SKIP)],
+            (t: number, vals: number[]) => [
+              t - (vals.reduce((a: number, x: number) => a + x, 0) - vals[0]!),
+              ...vals.slice(1).map(() => SKIP),
+            ],
           ),
         );
         break;
@@ -242,9 +243,7 @@ export function round(x: number): number {
 
 export function tracesEqual(a: Trace, b: Trace): boolean {
   if (a.threw !== b.threw) return false;
-  return (
-    vecEq(a.reads, b.reads) && vecEq(a.final, b.final) && vecEq(a.fires, b.fires)
-  );
+  return vecEq(a.reads, b.reads) && vecEq(a.final, b.final) && vecEq(a.fires, b.fires);
 }
 
 function vecEq(a: number[], b: number[]): boolean {

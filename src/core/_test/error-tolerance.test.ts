@@ -62,10 +62,13 @@ describe("error tolerance", () => {
   it("a throwing forward getter recovers and re-reads deterministically", () => {
     const s = cell(1) as unknown as V;
     let explode = true;
-    const d = derive(s as never, ((x: number) => {
-      if (explode) throw new Error("boom-getter");
-      return x * 2;
-    }) as never) as unknown as V;
+    const d = derive(
+      s as never,
+      ((x: number) => {
+        if (explode) throw new Error("boom-getter");
+        return x * 2;
+      }) as never,
+    ) as unknown as V;
 
     expect(() => void d.value).toThrow("boom-getter");
     // The engine isn't wedged: fix the input condition and it recomputes cleanly.

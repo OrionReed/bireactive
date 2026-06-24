@@ -1,8 +1,8 @@
 import { type Cell, type Init, type Read, SKIP, type Skip, type Writable } from "../cell";
 import { Num, num } from "../values/num";
 import { nearestAngle, Vec, vec } from "../values/vec";
-import { rotateAbout } from "./closed-form-policies";
 import { remember } from "./memory";
+import { rotateAbout } from "./point-cloud";
 
 type V = { x: number; y: number };
 
@@ -153,28 +153,53 @@ export function polar(
   return Vec.lens([cSig, rSig, aSig] as const, ([c, rv, av]) => project(c, rv, av), bwd);
 }
 
-/** Mean of N nums, clamped to `[lo, hi]` on read and write (writes are
- *  clamped before the delta is distributed). */
-export function clampedMean(parents: readonly Num[], lo: number, hi: number): Writable<Num> {
-  const n = parents.length;
-  const inv = 1 / n;
-  return Num.lens(
-    parents,
-    vals => {
-      let s = 0;
-      for (let i = 0; i < n; i++) s += vals[i]!;
-      const m = s * inv;
-      return m < lo ? lo : m > hi ? hi : m;
-    },
-    (target, vals) => {
-      const clamped = target < lo ? lo : target > hi ? hi : target;
-      let s = 0;
-      for (let i = 0; i < n; i++) s += vals[i]!;
-      const cur = s * inv;
-      const delta = clamped - cur;
-      const out = new Array<number>(n);
-      for (let i = 0; i < n; i++) out[i] = vals[i]! + delta;
-      return out;
+/** Cubic Bezier (p0..p3) → {start, end, startTangent, endTangent}. Moving an
+ *  endpoint carries its control point (tangent preserved); writing a tangent
+ *  moves only its control point. Square linear iso — all pairs invariant. */
+export function bezierGestalt(
+  p0: Writable<Vec>,
+  p1: Writable<Vec>,
+  p2: Writable<Vec>,
+  p3: Writable<Vec>,
+): {
+  start: Writable<Vec>;
+  end: Writable<Vec>;
+  startTangent: Writable<Vec>;
+  endTangent: Writable<Vec>;
+} {
+  const start = Vec.lens(
+    [p0, p1] as const,
+    (vals: readonly V[]) => vals[0]!,
+    (target: V, vals: readonly V[]) => {
+      const dx = target.x - vals[0]!.x;
+      const dy = target.y - vals[0]!.y;
+      return [target, { x: vals[1]!.x + dx, y: vals[1]!.y + dy }] as never;
     },
   );
+
+  const end = Vec.lens(
+    [p2, p3] as const,
+    (vals: readonly V[]) => vals[1]!,
+    (target: V, vals: readonly V[]) => {
+      const dx = target.x - vals[1]!.x;
+      const dy = target.y - vals[1]!.y;
+      return [{ x: vals[0]!.x + dx, y: vals[0]!.y + dy }, target] as never;
+    },
+  );
+
+  const startTangent = Vec.lens(
+    [p0, p1] as const,
+    (vals: readonly V[]) => ({ x: vals[1]!.x - vals[0]!.x, y: vals[1]!.y - vals[0]!.y }),
+    (target: V, vals: readonly V[]) =>
+      [SKIP, { x: vals[0]!.x + target.x, y: vals[0]!.y + target.y }] as never,
+  );
+
+  const endTangent = Vec.lens(
+    [p2, p3] as const,
+    (vals: readonly V[]) => ({ x: vals[1]!.x - vals[0]!.x, y: vals[1]!.y - vals[0]!.y }),
+    (target: V, vals: readonly V[]) =>
+      [{ x: vals[1]!.x - target.x, y: vals[1]!.y - target.y }, SKIP] as never,
+  );
+
+  return { start, end, startTangent, endTangent };
 }

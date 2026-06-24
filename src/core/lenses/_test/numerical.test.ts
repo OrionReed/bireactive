@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { approxWithin } from "../../../_test/_util";
 import type { Writable } from "../../index";
 import { fieldLens, Num, pose, Vec, vec } from "../../index";
-import { bundle, factor, factorTuple } from "../typed-factor";
+import { bundle, factor, factorTuple } from "../numerical";
 
 const { near, vnear } = approxWithin(1e-4);
 
@@ -25,7 +25,7 @@ type V = { x: number; y: number };
 
 // A Procrustes-shaped factor (centroid/rotation/scale of a Vec cloud) built
 // from the generic `factor` — the local stand-in the tests drive. The exact,
-// closed-form equivalent lives in `decompositions.ts` as `procrustes`.
+// closed-form equivalent lives in `point-cloud.ts` as `procrustes`.
 function procFactor(points: readonly Writable<Vec>[]) {
   const K = points.length;
   const cx = (p: readonly V[]) => p.reduce((s, v) => s + v.x, 0) / K;
