@@ -1,9 +1,6 @@
-// geometry.ts — geometric lens building blocks over the N-input
-// `Cls.lens` / `Cls.derive` forms. All are a few lines on top of the engine.
-
-import { type Cell, type Read, SKIP, type Writable } from "../cell";
-import { Num } from "../values/num";
-import { Vec } from "../values/vec";
+import { type Cell, type Init, type Read, SKIP, type Skip, type Writable } from "../cell";
+import { Num, num } from "../values/num";
+import { nearestAngle, Vec, vec } from "../values/vec";
 import { rotateAbout } from "./closed-form-policies";
 import { remember } from "./memory";
 
@@ -95,6 +92,65 @@ export function diff(a: Num, b: Num): Writable<Num> {
       return [av + delta / 2, bv - delta / 2];
     },
   );
+}
+
+/** Policy for `polar`'s inverse — which inputs absorb a write:
+ *
+ *  - `rotate`    — c fixed; write r and a to land on target.
+ *  - `translate` — r and a fixed; shift c by Δ.
+ *  - `radial`    — c and a fixed; project the drag onto the ray.
+ *  - `circular`  — c and r fixed; project the drag onto the circle. */
+export type PolarPolicy = "rotate" | "translate" | "radial" | "circular";
+
+/** Vec at a polar offset from `center`: `center + (r·cos a, r·sin a)`. Each
+ *  input is a literal (new cell) or existing writable (passed through); for
+ *  read-only sources use `Vec.derive`. `policy` selects which inputs absorb
+ *  writes; lock one with `Num.pin`: `polar(c, Num.pin(100), a)`. */
+export function polar(
+  center: Init<Vec>,
+  r: Init<Num>,
+  a: Init<Num>,
+  policy: PolarPolicy = "rotate",
+): Writable<Vec> {
+  const cSig: Writable<Vec> = center instanceof Vec ? center : vec(center.x, center.y);
+  const rSig: Writable<Num> = num(r);
+  const aSig: Writable<Num> = num(a);
+
+  const project = (c: V, rv: number, av: number): V => ({
+    x: c.x + rv * Math.cos(av),
+    y: c.y + rv * Math.sin(av),
+  });
+
+  // Pick the angle nearest current, not atan2's (-π, π] value, so an
+  // accumulated-revolution angle doesn't jump.
+  type Updates = readonly [V | Skip, number | Skip, number | Skip];
+  let bwd: (p: V, vals: readonly [V, number, number]) => Updates;
+  switch (policy) {
+    case "rotate":
+      bwd = (p, [cv, , av]) => {
+        const dx = p.x - cv.x;
+        const dy = p.y - cv.y;
+        return [SKIP, Math.hypot(dx, dy), nearestAngle(Math.atan2(dy, dx), av)];
+      };
+      break;
+    case "translate":
+      bwd = (p, [cv, rv, av]) => {
+        const f = project(cv, rv, av);
+        return [{ x: cv.x + (p.x - f.x), y: cv.y + (p.y - f.y) }, SKIP, SKIP];
+      };
+      break;
+    case "radial":
+      bwd = (p, [cv, , av]) => {
+        const dx = p.x - cv.x;
+        const dy = p.y - cv.y;
+        return [SKIP, dx * Math.cos(av) + dy * Math.sin(av), SKIP];
+      };
+      break;
+    case "circular":
+      bwd = (p, [cv, , av]) => [SKIP, SKIP, nearestAngle(Math.atan2(p.y - cv.y, p.x - cv.x), av)];
+      break;
+  }
+  return Vec.lens([cSig, rSig, aSig] as const, ([c, rv, av]) => project(c, rv, av), bwd);
 }
 
 /** Mean of N nums, clamped to `[lo, hi]` on read and write (writes are

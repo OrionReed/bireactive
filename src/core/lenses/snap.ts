@@ -1,13 +1,6 @@
-// snap.ts — the pointer math the `d` drag algebra (shapes/drag-spec.ts) and the
-// demos build on. Candidate positions are live layout cells, so there's no
-// speculative re-render to recover them:
-//
-//   • hullWeights — barycentric weights of a point in the convex hull of K
-//     targets (closed form for K ≤ 3, Frank–Wolfe for K > 3). Powers
-//     `d.between`'s blend and any pointer-in-hull interpolation.
-//   • nearestIndex — the candidate nearest the pointer, with hysteresis. The
-//     "stickiness" lives in the lens complement (the sanctioned home for
-//     path-dependence), so reads stay pure.
+// Pointer math for the drag algebra: `hullWeights` (barycentric weights of a
+// point in a convex hull) and `nearestIndex` (nearest candidate, with sticky
+// hysteresis carried in the lens complement).
 
 import { type Cell, lens, type Read, SKIP } from "../cell";
 
@@ -117,7 +110,7 @@ export function hullWeights(q: V, pts: readonly V[]): number[] {
 
 export interface ClosestOpts {
   /** Hysteresis margin (px): the current pick is kept until a rival is
-   *  nearer by more than this. Dragology's stickiness. Default 0. */
+   *  nearer by more than this. Default 0. */
   sticky?: number;
 }
 

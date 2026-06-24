@@ -1,11 +1,6 @@
-// domain-aggregates.ts — closed-form lenses beyond point clouds.
-//
-// The group-action patterns from `closed-form-policies.ts`, applied to:
-//   (1) Generic Linear/Metric-trait aggregates — `mean`, `spread`,
-//       `palette` work for colors, poses, ranges, boxes for free.
-//   (2) Bezier gestalt handles ({start, end, startTangent, endTangent}).
-//   (3) Time-series ({mean, slope}) over (i, value) samples.
-// All exact, idempotent, cross-channel invariant by construction.
+// Closed-form aggregate lenses driven by the Linear/Metric traits, so `mean`,
+// `spread`, `mix` work for any conforming class (Vec, Color, Pose, Range,
+// Box, …). Plus a couple of fixed-shape decompositions (Bezier, time series).
 
 import {
   type Cell,
@@ -21,12 +16,6 @@ import {
   type Writable,
 } from "../index";
 import { remember } from "./memory";
-
-// Generic Linear-trait aggregates.
-//
-// Ergonomic entry points that infer the value class from the first input
-// (`mean(colors)` works for any `linear` class). Same engine, no new
-// infrastructure.
 
 /** Equal-weight mean (writable of `inputs[0]`'s class); writes distribute
  *  the delta evenly. Class inferred from the first input; needs `linear`. */
@@ -62,22 +51,10 @@ export function mean<S extends Traits<any, "linear">>(inputs: readonly Writable<
   );
 }
 
-// Weighted blend (the mix simplex).
-//
-// `mix` is `mean` with the uniform-weight assumption lifted: the read
-// is the normalized weighted sum `Σ wᵢ·aᵢ`, the write is the minimum-norm
-// delta `daᵢ = wᵢ·δ / Σwⱼ²` (the pseudoinverse of `wᵀ·da = δ`), so a
-// zero-weight branch is left untouched. Weights are read-only controls —
-// the bwd never writes them, keeping the blend fixed while the delta flows
-// into the branches.
-//
-// The control lives on the K-simplex: a one-hot vertex is `select`
-// (the live branch absorbs everything), a `(1−t, t)` edge is `crossfade`,
-// uniform weights recover `mean`. Reactive weights are dynamically
-// tracked (read via `.value` inside fwd), so flipping a Bool or sliding a
-// Num re-reads with no extra wiring.
-
-/** Weighted blend of K branches over any `Linear` type. See module note. */
+/** Weighted blend of K branches over any `Linear` type: reads the normalized
+ *  weighted sum `Σ wᵢ·aᵢ`, writes the minimum-norm delta back into the
+ *  branches (zero-weight branches untouched). Weights are read-only reactive
+ *  controls — a one-hot is `select`, a `(1−t, t)` edge is `crossfade`. */
 // biome-ignore lint/suspicious/noExplicitAny: variance escape
 export function mix<S extends Traits<any, "linear">>(
   weights: readonly Val<number>[],
@@ -156,16 +133,9 @@ export function crossfade<S extends Traits<any, "linear">>(
   return mix([Num.derive(() => 1 - t.value), Num.derive(() => t.value)], [a, b]);
 }
 
-/** Mean radial distance from the centroid; write scales the cluster's
- *  deviations so the new mean matches the target. Trait-driven via
- *  `Linear` + `Metric`, so it works for any class declaring both (Vec,
- *  Color, Pose, Box, Range, custom).
- *
- *  Complement carries per-input deviations normalized by the current mean
- *  radius, so `spread = T` places each input at `centroid + normDev_i * T`
- *  and a collapse (spread → 0) reinflates the original SHAPE. Centroid is
- *  recomputed every read/write, so an intervening mean translate is not
- *  stale. */
+/** Mean distance from the centroid (needs `Linear` + `Metric`); write scales
+ *  the cluster's deviations so the new mean matches. The complement carries
+ *  normalized deviations, so a collapse (spread → 0) reinflates the shape. */
 export function spread<
   T extends NonNullable<unknown>,
   S extends Cell<T> & Traits<T, "linear" | "metric">,
@@ -216,20 +186,11 @@ export function meanSpread<
   };
 }
 
-// Bezier curve gestalt.
-//
-// Cubic Bezier (p0..p3) → 4 shape handles:
-//   start = p0, end = p3, startTangent = p1−p0, endTangent = p3−p2.
-// Writes:
-//   start        → translate p0 to target; p1 follows (tangent preserved)
-//   end          → translate p3 to target; p2 follows (tangent preserved)
-//   startTangent → p1 := p0 + target
-//   endTangent   → p2 := p3 − target  (tangent points away from p2)
-// Linear forward, square iso lens (8 = 8); exact cross-channel
-// invariance for all pairs (each write touches only the needed inputs).
-
 type V = { x: number; y: number };
 
+/** Cubic Bezier (p0..p3) → {start, end, startTangent, endTangent}. Moving an
+ *  endpoint carries its control point (tangent preserved); writing a tangent
+ *  moves only its control point. Square linear iso — all pairs invariant. */
 export function bezierGestalt(
   p0: Writable<Vec>,
   p1: Writable<Vec>,
@@ -278,15 +239,9 @@ export function bezierGestalt(
   return { start, end, startTangent, endTangent };
 }
 
-// Time-series aggregates.
-//
-// Scalar values indexed by position → {mean, slope}:
-//   mean  := average; writes shift all values by the delta.
-//   slope := least-squares slope of (i, value_i); writes tilt about mean.
-// mean and slope are invariant under each other (a y-shift preserves
-// slope; tilting about the mean preserves the mean).
-
-/** Time-series scalar aggregate over Num values as (i, value_i) samples. */
+/** Num values as (i, valueᵢ) samples → {mean, slope}. Writing `mean` shifts
+ *  all values; writing `slope` (least-squares) tilts them about the mean.
+ *  Each preserves the other's reading. */
 export function timeSeries(values: readonly Writable<Num>[]): {
   mean: Writable<Num>;
   slope: Writable<Num>;

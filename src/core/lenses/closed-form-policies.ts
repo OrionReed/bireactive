@@ -1,15 +1,7 @@
-// closed-form-policies.ts — exact group-action lenses for point clouds.
-//
-// When an aggregate lens has a closed-form inverse, its bwd applies a
-// GROUP ELEMENT to the source set. Translation, rotation-about-pivot,
-// and scale-about-pivot are the building blocks; Procrustes, best-fit
-// line/circle, and PCA decompose into combinations of them.
-//
-// Layout: building-block actions (rigidTranslate, rotateAbout,
-// scaleAbout, scaleAboutXY), then closed-form decompositions
-// (bestFitLine, bestFitCircle, pca, total). All exact, idempotent,
-// cross-channel invariant by construction, on the same `Cls.lens`
-// machinery — no engine changes.
+// Exact group-action lenses for point clouds. The backward pass applies a
+// group element (translate / rotate / scale about a pivot) to the whole
+// source set, so the fits below (bestFitLine, bestFitCircle, pca) are exact
+// and cross-channel invariant.
 
 import {
   type Cell,
@@ -39,20 +31,15 @@ function pivotalOf<T>(input: Writable<any>): Pivotal<T> {
   return p;
 }
 
-/** Writable centroid; on write, translates every point by the delta.
- *  The Vec-specific group-action reading of `mean`. */
+/** Writable centroid; a write translates every point by the delta. */
 export function rigidTranslate(points: readonly Writable<Vec>[]): Writable<Vec> {
   return mean(points);
 }
 
 /** Writable angle from `pivot` to `points[0]`; write rotates every input
- *  about `pivot` by (target − current) via its `Pivotal` trait.
- *
- *  Trait-generic: Vec rotates position; Pose rotates position AND
- *  orientation. Rotation-about-pivot fixes the pivot and preserves radial
- *  distances, so scale-about-pivot reads unchanged. `pivot` is reactive
- *  (re-read per write); pass `rigidTranslate(points)` for rotation about
- *  the cluster's own centroid. */
+ *  about `pivot` by (target − current) via its `Pivotal` trait (Vec rotates
+ *  position, Pose also rotates orientation). `pivot` is reactive; pass
+ *  `rigidTranslate(points)` to rotate about the cluster's own centroid. */
 export function rotateAbout<T extends { x: number; y: number }>(
   points: readonly Writable<Traits<T, "pivotal"> & Cell<T>>[],
   pivot: Read<V>,
@@ -83,13 +70,9 @@ export function rotateAbout<T extends { x: number; y: number }>(
 }
 
 /** Writable radial distance from pivot to `points[0]`; write scales every
- *  input radially about `pivot` (negative target reflects). Exact
- *  cross-channel invariance with `rotateAbout`.
- *
- *  Complement carries per-point offsets from the pivot at the last
- *  non-degenerate state, so a collapse onto the pivot (radius ≈ 0)
- *  reinflates from the stored shape. Pose `theta` survives the round-trip
- *  (only spatial offset is stored). */
+ *  input radially about `pivot` (negative target reflects). The complement
+ *  carries per-point offsets from the pivot, so a collapse onto it (radius
+ *  ≈ 0) reinflates from the stored shape. Pose `theta` survives. */
 export function scaleAbout<T extends { x: number; y: number }>(
   points: readonly Writable<Traits<T, "pivotal"> & Cell<T>>[],
   pivot: Read<V>,
@@ -141,10 +124,9 @@ export function scaleAbout<T extends { x: number; y: number }>(
   }) as Writable<Num>;
 }
 
-/** Per-axis scale about a pivot. Vec-specific (Pivotal has no per-axis
- *  method yet). Complement carries per-point per-axis fractions of
- *  point 0's offset, so a per-axis collapse is recoverable (cf.
- *  `bboxLens.size`). */
+/** Per-axis scale about a pivot (Vec-specific). The complement carries
+ *  per-point per-axis fractions of point 0's offset, so a per-axis collapse
+ *  is recoverable. */
 export function scaleAboutXY(points: readonly Writable<Vec>[], pivot: Read<V>): Writable<Vec> {
   const K = points.length;
   if (K < 1) throw new Error("scaleAboutXY: need ≥ 1 point");
@@ -189,14 +171,6 @@ export function scaleAboutXY(points: readonly Writable<Vec>[], pivot: Read<V>): 
   });
 }
 
-// Best-fit line.
-//
-// K points → {point: centroid, direction: principal-axis angle}.
-//   write point     → rigidTranslate
-//   write direction → rotate all about centroid to set principal axis
-// Invariance: principal axis is translation-invariant; centroid is
-// invariant under rotation-about-itself.
-
 /** Angle of the dominant eigenvector of symmetric 2×2 [[cxx,cxy],[cxy,cyy]]. */
 function dominantAxisAngle(cxx: number, cxy: number, cyy: number): number {
   return 0.5 * Math.atan2(2 * cxy, cxx - cyy);
@@ -221,6 +195,8 @@ function covariance(
   return { cxx: cxx / K, cxy: cxy / K, cyy: cyy / K };
 }
 
+/** K points → {point: centroid, direction: principal-axis angle}. Writing
+ *  `point` translates; writing `direction` rotates all about the centroid. */
 export function bestFitLine(points: readonly Writable<Vec>[]): {
   point: Writable<Vec>;
   direction: Writable<Num>;
@@ -230,11 +206,9 @@ export function bestFitLine(points: readonly Writable<Vec>[]): {
 
   const point = rigidTranslate(points);
 
-  // The principal axis is an eigenvector — defined only up to sign, so the
-  // raw atan2 jumps by π as the cloud rotates. `continuous` lifts it to its
-  // universal cover (period π, since axis ≡ axis + π), tracking the last
-  // emitted angle so the direction stays continuous; a collapsed cloud has
-  // no axis (`defined: false`), so it freezes and stashes the target.
+  // Axis angle is an eigenvector direction (defined up to sign), so the raw
+  // atan2 jumps by π as the cloud rotates; `continuous` (period π) tracks the
+  // last emitted angle to stay continuous, freezing on a collapsed cloud.
   // Centroid + dominant-axis raw angle; `degenerate` when covariance vanishes.
   const axisOf = (
     vals: readonly V[],
@@ -276,14 +250,8 @@ export function bestFitLine(points: readonly Writable<Vec>[]): {
   return { point, direction };
 }
 
-// Best-fit circle.
-//
-// K points → {center: centroid, radius: mean distance from center}.
-//   write center → rigidTranslate
-//   write radius → scale all about center by target/current
-// Simplest closed-form fit (mean center). Invariance: translation
-// preserves radii; uniform scale-about-center preserves the center.
-
+/** K points → {center: centroid, radius: mean distance from center}. Writing
+ *  `center` translates; writing `radius` scales all about the center. */
 export function bestFitCircle(points: readonly Writable<Vec>[]): {
   center: Writable<Vec>;
   radius: Writable<Num>;
@@ -319,16 +287,9 @@ export function bestFitCircle(points: readonly Writable<Vec>[]): {
   return { center, radius };
 }
 
-// PCA / affine similarity decomposition.
-//
-// K points → {mean: centroid, rotation: dominant-eigenvector angle,
-//   majorLength: √λ_major, minorLength: √λ_minor (per-axis std-devs)}.
-//   write mean        → rigidTranslate
-//   write rotation    → rotate all about mean to set principal axis
-//   write major/minor → scale along that axis by target/current
-// Each write is a single group action; cross-channel invariance holds
-// for all pairs.
-
+/** K points → {mean: centroid, rotation: dominant-eigenvector angle,
+ *  majorLength/minorLength: per-axis std-devs (√λ)}. Each write is a single
+ *  group action about the mean, so all pairs are cross-channel invariant. */
 export function pca(points: readonly Writable<Vec>[]): {
   mean: Writable<Vec>;
   rotation: Writable<Num>;
@@ -518,16 +479,9 @@ export function pca(points: readonly Writable<Vec>[]): {
   return { mean, rotation, majorLength, minorLength };
 }
 
-// Partition / simplex lens.
-//
-// K parts → {total}: writing total scales all parts proportionally.
-// (A {total, ratios} form is possible but ratios on a K-simplex have
-// K−1 DOF, so it's left out of this prototype.)
-
 /** Writable total over K parts; write scales all parts proportionally,
- *  preserving their ratios. A `remember` anchored at zero with a signed
- *  sum feature: a collapse to zero reinflates the stored ratios, seeded
- *  uniform so an all-zero start splits evenly. */
+ *  preserving their ratios. A collapse to zero reinflates the stored ratios,
+ *  seeded uniform so an all-zero start splits evenly. */
 export function total(parts: readonly Writable<Num>[]): Writable<Num> {
   const K = parts.length;
   if (K < 1) throw new Error("total: need ≥ 1 part");
@@ -542,8 +496,3 @@ export function total(parts: readonly Writable<Num>[]): Writable<Num> {
     seed: () => parts.map(() => 1 / K),
   });
 }
-
-// Every lens here is a group action about a pivot (translate, rotateAbout,
-// scaleAbout, scaleAboutXY, scaleAlongAxis) or a `remember`/`continuous`
-// shape-memory; the decompositions combine them, each measured against a
-// derived feature (centroid, principal axis, mean radius).

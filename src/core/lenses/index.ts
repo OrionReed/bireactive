@@ -26,7 +26,17 @@ export {
   spread,
   timeSeries,
 } from "./domain-aggregates";
-export { angle, clampedMean, diff, distance, pulleySum, reflection, vecLerp } from "./geometry";
+export {
+  angle,
+  clampedMean,
+  diff,
+  distance,
+  type PolarPolicy,
+  polar,
+  pulleySum,
+  reflection,
+  vecLerp,
+} from "./geometry";
 export {
   type ContinuousOpts,
   continuous,

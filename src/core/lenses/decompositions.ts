@@ -1,19 +1,13 @@
-// decompositions.ts — closed-form N→M lens decompositions (Vec/Num).
-//
-// N inputs → M coupled writable outputs, where writing one output
-// preserves the readings of the other M−1 (cross-channel invariance).
-// Each bwd is a hand-rolled group action (translate / rotate / scale
-// about the centroid), so cross-channel invariance is EXACT and one
-// write lands in O(K). For the generic numerical N→M escape hatch (when
-// no closed form fits) see `factor` in `typed-factor.ts`.
+// Closed-form N→M lens decompositions (Vec/Num): N inputs → M coupled
+// writable outputs where writing one preserves the readings of the others.
+// Each backward pass is a hand-rolled group action about the centroid, so
+// cross-channel invariance is exact. For the generic numerical escape hatch
+// see `factor` in `typed-factor.ts`.
 
 import { Num, SKIP, Vec, type Writable } from "../index";
 
-// meanDiff — M=2 isomorphism baseline.
-//
-// (a, b) → ((a+b)/2, a−b). Square full-rank linear lens; bwd is the
-// inverse change of basis — exact, cross-channel invariant.
-
+/** (a, b) → {mean: (a+b)/2, diff: a−b}. Square linear iso; each write is the
+ *  inverse change of basis, so mean and diff are cross-channel invariant. */
 export function meanDiff(a: Num, b: Num): { mean: Writable<Num>; diff: Writable<Num> } {
   const mean = Num.lens(
     [a, b] as const,
@@ -34,20 +28,10 @@ export function meanDiff(a: Num, b: Num): { mean: Writable<Num>; diff: Writable<
   return { mean, diff };
 }
 
-// procrustes — closed-form similarity (the showcase).
-//
-// K writable Vecs → {centroid, rotation (angle of point[0] about
-// centroid), scale (its distance from centroid)}. Each bwd is a
-// closed-form transform about the centroid:
-//   write centroid → translate every point by (c − old c)
-//   write rotation → rotate every point about centroid by (θ − old θ)
-//   write scale    → scale every point about centroid by (s / old s)
-// These commute on the cluster's similarity orbit, so the three outputs
-// have EXACT cross-channel invariance. Degenerate: K < 2 leaves
-// rotation/scale undefined; a collapsed cluster (scale → 0) makes
-// rotation singular and scale writes no-ops; target scale = 0 collapses
-// to the centroid.
-
+/** K Vecs → {centroid, rotation (angle of point[0] about centroid), scale
+ *  (its distance from centroid)}. Each write is a closed-form transform about
+ *  the centroid (translate / rotate / scale), so the three are cross-channel
+ *  invariant. A collapsed cluster makes rotation singular and scale a no-op. */
 export function procrustes(points: readonly Writable<Vec>[]): {
   centroid: Writable<Vec>;
   rotation: Writable<Num>;
@@ -174,15 +158,9 @@ export function procrustes(points: readonly Writable<Vec>[]): {
   return { centroid, rotation, scale };
 }
 
-// bbox — closed-form axis-aligned bounding box.
-//
-// K Vecs → {center, size}. Forward is min/max (piecewise-constant
-// Jacobian — fatal for FD), but the closed-form bwd is exact:
-//   write center → translate all points by (c − old c)
-//   write size   → scale all about center by component-wise ratio
-// Center↔size invariance is exact. Degenerate axes (size = 0) write
-// as no-ops; negative size reflects (kept permissive).
-
+/** K Vecs → {center, size} of the axis-aligned bounding box. Writing `center`
+ *  translates; writing `size` scales all about the center per-axis. Degenerate
+ *  axes (size = 0) write as no-ops; negative size reflects. */
 export function bbox(points: readonly Writable<Vec>[]): {
   center: Writable<Vec>;
   size: Writable<Vec>;

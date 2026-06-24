@@ -1,19 +1,8 @@
-// typed-factor.ts — generic heterogeneous-output factor lens.
-//
-// The numerical N→M escape hatch: typed inputs/outputs via the `Pack`
-// trait. Inputs and outputs are flat-packed; the Jacobian is the full
-// M×N matrix; writing one channel sends a sparse δy through the LSQ
-// pseudoinverse. Invariance is approximate (the Jacobian path) — use
-// closed-form lenses like `procrustes` when an exact one exists.
-//
-//   const { centroid, rotation, scale } = factor([v1, v2, v3] as const, {
-//     centroid: { Cls: Vec, fwd: pts => … },
-//     rotation: { Cls: Num, fwd: pts => atan2(…) },
-//     scale:    { Cls: Num, fwd: pts => hypot(…) },
-//   });
-//   centroid.value = { x: 100, y: 50 };  // typed
-//
-// `bundle()` is the 1→M case: `factor()` over a single typed source.
+// Generic numerical N→M factor lens: the escape hatch when no closed form
+// fits. Typed inputs/outputs (via the `Pack` trait) are flat-packed; writing
+// one channel sends a sparse δy through the LSQ pseudoinverse of the full M×N
+// Jacobian. Invariance is approximate — prefer closed-form lenses (e.g.
+// `procrustes`) when an exact one exists.
 
 import type { Cell, Inner, Pack, Read, Traits, Writable } from "../index";
 import { SKIP, type Skip } from "../index";
@@ -91,6 +80,9 @@ function cumOffsets(dims: readonly number[]): number[] {
   return out;
 }
 
+/** Factor packed inputs into a named record of coupled writable outputs.
+ *  Each output is `{ Cls, fwd }`; writing one solves the Jacobian LSQ for the
+ *  input deltas. See `bundle` for the 1→M case, `factorTuple` for positional. */
 export function factor<
   // biome-ignore lint/suspicious/noExplicitAny: variance escape
   O extends Record<string, OutputSpec<any>>,
@@ -314,12 +306,8 @@ export function factor<
   return result as FactorResult<O>;
 }
 
-// factorTuple — positional API.
-//
-// Same engine, no names. Outputs are a tuple of specs; the result is a
-// tuple of writables. Terser to destructure, but order-sensitive and
-// loses self-documenting names.
-
+/** Positional `factor`: outputs are a tuple of specs, result a tuple of
+ *  writables. Terser to destructure but order-sensitive. */
 export function factorTuple<
   // biome-ignore lint/suspicious/noExplicitAny: variance escape
   T extends readonly OutputSpec<any>[],
@@ -336,12 +324,8 @@ export function factorTuple<
   return outputs.map((_, i) => (result as Record<string, unknown>)[String(i)]) as never;
 }
 
-// bundle — 1→M dual, sugar over factor() with one input.
-//
-// A single typed source factored into M coupled views — `factor()` with
-// a length-1 input array. Writing a view sends a sparse δy through the
-// Jacobian solve (small, since N = the source's pack dim).
-
+/** A single typed source factored into M coupled views: `factor` with one
+ *  input. Writing a view solves the (small) Jacobian over the source's pack. */
 export function bundle<
   T,
   // biome-ignore lint/suspicious/noExplicitAny: variance escape
@@ -365,6 +349,3 @@ export function bundle<
   }
   return factor([source] as readonly PackedInput[], wrapped as O, opts);
 }
-
-// For field-style bundles, `field()` already covers the independent case;
-// use `bundle()` when you want coupled writes through the Jacobian solve.

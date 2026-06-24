@@ -1,20 +1,7 @@
-// memory.ts — path-dependent (stateful-complement) lens combinators.
-//
-// Two backward directions are not functions of the current source alone;
-// they depend on where the value has BEEN. Both were hand-rolled per site
-// across the closed-form-policy and aggregate lenses, each with its own
-// degeneracy threshold. They factor into two combinators:
-//
-//   remember   — a magnitude/total view of a cluster: sources live at
-//                `anchorᵢ + shapeᵢ · scale`, `scale` is the writable
-//                scalar. The complement holds the normalized shape so a
-//                collapse to the anchor (scale → 0) reinflates it. Covers
-//                scaleAbout, bestFitCircle.radius, spreadOf, totalLens.
-//   continuous — a cyclic (mod-`period`) view lifted to its universal
-//                cover: the complement tracks the last emitted value and
-//                unwraps the raw reading to the nearest sheet, so the
-//                view never tears at a branch cut. Covers the eigenvector
-//                angle of bestFitLine; the primitive behind winding.
+// Stateful-complement lens combinators: the backward pass depends on where
+// the value has been, not just the current source. `remember` is a
+// magnitude/total view with shape-memory; `continuous` is a winding-aware
+// view of a cyclic reading.
 
 import { type Cell, type Linear, Num, SKIP, type Skip, type Traits, type Writable } from "../index";
 

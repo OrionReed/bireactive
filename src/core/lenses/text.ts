@@ -1,17 +1,3 @@
-// text.ts — word- and case-aware string lenses.
-//
-// These are the lossy text projections whose round-trip needs a complement:
-// the forward view discards information (case, word boundaries) the backward
-// pass must restore. They live here as free lenses over any `Cell<string>`
-// rather than as `Str` methods so `Str` itself stays a lean string primitive
-// (trim / reverse / slice / split); compose them with `caseFold(s)` etc.
-//
-//   caseFold — fold to lower (or upper); writes recover the source's
-//              per-word case (the Foster/Pierce case-preserving find/replace).
-//
-// The word/case helpers (`parseWords`, `caseMaskOf`, …) are shared with
-// `Str.split` and the demos, so they're exported too.
-
 import type { Cell, Writable } from "../cell";
 import { Str } from "../values/str";
 
@@ -123,8 +109,7 @@ const ASCII_LETTER = (c: string): boolean => (c >= "a" && c <= "z") || (c >= "A"
 /** Apply the case pattern of a source word to a target word. Detects
  *  all-upper / all-lower / title case, else falls back to position-wise
  *  `applyCaseMask`. Non-letter target chars always pass through unchanged
- *  (title-casing "-gng" → "-Gng"); this letter-awareness is what makes
- *  GetPut hold when source words contain non-letters. */
+ *  (title-casing "-gng" → "-Gng"). */
 export function applyCasePattern(target: V, mask: string): V {
   if (target.length === 0 || mask.length === 0) return target;
   const letters = [...mask].filter(c => c === "U" || c === "L");
@@ -216,8 +201,7 @@ function buildCaseComplement(s: V): CaseComplement {
  *  write. Read folds to lower (default) or upper; write recovers the
  *  source's per-word case — lookup priority: (1) content match (FIFO
  *  across duplicates); (2) per-position fallback for new content; (3)
- *  native for content beyond the source structure. The Foster/Pierce
- *  case-preserving find-and-replace. */
+ *  native for content beyond the source structure. */
 export function caseFold(parent: Cell<V>, to: "lower" | "upper" = "lower"): Writable<Str> {
   const fold = to === "upper" ? (s: V) => s.toUpperCase() : (s: V) => s.toLowerCase();
   return Str.lens(parent, {

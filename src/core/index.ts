@@ -144,4 +144,4 @@ export {
 } from "./values/template";
 export { Transform, type TransformInit, transform } from "./values/transform";
 export { Tri, tri } from "./values/tri";
-export { type PolarPolicy, polar, tangentPoint, Vec, vec } from "./values/vec";
+export { tangentPoint, Vec, vec } from "./values/vec";

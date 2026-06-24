@@ -1,25 +1,12 @@
-// aggregates.ts — numerical N→1 / N→M argmin lens primitives over
-// `Cls.lens`. For the closed-form equal-weight `mean` and `spread`
-// aggregates see `domain-aggregates.ts`.
-//
-// All route through the engine's N-input lens path. Stateless-bwd
-// (`(target) => updates`) skips the peek loop on the hot path;
-// stateful-bwd (`(target, vals) => updates`) reads the scratch.
+// Numerical argmin lenses: one Newton step per write through a
+// finite-differenced Jacobian, with Levenberg-Marquardt damping. `weights`
+// controls which inputs absorb the residual (0 = frozen). For typed N→M
+// outputs see `factor` (typed-factor.ts); for closed-form aggregates see
+// `domain-aggregates.ts`.
 
 import { SKIP, type Skip, type Writable } from "../cell";
 import { Num } from "../values/num";
 import { Vec } from "../values/vec";
-
-// Argmin via the lens primitive (numerical pseudoinverse).
-//
-// N-input lens via weighted least squares: one Newton-pseudoinverse
-// step per write. `forward` computes the output; `weights` controls
-// which inputs absorb the residual (0 = frozen, larger = absorbs more).
-// Many policies are just weight choices (polar's four, mean's [1…1],
-// pulley's [1,1], IK over joint angles).
-//
-// Jacobian is finite-differenced (N+1 forward evals per write);
-// Levenberg-Marquardt damping avoids blow-up near rank-deficiency.
 
 export interface ArgminOpts {
   /** Finite-difference epsilon for the Jacobian. Default 1e-4. */
