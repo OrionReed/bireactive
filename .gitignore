@@ -2,18 +2,7 @@ dist/
 dist-web/
 .DS_Store
 
-# TypeDoc-generated Markdown (rebuilt from src — VitePress reads docs/ as srcDir)
-/docs/api/
-/docs/classes/
-/docs/functions/
-/docs/interfaces/
-/docs/type-aliases/
-/docs/variables/
-/docs/enumerations/
-/docs/globals.md
-/docs/index.md
-/docs/typedoc-sidebar.json
-/docs/.vitepress/cache/
+# TypeDoc HTML output (rebuilt from src into the site bundle)
 bun.lockb
 yarn.lock
 

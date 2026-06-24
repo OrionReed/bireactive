@@ -1,6 +1,6 @@
 # bi-reactive
 
-[npm](https://www.npmjs.com/package/bireactive) · [GitHub](https://github.com/OrionReed/bireactive) · [site](https://orionreed.github.io/bireactive/) · [API](https://orionreed.github.io/bireactive/api/)
+[NPM](https://www.npmjs.com/package/bireactive) · [GitHub](https://github.com/OrionReed/bireactive) · [Demos](https://orionreed.github.io/bireactive/) · [API](https://orionreed.github.io/bireactive/api/)
 
 A signals-like bidirectional reactive programming system where edges can go both ways. Forward and backward propagation are handled by the engine, with the same set of caveats as regular reactive programming.
 
@@ -10,9 +10,9 @@ A signals-like bidirectional reactive programming system where edges can go both
 npm install bireactive
 ```
 
-Runtime dependencies [`temml`](https://temml.org) (for `tex`) and
+Runtime dependencies [`temml`](https://temml.org) (for `tex`), [`Automerge`](https://automerge.org) and
 [`prism-esm`](https://github.com/orionhealthotago/prism-esm) (for `code`) are
-installed automatically. They may be split into separate packages later so the
+installed automatically. These will be split into separate packages later so the
 core stays dependency-free.
 
 ## Sketch
@@ -72,9 +72,7 @@ npm test           # run the test suite
 
 ## Status
 
-`0.x` — APIs are still moving. The package is a single bundle today;
-sub-packages (`@bireactive/core`, `@bireactive/animation`, `@bireactive/shapes`, …) are used
-internally as path aliases and will be split out once the surface settles.
+`0.x` — APIs are still moving frequently. The package is a single bundle today; sub-packages will be split out once the surface settles.
 
 ## License
 

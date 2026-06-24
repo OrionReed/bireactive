@@ -2,21 +2,26 @@
   "$schema": "https://typedoc.org/schema.json",
   "entryPoints": ["src/index.ts"],
   "tsconfig": "tsconfig.json",
-  "out": "docs",
-  "docsRoot": "docs",
-  "cleanOutputDir": false,
+  "out": "dist-web/api",
   "name": "bireactive",
   "includeVersion": true,
+  "hostedBaseUrl": "https://orionreed.github.io/bireactive/api/",
   "excludeInternal": true,
   "excludePrivate": true,
   "excludeProtected": true,
-  "plugin": ["typedoc-plugin-markdown", "typedoc-vitepress-theme"],
-  "useCodeBlocks": true,
-  "expandParameters": true,
-  "parametersFormat": "table",
-  "classPropertiesFormat": "table",
-  "interfacePropertiesFormat": "table",
-  "typeDeclarationFormat": "table",
-  "propertyMembersFormat": "table",
-  "typeAliasPropertiesFormat": "table"
+  "hideGenerator": true,
+  "categorizeByGroup": true,
+  "navigationLinks": {
+    "Demo": "https://orionreed.github.io/bireactive/"
+  },
+  "lightHighlightTheme": "github-light",
+  "darkHighlightTheme": "github-dark",
+  "customCss": "./theme/typedoc.css",
+  "plugin": ["@typhonjs-typedoc/typedoc-theme-dmt"],
+  "theme": "default-modern",
+  "dmtFavicon": "./public/favicon.svg",
+  "dmtLinksService": {
+    "GitHub": "https://github.com/OrionReed/bireactive",
+    "NPM": "https://www.npmjs.com/package/bireactive"
+  }
 }

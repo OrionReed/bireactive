@@ -1,0 +1,30 @@
+/* Custom theme for the bireactive API reference (native TypeDoc + DMT).
+ * Maps TypeDoc's color variables to the demo-site palette (public/css/color.css);
+ * typography is left as the theme's clean system-font defaults. */
+
+/* TypeDoc resolves `--color-*` from these light/dark pairs (via both the
+ * prefers-color-scheme media queries and the explicit [data-theme] toggle), so
+ * overriding the pairs covers every path. */
+:root {
+  --light-color-background: #ffffff;
+  --light-color-background-secondary: #f4f4f4;
+  --light-color-background-navbar: #ffffff;
+  --light-color-warning-text: #222;
+  --light-color-background-warning: #fff8c5;
+  --light-color-accent: #ddd;
+  --light-color-text: #24292e;
+  --light-color-text-aside: #6b7177;
+  --light-color-link: #0969da;
+  --light-color-active-menu-item: #eef2f6;
+
+  --dark-color-background: #17191f;
+  --dark-color-background-secondary: #1f242c;
+  --dark-color-background-navbar: #17191f;
+  --dark-color-warning-text: #f0e9c8;
+  --dark-color-background-warning: #2b2a1e;
+  --dark-color-accent: #363c45;
+  --dark-color-text: #e9ecf0;
+  --dark-color-text-aside: #9aa1a9;
+  --dark-color-link: #4493f8;
+  --dark-color-active-menu-item: #232932;
+}
