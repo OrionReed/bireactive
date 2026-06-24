@@ -1,19 +1,14 @@
-// optic.ts — lenses as first-class values, independent of any `Cell`.
+// Lenses as first-class values, independent of any `Cell`. An `Optic<A, B>` is a
+// lens transform *unbound* — a `get`/`put` pair you compose, store, and apply to
+// a source with `cell.through(optic)` (≡ `lens(cell, o.get, o.put)`). Composition
+// is ordinary lens composition: `(f ∘ g).put(c, a) = f.put(g.put(c, f.get(a)),
+// a)`, reconstructing the inner source from `a` each back-write. An `iso` is the
+// lossless case whose `put` ignores the source (`readsSource = false`), so
+// `through` can bind a cheaper 1-arg backward. No complement here — use
+// `lens(parent, spec)` when you need one.
 //
-// A `Cell` lens binds a transform to a specific source. An `Optic<A, B>` is that
-// transform *unbound* — a pair of pure functions you can compose, store, and
-// hand around, then apply to a source with `cell.through(optic)` (≡ `lens(cell,
-// o.get, o.put)`). Composition is ordinary lens composition: `(f ∘ g).put(c, a) =
-// f.put(g.put(c, f.get(a)), a)`, so the inner source is reconstructed from `a` on
-// every back-write. An `iso` is the lossless special case whose `put` ignores the
-// source (`readsSource = false`), letting `through` bind a cheaper 1-arg backward.
-//
-// This is deliberately the pure/stateless slice of the lens algebra: no
-// complement, no effects. Stateful and effectful optics-as-values are future work
-// (see _notes); for now reach for `lens(parent, spec)` when you need a complement.
-//
-// The `Optic` type lives in cell.ts (so cell.ts stays import-free and its
-// `Cell.through` can name it); this module is the constructor/algebra surface.
+// The `Optic` type lives in cell.ts so that file stays import-free and its
+// `Cell.through` can name it; this module is the constructor/algebra surface.
 
 import type { Optic } from "./cell";
 

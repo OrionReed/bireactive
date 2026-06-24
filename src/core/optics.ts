@@ -1,11 +1,7 @@
-// optics.ts — plain-record field optics over a `Cell<T>`.
-//
-// `fieldOf` / `fieldLens` (cell.ts) project a value-class field and need the
-// field's Cell constructor, so `Vec.x` comes back as a typed `Num` carrying its
-// domain methods. For a plain record you just want `Cell<T[K]>` with the same
-// spread-replace put — `at` / `fields` supply that with full key inference and
-// no constructor argument. Both are thin sugar over `fieldOf` with the base
-// `Cell` as the result type.
+// Plain-record field optics over a `Cell<T>`. Unlike `fieldOf`/`fieldLens`
+// (cell.ts), which need the field's Cell constructor to return a typed value
+// class, `at`/`fields` return a base `Cell<T[K]>` with full key inference and no
+// constructor argument — thin sugar over `fieldOf` for plain records.
 
 import { Cell, fieldOf, type Read, type Writable } from "./cell";
 

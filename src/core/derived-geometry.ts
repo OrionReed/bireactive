@@ -1,10 +1,7 @@
-// derived-geometry.ts — read-only geometric readouts over `Cls.derive`.
-//
-// One-way derives whose inverse is genuinely under-determined (a point
-// sampled at parameter `t` constrains the curve at one point, but the
-// control points have many DOF). They live here, off the lens surface,
-// to keep `lenses/` exclusively bidirectional. For the writable bezier
-// shape decomposition see `bezierGestalt` in `lenses/geometry`.
+// Read-only geometric readouts over `Cls.derive`: one-way derives whose inverse
+// is under-determined (a point at parameter `t` pins the curve at one point, but
+// the control points keep many DOF). For the writable bezier decomposition see
+// `bezierGestalt` in `lenses/geometry`.
 
 import type { Cell } from "./cell";
 import { Vec } from "./values/vec";

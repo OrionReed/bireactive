@@ -1,14 +1,8 @@
-// linalg.ts — small dense linear algebra for the numerical backward
-// directions. Two callers, one kernel:
-//   - lenses: the factor/argmin pseudoinverse solves `A k = δy` where
-//     `A = J W Jᵀ + λI` is SPD by construction.
-//   - constraints: AVBD's per-cell local Newton solve, `n = cell DOF`.
-//
-// Systems are tiny (n ≤ ~12), so unrolled direct solves (n = 2, 3) and
-// in-place LDLᵀ beat anything general-purpose AND allocate nothing — the
-// matrix is destroyed, the solution is written into `b`. This replaces the
-// old full-inverse-then-multiply path (1.9–5.3× slower; allocated an
-// `n×2n` augmented buffer per write).
+// Small dense linear algebra for the numerical backward directions (the
+// factor/argmin pseudoinverse `A k = δy` with `A = J W Jᵀ + λI` SPD, and the
+// per-cell Newton solves in constraints). Systems are tiny (n ≤ ~12), so
+// unrolled solves (n = 2, 3) and in-place LDLᵀ beat anything general-purpose and
+// allocate nothing: the matrix is destroyed, the solution written into `b`.
 //
 // Convention: matrices are row-major, length `n*n`.
 

@@ -1,19 +1,15 @@
-// Traits — polymorphic interfaces declared on the class via a single
-// `static traits = { … }` dictionary. One nominal constraint type
-// `Traits<T, K>` covers any combination of required traits via a union
-// of keys (no per-trait alias proliferation):
+// Traits — polymorphic interfaces declared on a class via a single
+// `static traits = { … }` dictionary. One constraint type `Traits<T, K>` covers
+// any combination of required traits via a union of keys (no per-trait alias
+// proliferation):
 //
 //   function spring<T>(sig: Traits<T, "linear" | "metric">, target: Val<T>) …
 //   function tween<T>(sig: Traits<T, "lerp">, target: T, dur: Val<number>) …
 //
-// The dictionary shape is `TraitDict<T>`; `Traits<T, K>` is the
-// constraint consumers see. Two separate axes:
-//   - Type level: `Traits<T, K>` requires a phantom `_t` slot typed
-//     against the class's static traits (`declare readonly _t: …`).
-//   - Runtime: `requireLinear` & siblings walk `s.constructor.traits.*`.
-//
-// The engine (signal.ts) is trait-ignorant; subclasses thread equality
-// through `super(v, { equals })` themselves.
+// Two axes: at the type level `Traits<T, K>` requires a phantom `_t` slot typed
+// against the class's static traits; at runtime `requireLinear` & siblings walk
+// `s.constructor.traits.*`. The engine itself is trait-ignorant — subclasses
+// thread equality through `super(v, { equals })`.
 
 export interface Linear<T> {
   add(a: T, b: T): T;
@@ -57,13 +53,10 @@ export interface TraitDict<T> {
 /** Valid keys of `TraitDict`. The set of declarable traits. */
 export type TraitKey = keyof TraitDict<unknown>;
 
-/** "A reactive whose class declares the listed traits." `_t` is a
- *  phantom slot typed against `typeof Cls.traits`; listed keys must
- *  resolve to non-null. Pure constraint — doesn't imply `Cell<T>`;
- *  intersect with `Writable<Cell<T>>` / `Read<T>` for capability.
- *
- *      function spring<T>(sig: Traits<T, "linear" | "metric">, target: Val<T>)
- *      function tween<T>(sig: Traits<T, "lerp">, target: T, dur: Val<number>) */
+/** "A reactive whose class declares the listed traits." `_t` is a phantom slot
+ *  typed against `typeof Cls.traits`; listed keys must resolve to non-null. Pure
+ *  constraint — doesn't imply `Cell<T>`; intersect with `Writable<Cell<T>>` /
+ *  `Read<T>` for capability. */
 export type Traits<T, K extends TraitKey = never> = {
   /** @internal Phantom slot; never accessed at runtime. */
   readonly _t: { [P in K]-?: NonNullable<TraitDict<T>[P]> } & TraitDict<T>;

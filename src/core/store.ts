@@ -1,17 +1,10 @@
-// store.ts — a lens-backed deep store proxy over a `Cell`.
+// Deep store proxy over a `Cell`: `store(cell).a.b` is a chain of `at` field
+// lenses, so it's an ordinary `Cell` (read/write `.value`, bind in JSX, compose
+// with the graph). Writes are spread-replace puts back to the root.
 //
-// Signal libraries grow a separate `store` primitive for nested objects:
-// `store.user.name` reads a path, `setStore(...)` writes one. Here that's just
-// field lenses (`at`) under a recursive proxy — no second reactive primitive, no
-// fine-grained store engine. `store(cell).a.b` is a `Cell` (a chain of `at`
-// lenses), so it composes with everything else: read `.value`, write `.value`,
-// pass it to a component, bind it in JSX. Writes are spread-replace puts straight
-// back to the root cell, so the whole tree stays one source of truth.
-//
-// Navigation yields Stores; the leaf is written through `.value`
-// (`store.user.name.value = "x"`). A property whose name collides with the cell
-// surface below (`value`, `peek`, `lens`, `derive`, `merge`, `through`) resolves
-// to the cell member, not a field — drop to `at(cell, key)` for such a field.
+// A field whose name collides with the cell surface (`value`, `peek`, `lens`,
+// `derive`, `merge`, `through`) resolves to the cell member — use `at(cell, key)`
+// to reach such a field.
 
 import type { Cell, Writable } from "./cell";
 import { at } from "./optics";
@@ -97,8 +90,7 @@ function wrap(cell: Cell<unknown>): unknown {
 }
 
 /** Deep, lens-backed store view of `cell`. Field access returns a nested `Store`;
- *  write through `.value` at any depth. Works over any writable cell, including a
- *  lens, so the store stays one source of truth with the rest of the graph. */
+ *  write through `.value` at any depth. */
 export function store<T>(cell: Writable<Cell<T>>): Store<T> {
   return wrap(cell as Cell<unknown>) as Store<T>;
 }

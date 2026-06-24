@@ -1,9 +1,6 @@
-// lifecycle.ts — reactive-collection lifecycle helpers over the
-// `network` model. Implemented purely via `effect`:
-//
-//   `each(source, body)` — body runs per element (keyed by reference
-//                          identity); cleanup on removal.
-//   `when(source, body)` — body runs while truthy; cleanup on falsy.
+// Reactive-collection lifecycle helpers, implemented via `effect`: `each` runs a
+// body per element (keyed by reference identity) with cleanup on removal; `when`
+// runs a body while truthy with cleanup on falsy.
 
 import { effect, type Read } from "./cell";
 

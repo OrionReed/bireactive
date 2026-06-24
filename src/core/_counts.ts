@@ -1,15 +1,8 @@
-// Counts-first instrumentation — measurement scaffolding, not a public surface.
-//
-// The methodology (per the redesign brief): judge engine work by *counts*, not
-// timings. Every metric here is a discrete, predictable event — a user callback
-// invoked, a codepath entered, a node visited, a reverse edge spliced — so a
-// correct minimal engine has a *calculable* target and any work above it is
-// provably wasted. This is the gate for the unification: a change must not raise
-// the forward counts and must hold the backward counts at their minimum.
-//
-// Off by default. `COUNTS` is one module-level gate; each instrumented site reads
-// `if (COUNTS) counts.x++`, so a downstream minifier sees `if (false)` and drops
-// it, and when on the cost is a single predictable branch. Flip via `withCounts`.
+// Counts-first instrumentation: judge engine work by discrete event *counts*
+// (callbacks invoked, codepaths entered, nodes visited, edges spliced), not
+// timings, so a minimal engine has a calculable target. Off by default — each
+// site reads `if (COUNTS) counts.x++`, so a minifier drops it when off and it
+// costs one branch when on. Flip via `withCounts`.
 
 export interface Counts {
   // Forward (alien push/pull).
