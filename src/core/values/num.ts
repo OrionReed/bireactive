@@ -1,8 +1,3 @@
-// num.ts — reactive scalar.
-//
-// Invertibles return `: this` and ride on `Cell#lens(fwd, bwd)`;
-// chained calls compose into a lens chain.
-
 import { type Easing, type Tween, tween } from "../../animation";
 import {
   Cell,
@@ -75,8 +70,7 @@ export class Num extends Cell<V> {
       n => n / kf(),
     );
   }
-  /** Affine `v ↦ k·v + off`. Invertible iff k ≠ 0; readability alias
-   *  for `.scale(k).add(off)`. */
+  /** Affine map `v ↦ k·v + off`. Invertible when k ≠ 0. */
   affine(k: Val<number>, off: Val<number>): this {
     const kf = reader(k);
     const of = reader(off);
@@ -86,9 +80,8 @@ export class Num extends Cell<V> {
     );
   }
 
-  /** `sin(this)` (radians). Forward lands in [−1, 1]; the inverse is
-   *  multi-valued, so a write clamps to that domain and returns the
-   *  pre-image nearest the current source — the drag stays on its branch. */
+  /** Sine of `this` (radians). The inverse is multi-valued; a write picks the
+   *  angle nearest the current value, so a drag stays on its branch. */
   sin(): this {
     return this.lens(
       v => Math.sin(v),
@@ -101,7 +94,7 @@ export class Num extends Cell<V> {
     );
   }
 
-  /** `exp(this)` — bijection on the reals; inverse is the natural log. */
+  /** Natural exponential; inverts via log. */
   exp(): this {
     return this.lens(
       v => Math.exp(v),
@@ -109,8 +102,7 @@ export class Num extends Cell<V> {
     );
   }
 
-  /** Lossy clamping lens to `[lo, hi]`. PutGet only (a write outside
-   *  the range reads back clamped, not as written). */
+  /** Clamp to `[lo, hi]`. Lossy: a write outside the range reads back clamped. */
   clamp(lo: Val<V>, hi: Val<V>): this {
     const lf = reader(lo);
     const hf = reader(hi);
@@ -119,33 +111,31 @@ export class Num extends Cell<V> {
         h = hf();
       return v < l ? l : v > h ? h : v;
     };
-    // A write whose clamped projection matches the current view leaves
-    // the source untouched (off-range source preserved).
+    // If the clamped write matches the current view, keep the source
+    // (preserves an off-range source value).
     return this.lens(c, (v, s) => {
       const cv = c(v);
       return cv === c(s) ? s : cv;
     });
   }
 
-  /** Lossy lens snapping reads/writes to the nearest multiple of `step`. */
+  /** Snap reads and writes to the nearest multiple of `step` (lossy). */
   quantize(step: Val<number>): this {
     const sf = reader(step);
     const q = (v: V) => {
       const s = sf();
       return Math.round(v / s) * s;
     };
-    // A write that snaps to the current bucket leaves the source
-    // untouched (off-grid remainder preserved).
+    // If the write snaps to the current bucket, keep the source
+    // (preserves an off-grid remainder).
     return this.lens(q, (v, src) => {
       const qv = q(v);
       return qv === q(src) ? src : qv;
     });
   }
 
-  /** Cyclic-coordinate lens. Reads pass through; writes pick the
-   *  representative closest to current modulo `period`, so dragging an
-   *  angle never jumps a full revolution. The 2-arg bwd is arity-detected
-   *  as stateful, threading the accumulated value through `s`. */
+  /** Reads pass through; a write picks the value closest to the current one
+   *  modulo `period`, so dragging an angle never jumps a full turn. */
   cyclic(period: Val<number>): this {
     const pf = reader(period);
     return this.lens(
@@ -158,14 +148,8 @@ export class Num extends Cell<V> {
     );
   }
 
-  // Predicate bridges to Bool.
-  //
-  // Cross-type quotient lenses projecting Num through a boolean
-  // predicate. Conditional return type: writable receiver yields
-  // `Writable<Bool>`, RO receiver yields RO `Bool`.
-
-  /** `this > t` as a Bool. Flipping the view bumps the source across
-   *  the threshold by `eps`. */
+  /** `this > t` as a Bool. Flipping it bumps the source across the
+   *  threshold by `eps`. */
   greaterThan<T extends Num>(
     this: T,
     t: Val<V>,
@@ -184,7 +168,7 @@ export class Num extends Cell<V> {
     ) as never;
   }
 
-  /** `this < t`. Dual of `greaterThan`. */
+  /** `this < t` as a Bool. */
   lessThan<T extends Num>(
     this: T,
     t: Val<V>,
@@ -203,10 +187,8 @@ export class Num extends Cell<V> {
     ) as never;
   }
 
-  /** `round(this) ≡ 0 (mod d)` as a Bool; pair with `quantize(1)` for
-   *  integer sliders. Bwd: to make divisible, snap to the nearer
-   *  multiple of `d`; to make non-divisible, bump by `+1`; no-op when
-   *  the class already matches. */
+  /** True when `round(this)` is divisible by `d`. A write snaps to the nearest
+   *  multiple of `d` to make it divisible, or bumps by 1 to make it not. */
   divisibleBy<T extends Num>(this: T, d: Val<V>): T extends WritableBrand ? Writable<Bool> : Bool {
     const df = reader(d);
     return Bool.lens(
@@ -229,26 +211,24 @@ export class Num extends Cell<V> {
     ) as never;
   }
 
-  /** `divisibleBy(2)` — lazy getter for the common case. */
+  /** True when even. */
   get isEven(): this extends WritableBrand ? Writable<Bool> : Bool {
     return lazy(this, "isEven", () => (this as Num).divisibleBy(2)) as never;
   }
-  /** `not(divisibleBy(2))` — lazy getter. */
+  /** True when odd. */
   get isOdd(): this extends WritableBrand ? Writable<Bool> : Bool {
     return lazy(this, "isOdd", () => (this as Num).divisibleBy(2).not()) as never;
   }
 
-  /** Tween-builder; `this: Writable<Num>` gates the call to writable
-   *  receivers. */
+  /** Tween-builder. */
   to(this: Writable<Num>, target: V, dur: Val<number>, ease?: Easing): Tween<V> {
     return tween(this, target, dur, ease);
   }
 }
 
-/** Writable `Num`. Literal seeds a fresh cell; existing `Writable<Num>`
- *  passes through by identity. RO sources are rejected at the type level —
- *  use `Num.derive(...)` for reactive RO tracking, or `Num.coerce(...)` for
- *  the permissive lift over any `Val<number>`. */
+/** Writable `Num` from a literal (new cell) or existing writable (passed
+ *  through). For read-only sources use `Num.derive`, or `Num.coerce` to lift
+ *  any `Val<number>`. */
 export function num(v: Init<Num> = 0): Writable<Num> {
   if (v instanceof Num) return v as Writable<Num>;
   return new Num(v) as Writable<Num>;

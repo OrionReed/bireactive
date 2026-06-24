@@ -1,8 +1,3 @@
-// box.ts — reactive axis-aligned rectangle.
-//
-// Invertibles (`add`, `sub`, `scale`, `expand`) return `: this` and ride
-// on `Cell#lens(fwd, bwd)`. Chained calls compose into a lens chain.
-
 import { type Easing, type Tween, tween } from "../../animation";
 import {
   Cell,
@@ -39,7 +34,7 @@ export const lerp = (a: V, b: V, t: number): V => ({
 });
 export const equals = (a: V, b: V) =>
   a === b || (a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h);
-/** L2 distance over the flat (x, y, w, h) representation. */
+/** Euclidean distance over (x, y, w, h). */
 export const metric = (a: V, b: V) => Math.hypot(a.x - b.x, a.y - b.y, a.w - b.w, a.h - b.h);
 export const expand = (b: V, n: number): V => ({
   x: b.x - n,
@@ -50,16 +45,15 @@ export const expand = (b: V, n: number): V => ({
 export const contains = (b: V, p: Inner<Vec>): boolean =>
   p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
 
-/** Closest point inside `b` to `p`. Already-inside is identity; outside
- *  snaps to the nearest boundary point. `Box#contains`'s true-side bwd. */
+/** Closest point inside `b` to `p`; already-inside is identity, outside snaps
+ *  to the nearest boundary point. */
 export const clampToBox = (p: Inner<Vec>, b: V): Inner<Vec> => ({
   x: Math.max(b.x, Math.min(b.x + b.w, p.x)),
   y: Math.max(b.y, Math.min(b.y + b.h, p.y)),
 });
 
-/** Closest point strictly outside `b` to `p`, displaced past the nearest
- *  edge by `eps`. Already-outside is identity. `Box#contains`'s
- *  false-side bwd. */
+/** Closest point strictly outside `b` to `p`, displaced past the nearest edge
+ *  by `eps`; already-outside is identity. */
 export const ejectFromBox = (p: Inner<Vec>, b: V, eps = 1e-6): Inner<Vec> => {
   if (!contains(b, p)) return p;
   const dLeft = p.x - b.x;
@@ -90,7 +84,7 @@ export function union(...bs: V[]): V {
   return { x: xMin, y: yMin, w: xMax - xMin, h: yMax - yMin };
 }
 
-/** Perimeter point on a Box facing `toward`. Default `Shape.boundary`. */
+/** Perimeter point on a box facing `toward`. */
 export function edgeFrom(b: V, toward: Inner<Vec>): Inner<Vec> {
   const cx = b.x + b.w / 2;
   const cy = b.y + b.h / 2;
@@ -162,18 +156,16 @@ export class Box extends Cell<V> {
   lerp(b: Val<V>, t: Val<number>): Box {
     return Box.derive(() => lerp(this.value, readNow(b), readNow(t)));
   }
-  /** Membership predicate. Conditional return type: a writable `Vec`
-   *  yields `Writable<Bool>` and flipping the view moves the source —
-   *  `true` clamps to the nearest in-box point, `false` ejects past the
-   *  nearest edge by `eps`. Literal / RO inputs yield a bare RO `Bool`. */
+  /** True when `p` is inside the box. A writable `Vec` yields a `Writable<Bool>`:
+   *  flipping it clamps `p` to the nearest in-box point (`true`) or ejects it
+   *  past the nearest edge (`false`). Literal/RO inputs yield a read-only `Bool`. */
   contains<P extends Val<Inner<Vec>>>(p: P): P extends WritableBrand ? Writable<Bool> : Bool {
     if (p instanceof Vec) {
-      // A read-only Vec has no backward path → RO branch; sources and
-      // writable lenses accept write-back.
+      // RO Vec has no backward path; only writable Vecs accept write-back.
       if (!isReadonly(p)) {
-        // `.bind(Bool)` + cast steps past the generic overloads, whose
-        // mapped-tuple inference over the full class types otherwise blows
-        // the instantiation depth.
+        // `.bind(Bool)` + cast sidesteps the generic overloads, whose
+        // mapped-tuple inference over the full class types blows the
+        // instantiation depth.
         const mk = Bool.lens.bind(Bool) as unknown as (
           parents: readonly [Read<V>, Read<Inner<Vec>>],
           fwd: (vals: readonly [V, Inner<Vec>]) => boolean,
@@ -212,15 +204,12 @@ export class Box extends Cell<V> {
     return cachedDerive(this, "area", Num, b => b.w * b.h);
   }
 
-  /** Vec at parametric (u, v) within `[0,1]²`. Not memoised (arbitrary
-   *  pairs would leak a cache entry each) — use the named edge getters
-   *  (`.center`, `.top`, …) for stable identity. */
+  /** Vec at parametric `(u, v)` in `[0,1]²`. Not memoised; use the named edge
+   *  getters (`.center`, `.top`, …) for stable identity. */
   at(u: number, v: number): Vec {
     return Vec.derive(this, b => ({ x: b.x + u * b.w, y: b.y + v * b.h }));
   }
-  // Named edges — RO views over `at(u, v)`, memoised under stable keys
-  // so subscribers always see the same Vec. `lazy()` directly since
-  // `at()` already returns a Vec.
+  // Named edges: memoised views over `at(u, v)` with stable identity.
   get center(): Vec {
     return lazy(this, "center", () => this.at(0.5, 0.5));
   }
@@ -237,17 +226,15 @@ export class Box extends Cell<V> {
     return lazy(this, "right", () => this.at(1, 0.5));
   }
 
-  /** Tween-builder, implied by the lerp trait. */
+  /** Tween-builder. */
   to(this: Writable<Box>, target: V, dur: Val<number>, ease?: Easing): Tween<V> {
     return tween(this, target, dur, ease);
   }
 }
 
-/** Writable `Box` at `(x, y, w, h)`. Each component is a literal `number`
- *  (lifted to a fresh seed) or an existing `Writable<Num>` (identity
- *  passthrough). RO sources are rejected at the type level — use
- *  `Box.derive(...)` for reactive RO tracking, or `cell.value` to
- *  snapshot. Lock a component with `Num.pin(c)`. */
+/** Writable `Box` at `(x, y, w, h)`. Each component is a literal (new cell) or
+ *  existing writable (passed through); for read-only sources use `Box.derive`.
+ *  Lock a component with `Num.pin`. */
 export function box(
   x: Init<Num> = 0,
   y: Init<Num> = 0,
@@ -266,7 +253,6 @@ export function box(
   const yN = num(y);
   const wN = num(w);
   const hN = num(h);
-  // The view fully reconstructs all 4 axes (1-arg bwd ⇒ no source read).
   return Box.lens(
     [xN, yN, wN, hN] as const,
     ([bx, by, bw, bh]) => ({ x: bx, y: by, w: bw, h: bh }),

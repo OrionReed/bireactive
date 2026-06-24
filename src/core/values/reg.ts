@@ -1,38 +1,3 @@
-// reg.ts — `Reg`: a bidirectional, *unambiguous* regular-lens algebra.
-//
-// A `Reg` is NOT a `Cell` like `Str`/`Num`/`Arr`. It is an immutable
-// *description* — an AST of lens combinators — that you compose freely (no
-// reactive nodes allocated) and then `bind`/`view` onto a `Cell<string>` to get
-// editable cells. Only the parts you *name* (`.as`) or iterate (`star`)
-// materialize as cells; the rest stays anonymous inside one lens. The runtime
-// shape is a *reflective parser / printer* (Zhu–Ko–Hu, SLE'16): `match` is the
-// `get` (parse), `print` is the `put`, and they satisfy GetPut
-// (`print(match s) = s`) and PutGet (`match(print v) = v`).
-//
-// Discipline: a lens is a *function*, so the grammar must be unambiguous — every
-// string has exactly one parse. We go further and require it to be
-// *deterministic* (1-unambiguous, Brüggemann-Klein & Wood): at every split
-// point the characters that could continue the left are disjoint from those
-// that could begin the right. That single property buys everything:
-//
-//   • parsing is greedy, single-pass, linear — no backtracking, so the ReDoS
-//     blow-up class is impossible by construction (not defended against);
-//   • ambiguity is rejected at *construction* (a `RegError`, thrown the moment
-//     the grammar is built — typically module load), with a concrete reason;
-//   • the same first/followLast reasoning is mirrored in the *types* (see
-//     `reg/types.ts`), so the common mistakes — undelimited adjacent captures,
-//     a nullable element under `star` — surface as red squiggles, not throws.
-//
-// Leaves are typed builders that publish their boundary in the type:
-//
-//   lit(text)        a fixed delimiter — matched, printed, never surfaced
-//   until(c)         text up to (not including) the delimiter `c`  → string
-//   digits()/int()   \d+ as a string / number
-//   letters()/word() [A-Za-z]+ / \w+                                → string
-//   copy(re)/of(...) the escape hatch: an arbitrary regular `RegExp`
-//                    (boundary unknown to the types; still checked at runtime)
-//   seq/then · alt/or · opt/optional · star/plus   the regular operators
-
 import { Cell, type Optic, type Read, type Writable } from "../cell";
 import { optic } from "../optic";
 import { Arr } from "./arr";
@@ -72,11 +37,9 @@ import { Str } from "./str";
 import { type Codec, numCodec } from "./template";
 
 // ── runtime value tree ─────────────────────────────────────────────────
-//
-// `match` yields a `RegVal` mirroring the AST; `print` consumes it. The static
-// types below (`V`) refine this per grammar; at runtime the shapes are:
-// leaf→string|T, `seq`→array of *visible* (non-`lit`) children, `alt`→`{branch,
-// val}`, `opt`→inner|null, `star`→`{items, seps}` (separators kept verbatim).
+// `match` yields a `RegVal` mirroring the AST; `print` consumes it. Runtime
+// shapes: leaf→string|T, `seq`→array of visible (non-`lit`) children,
+// `alt`→{branch, val}, `opt`→inner|null, `star`→{items, seps}.
 
 /** A parsed star: its elements plus the literal separators between them
  *  (`seps.length === items.length - 1`), kept so `print` round-trips. */
@@ -180,10 +143,6 @@ function reOf(n: Node): Re {
 }
 
 // ── parse (get): linear PikeVM, whole-string ──────────────────────────
-//
-// The grammar compiles to a tagged Thompson program (see `reg/nfa.ts`); a
-// single PikeVM pass yields the unique parse (unambiguity is enforced at
-// construction). `null` means the string is not in the language.
 
 /** Parse `s` fully; `null` if it doesn't match. */
 function parseNode(n: Node, s: string, spans?: Map<string, Span>): RegVal | null {
@@ -281,14 +240,9 @@ function nullable(n: Node): boolean {
 }
 
 // ── unambiguity checks (thrown at construction) ──────────────────────
-//
-// Each combinator validates only its own new seams (children are already
-// valid). v3 accepts the full *unambiguous* regular class, so the tests are
-// decided on the derivative automaton (see `reg/ambiguity.ts`) rather than the
-// stricter 1-unambiguous first/followLast overlap. They are the complete
-// runtime authority — the types (see `reg/types.ts`) approximate a sound subset
-// and erase to "unknown" through `copy`/`of`. Each error names a concrete
-// witness string that would parse two ways.
+// Each combinator validates only its own new seams (children are already valid),
+// deciding on the derivative automaton (see `reg/ambiguity.ts`). Each error
+// names a concrete witness string that would parse two ways.
 
 const quote = (s: string): string => (s === "" ? '""' : JSON.stringify(s));
 

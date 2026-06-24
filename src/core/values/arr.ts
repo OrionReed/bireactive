@@ -1,32 +1,3 @@
-// arr.ts — a reactive ordered collection whose elements are cells.
-//
-// The successor to `coll.ts`. Where `Coll` makes order/group/visibility
-// fields of plain records, an `Arr<T>` holds `Cell<T>` *elements* and lets
-// identity, residue, and order fall out of that one decision:
-//
-//   • Identity is the cell reference — no minted ids, no `by` key. `each`,
-//     `filter`, `sortBy` all key on it, so reorder/insert/move are sound by
-//     construction.
-//   • Order is STRUCTURAL — the value of an `Arr` is the ordered list of its
-//     element cells, so a reorder is a splice of references, not a write to a
-//     per-element rank. That retires fractional-rank collisions and precision
-//     exhaustion entirely: `indexOf(cell)` is a writable `Num` whose backward
-//     pass moves the reference in O(n), with no midpoint to run out of.
-//   • Per-element residue lives on the element cell — a lossy `map` carries
-//     its complement on the element's own lens, so the collection itself
-//     stays complement-free (its only state is the reference order).
-//
-// Two change classes, like `Coll`:
-//   • value change   — an element cell changes; forward views (filter / sortBy
-//                      / map) re-derive.
-//   • structural edit — insert / remove / move / clear; one write of the
-//                       reference list.
-//
-// Views (`filter` / `sortBy` / `map`) are derived `Arr`s that SHARE the
-// element cells, so editing an element through any view writes the one cell,
-// and structural edits delegate up the chain to the base (each view
-// translating the element back to its parent's cell).
-
 import { batch, Cell, cell, derive, lazy, lens, type Read, type Writable } from "../cell";
 import type { TraitDict } from "../traits";
 import { Num } from "./num";
@@ -34,9 +5,8 @@ import { Num } from "./num";
 /** The value of an `Arr<T>`: its element cells, in order. */
 type Elems<T> = readonly Cell<T>[];
 
-/** Structural equality: same elements (by reference) in the same order. A
- *  value change inside an element doesn't change this — that's a separate
- *  cell — so structural edits and value edits stay cleanly distinct. */
+/** Structural equality: same element cells (by reference) in the same order; a
+ *  value change inside an element doesn't affect it. */
 const sameCells = <E>(a: readonly E[], b: readonly E[]): boolean =>
   a === b || (a.length === b.length && a.every((c, i) => c === b[i]));
 
@@ -45,18 +15,12 @@ const clampInt = (v: number, lo: number, hi: number): number => {
   return r < lo ? lo : r > hi ? hi : r;
 };
 
-// View metadata, kept off the instance so a base `Arr` carries nothing. A
-// derived `Arr` (a filter/sortBy/map view, or a `fromSource` projection like
-// `Str.split`) routes its structural edits through these closures instead of
-// the base splice. Each is optional: a missing op means the view doesn't
-// support that edit (calling it throws), e.g. `map` has no `insert` inverse.
-//
-// Reordering is expressed as `moveBefore(e, anchor)` — splice `e` to just
-// before `anchor` (or to the end when `anchor` is null). It's the anchor, not
-// an index, that composes through a view: the anchor is a shared element cell,
-// meaningful in the base order, so a grouped/filtered move lands `e` relative
-// to a sibling without translating index spaces. `assertContains` makes `e`
-// visible by asserting each view's constraint up to the base.
+// View metadata, kept off the instance. A derived `Arr` (filter/sortBy/map, or
+// a `fromSource` projection) routes structural edits through these closures; a
+// missing op means the view doesn't support that edit (calling it throws).
+// Moves use `moveBefore(e, anchor)`: the anchor is a shared element cell,
+// meaningful in the base order, so it composes through views without
+// translating index spaces.
 interface ViewInfo {
   insert?: (v: unknown, at?: number) => Cell<unknown>;
   remove?: (e: Cell<unknown>) => void;
@@ -65,9 +29,8 @@ interface ViewInfo {
 }
 const views = new WeakMap<Arr<unknown>, ViewInfo>();
 
-/** A predicate over an element cell, optionally assertable — `assert(c)`
- *  makes the test pass by writing the cell, so a drop into a filtered view
- *  can satisfy the filter. */
+/** A predicate over an element cell; optional `assert(c)` makes the test pass
+ *  by writing the cell. */
 export interface CellPred<T> {
   (c: Cell<T>): boolean;
   assert?: (c: Cell<T>) => void;
@@ -83,18 +46,16 @@ export class Arr<T> extends Cell<Elems<T>> {
     super(items, { equals: sameCells as (a: Elems<T>, b: Elems<T>) => boolean });
   }
 
-  /** Build a derived `Arr` over any `Read` source. The variance escape is
-   *  real: `Cell<R>` isn't assignable to `Cell<unknown>` (the `_equals` method
-   *  is contravariant), so the typed `Arr.derive` can't see element subtyping. */
+  /** Build a derived `Arr` over any `Read` source. Variance escape: `Cell<R>`
+   *  isn't assignable to `Cell<unknown>` (contravariant `_equals`), so typed
+   *  `Arr.derive` can't see element subtyping. */
   static #view<P, R>(parent: Read<P>, getter: (v: P) => Elems<R>): Arr<R> {
     // biome-ignore lint/suspicious/noExplicitAny: variance escape (see above)
     return (Arr.derive as any)(parent, getter) as Arr<R>;
   }
 
-  /** An `Arr` whose elements are derived from an external `source` (each
-   *  element typically a lens into it) and whose structural edits rewrite
-   *  that source via `ops`. The bridge from a non-`Arr` source into the
-   *  collection API — `Str.split` is the canonical user. */
+  /** An `Arr` whose elements are derived from an external `source` and whose
+   *  structural edits rewrite that source via `ops`. */
   static fromSource<S, R>(
     source: Read<S>,
     getter: (s: S) => Elems<R>,
@@ -131,11 +92,9 @@ export class Arr<T> extends Cell<Elems<T>> {
     return lazy(this, "length", () => Num.derive(this, cs => cs.length));
   }
 
-  /** This element's index as a writable `Num`: read = its current position,
-   *  write = a reorder. The backward pass splices the reference to the
-   *  (rounded, clamped) target — O(n), collision-free, no rank field. A
-   *  no-op target leaves the order untouched. Writable on a base `Arr`;
-   *  read-only over a derived view (its order isn't a structural source). */
+  /** This element's index as a writable `Num`: reading gives its position,
+   *  writing reorders (splices the reference to the rounded, clamped target).
+   *  Writable on a base `Arr`; read-only over a derived view. */
   indexOf(e: Cell<T>): Writable<Num> {
     return Num.lens(
       this as Arr<T>,
@@ -196,9 +155,7 @@ export class Arr<T> extends Cell<Elems<T>> {
     if (e) this.remove(e);
   }
 
-  /** Move `e` to index `to` (rounded, clamped) in this (view's) order. Resolves
-   *  the target neighbour in the current order, then splices via `moveBefore`.
-   *  Prefer `indexOf` for the lens form. */
+  /** Move `e` to index `to` (rounded, clamped) in this (view's) order. */
   move(e: Cell<T>, to: number): void {
     const cur = this.peek();
     const others = cur.filter(x => x !== e);
@@ -226,9 +183,8 @@ export class Arr<T> extends Cell<Elems<T>> {
     if (!sameCells(next, cur)) this._writeSource(next);
   }
 
-  /** Make `e` appear in this view: insert it into the base if absent, then
-   *  assert each view's constraint up the chain (a filter writes whatever its
-   *  predicate demands). The backbone of a grouped `move` into a filtered view. */
+  /** Make `e` appear in this view: insert into the base if absent, then assert
+   *  each view's constraint up the chain. */
   assertContains(e: Cell<T>): void {
     const info = views.get(this as Arr<unknown>);
     if (info) {
@@ -322,12 +278,10 @@ export class Arr<T> extends Cell<Elems<T>> {
     return view;
   }
 
-  /** Partition by a per-element key field, into derived sub-`Arr`s keyed by
-   *  value (one writable filter view per bucket). `move(e, key, index)` writes
-   *  the key field and splices the base so `e` lands at `index` within its new
-   *  group — the structural-order analogue of `Coll`'s grouped move, with the
-   *  group field as the only complement. `order` seeds empty buckets and pins
-   *  their order. */
+  /** Partition by a per-element key field into derived sub-`Arr`s, one writable
+   *  filter view per bucket. `move(e, key, index)` writes the key field and
+   *  splices the base so `e` lands at `index` in its new group. `order` seeds
+   *  empty buckets and pins their order. */
   groupBy<K>(
     field: (e: Cell<T>) => Writable<Cell<K>>,
     opts: { order?: readonly K[] } = {},
@@ -411,8 +365,7 @@ export class GroupArr<K, T> {
     });
   }
 
-  /** Alias of `move` — placing an element into a group is the same backward
-   *  pass whether or not it was already a member. */
+  /** Alias of `move`. */
   insert(e: Cell<T>, key: K, index?: number): void {
     this.move(e, key, index);
   }
@@ -423,8 +376,7 @@ export class GroupArr<K, T> {
   }
 }
 
-/** `field === value`, assertable by writing the field — the cell-element
- *  analogue of `Coll`'s `is`, for `filter` predicates. */
+/** `field === value`, assertable by writing the field; for `filter` predicates. */
 export function is<T, V>(field: (e: Cell<T>) => Writable<Cell<V>>, value: V): CellPred<T> {
   const p = ((c: Cell<T>) => Object.is(field(c).value, value)) as CellPred<T>;
   p.assert = c => {

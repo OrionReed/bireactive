@@ -1,9 +1,3 @@
-// tri.ts — three-valued logical type (Kleene logic).
-//
-// `Tri.value ∈ { true, false, "mixed" }` — Bool plus an unknown state
-// fixed under negation. Strong-Kleene AND/OR follow the partial-info
-// reading (`mixed AND false` → `false`, `mixed AND true` → `mixed`).
-
 import { Cell, type Init, SKIP, type Writable } from "../cell";
 import type { TraitDict } from "../traits";
 import type { Bool } from "./bool";
@@ -39,15 +33,14 @@ export class Tri extends Cell<V> {
     super(v, { equals });
   }
 
-  /** Kleene negation. Involution; fixed at `"mixed"`. */
+  /** Kleene negation. */
   not(): this {
     return this.lens(not, not);
   }
 
-  /** Aggregate over N writable `Bool` / `Tri` children. Read: all-true →
-   *  `true`, all-false → `false`, any disagreement (or any child already
-   *  `"mixed"`) → `"mixed"`. Write: `true` / `false` broadcast to every
-   *  child, recursing through nested aggregates; `"mixed"` is a no-op. */
+  /** AND-aggregate over writable `Bool`/`Tri` children: `true` if all are true,
+   *  `false` if all false, else `"mixed"`. A `true`/`false` write broadcasts to
+   *  every child (recursing into nested aggregates); `"mixed"` is a no-op. */
   static allOf(parents: readonly (Bool | Tri)[]): Writable<Tri> {
     return Tri.lens(
       parents as never,
@@ -69,9 +62,9 @@ export class Tri extends Cell<V> {
     );
   }
 
-  /** Dual of `allOf` (Kleene OR) over `Bool` / `Tri` children: any-true →
-   *  `true`, all-false → `false`, else (or any child `"mixed"`) →
-   *  `"mixed"`. Same broadcast write policy. */
+  /** OR-aggregate over writable `Bool`/`Tri` children: `true` if any is true,
+   *  `false` if all false, else `"mixed"`. A `true`/`false` write broadcasts to
+   *  every child; `"mixed"` is a no-op. */
   static anyOf(parents: readonly (Bool | Tri)[]): Writable<Tri> {
     return Tri.lens(
       parents as never,
@@ -95,8 +88,8 @@ export class Tri extends Cell<V> {
   }
 }
 
-/** Writable `Tri`. Strict factory: `Tri.value | Writable<Tri>` in,
- *  `Writable<Tri>` out. Default initial value is `"mixed"`. */
+/** Writable `Tri` from a literal (new cell) or existing writable (passed
+ *  through). Defaults to `"mixed"`. */
 export function tri(v: Init<Tri> = "mixed"): Writable<Tri> {
   if (v instanceof Tri) return v as Writable<Tri>;
   return new Tri(v) as Writable<Tri>;

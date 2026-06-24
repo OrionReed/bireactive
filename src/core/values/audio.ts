@@ -1,24 +1,8 @@
-// audio.ts — reactive audio clip (handle-as-value), the sound twin of canvas.ts.
-//
-// A Clip is context-free PCM: one Float32Array per channel plus a sample rate.
-// The graph transports only the tiny header {pcm, sampleRate, epoch} and compares
-// the monotonic epoch, so propagation never scans a sample and nothing is copied
-// across the bus (same handle-as-value rule as Canvas, minus the GL context — PCM
-// needs no ambient AudioContext, that only appears at the playback sink).
-//
-// Tiers mirror the rest of values/:
-//   - pure isomorphisms (`reverse`) — one pass each way.
-//   - reactive-param invertible (`gain(k)`) — reads `Val<number>`.
-//   - complement projection (`normalize`) — the lossy view (peak-scaled) plus a
-//     complement (the original peak) recovered on write-back, the audio analog of
-//     caseFold/canvas.grayscale().
-//   - cross-type lens (`rms` → Num).
-
 import { Cell, type Init, reader, type Val, type Writable } from "../cell";
 import type { TraitDict } from "../traits";
 import { Num } from "./num";
 
-/** Clip header. The graph compares `epoch`; `pcm` is one channel buffer each. */
+/** Clip header; the graph compares `epoch`. One `pcm` buffer per channel. */
 export interface AudioClip {
   readonly pcm: readonly Float32Array[];
   readonly sampleRate: number;
@@ -28,7 +12,7 @@ export interface AudioClip {
 type V = AudioClip;
 
 let EPOCH = 0;
-/** Stamp channel buffers with a fresh epoch — the only way to mint a value. */
+/** Stamp buffers with a fresh epoch — the only way to mint a `Clip` value. */
 export const stamp = (pcm: readonly Float32Array[], sampleRate: number): V => ({
   pcm,
   sampleRate,
@@ -76,7 +60,7 @@ export class Audio extends Cell<V> {
     super(v, { equals });
   }
 
-  /** Time-reverse every channel. Involution. */
+  /** Time-reverse every channel. */
   reverse(): this {
     const run = (v: V) =>
       stamp(
@@ -90,7 +74,7 @@ export class Audio extends Cell<V> {
     return this.lens(run, run);
   }
 
-  /** Scalar gain. Invertible while k ≠ 0 — the audio twin of Canvas.brightness. */
+  /** Scalar gain. Invertible while k ≠ 0. */
   gain(k: Val<number>): this {
     const kf = reader(k);
     return this.lens(
@@ -99,9 +83,8 @@ export class Audio extends Cell<V> {
     );
   }
 
-  /** Peak-normalize to reactive `target` (default 1). The view alone can't
-   *  know the source's loudness, so the complement carries the original peak and
-   *  the backward pass restores it. The audio analog of `caseFold`. */
+  /** Peak-normalize to `target` (default 1). The complement stores the original
+   *  peak so a write-back restores it. */
   normalize(target: Val<number> = 1): Writable<Audio> {
     const tf = reader(target);
     const self: Audio = this;
@@ -132,8 +115,8 @@ export class Audio extends Cell<V> {
   }
 }
 
-/** Writable `Audio`. A `Clip` seeds a fresh cell; an existing `Writable<Audio>`
- *  passes through by identity. */
+/** Writable `Audio` from a `Clip` (new cell) or existing writable (passed
+ *  through). */
 export function audio(v: Init<Audio>): Writable<Audio> {
   if (v instanceof Audio) return v as Writable<Audio>;
   return new Audio(v) as Writable<Audio>;

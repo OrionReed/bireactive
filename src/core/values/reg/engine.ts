@@ -1,29 +1,5 @@
-// engine.ts — a Brzozowski-derivative core for the regular subset.
-//
-// This is the recognition engine under `Reg`. It is deliberately ignorant of
-// captures, values, and lenses: it knows only regular languages over UTF-16
-// code units and how to differentiate them (Brzozowski 1964). Two services
-// sit on top of it:
-//
-//   • `accepts` / `matchLengths` — the lexer primitive used by the backtracking
-//     value parser in reg.ts. `matchLengths` returns *every* prefix length a
-//     pattern accepts at an offset, which is exactly what lets the parser
-//     backtrack (the v1 sticky-`RegExp` leaf could only ever report one).
-//   • the `Re` AST + `CharSet` — also consumed by the ambiguity checker, which
-//     compiles the grammar to this layer and decides unique-decodability.
-//
-// Char sets are resolved to positive, normalized code-unit ranges at
-// construction (negation is complemented against [0, 0xFFFF] immediately), so
-// union/membership are trivial and there is no negation flag to thread through
-// derivatives.
-//
-// Unicode: matching is over UTF-16 *code units*, matching JS regex WITHOUT the
-// `/u` flag (`.` matches one code unit, an astral char is two). This keeps the
-// whole stack — `matchLengths`, `slice`, and the `Reg.spans` offsets — in one
-// consistent index space (the same one `Str` and the DOM use), so even astral
-// text round-trips losslessly: a leaf may match a lone surrogate, but the
-// halves rejoin verbatim on concatenation. Code-point-aware `/u` semantics
-// (where `.` is one code point) are intentionally out of scope.
+// Matching is over UTF-16 code units (JS regex without the `/u` flag): `.` is
+// one code unit, an astral char is two. Keeps the whole stack in one index space.
 
 const UNIT_MAX = 0xffff;
 
@@ -70,9 +46,7 @@ export class CharSet {
     return CharSet.of([...this.ranges, ...other.ranges]);
   }
 
-  /** Do the two sets share any code unit? (Both are sorted/normalized.) The
-   *  emptiness of an intersection is the core test behind the determinism
-   *  checker: two boundaries that overlap make a split point ambiguous. */
+  /** Do the two sets share any code unit? (Both are sorted/normalized.) */
   overlaps(other: CharSet): boolean {
     let i = 0;
     let j = 0;
@@ -163,12 +137,10 @@ export function seq(a: Re, b: Re): Re {
   return { k: "seq", a, b };
 }
 
-/** Union, normalized modulo ACI (associativity, commutativity-as-dedup,
- *  idempotence): flatten nested alts and drop duplicate branches, preserving
- *  first-occurrence order. Brzozowski's finiteness of the derivative state set
- *  holds only modulo ACI, so this is what keeps `der` from growing without
- *  bound (the difference between a robust matcher and one that hangs). Order is
- *  preserved rather than sorted so greedy/backtracking semantics are intact. */
+/** Union, normalized modulo ACI: flatten nested alts and drop duplicate
+ *  branches, preserving first-occurrence order. The derivative-state set is
+ *  finite only modulo ACI, so this keeps `der` bounded. Order is preserved (not
+ *  sorted) to keep greedy/backtracking semantics. */
 export function alt(a: Re, b: Re): Re {
   if (a.k === "emp") return b;
   if (b.k === "emp") return a;
@@ -311,14 +283,9 @@ export function matchLengths(r: Re, s: string, pos: number): number[] {
 }
 
 // ── determinism analysis (first / followLast) ───────────────────────────
-//
-// These power both the runtime determinism check and (mirrored as types) the
-// compile-time boundary algebra. A grammar parses deterministically — greedy,
-// no backtracking, linear — exactly when, at every split point, the characters
-// that could *continue* the left side are disjoint from those that could
-// *begin* the right side. `firstSet` is the begin-set; `followLast` is the
-// continue-after-a-complete-match set (Brüggemann-Klein & Wood's 1-unambiguity,
-// computed here over the derivative automaton so it is exact).
+// `firstSet` is the begin-set, `followLast` the continue-after-a-complete-match
+// set. A grammar is deterministic when, at every split, the left's continue-set
+// is disjoint from the right's begin-set.
 
 /** Characters that can begin a word in `L(r)`. */
 export function firstSet(r: Re): CharSet {

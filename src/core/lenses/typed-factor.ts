@@ -58,7 +58,7 @@ export interface FactorOpts {
   converge?: boolean;
   /** Max iters when `converge: true`. Default 10. */
   maxIters?: number;
-  /** Convergence tolerance (per-channel L2). Default 1e-4. */
+  /** Convergence tolerance (per-channel Euclidean). Default 1e-4. */
   tol?: number;
 }
 

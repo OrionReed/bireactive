@@ -1,15 +1,5 @@
-// gpu.ts — shared WebGL2 core for GPU-resident Canvas values.
-//
-// There is ONE compute context (a hidden canvas). That is a hard WebGL
-// constraint, not a shared buffer: a lens pass samples its parent's texture
-// and renders into its child's, and textures can't cross contexts (browsers
-// also cap contexts at ~16). Every Canvas value still owns its own float
-// texture(s); display blits each value into its own DOM canvas. The only
-// CPU readbacks are 1×1 reductions (mean colour, settle energy).
-//
-// Coordinate convention: data row 0 lives at texture v=0, so every compute
-// pass works in a single consistent data space (no flips); only `blit`
-// flips Y so the image reads upright on screen.
+// Coordinate convention: data row 0 lives at texture v=0, so every compute pass
+// works in one consistent data space; only `blit` flips Y for the screen.
 
 let _gl: WebGL2RenderingContext | null = null;
 
@@ -127,8 +117,7 @@ export function disposeTex(t: WebGLTexture): void {
   gl().deleteTexture(t);
 }
 
-/** A reusable owned texture, reallocated on size change — the GPU analog of
- *  the CPU scratch buffer. */
+/** A reusable owned texture, reallocated on size change. */
 export function scratch(): (w: number, h: number) => Tex {
   let t: WebGLTexture | null = null;
   let cw = 0;
@@ -145,9 +134,7 @@ export function scratch(): (w: number, h: number) => Tex {
 }
 
 /** A feedback-safe scratch pair: returns an owned texture guaranteed not to
- *  equal `avoid` (the input being read), so a pass never reads and writes the
- *  same texture. Needed for backward passes that produce a root cell's next
- *  value (whose current value may be this same scratch). */
+ *  equal `avoid`, so a pass never reads and writes the same texture. */
 export function scratch2(): (w: number, h: number, avoid: WebGLTexture | null) => Tex {
   let a: WebGLTexture | null = null;
   let b: WebGLTexture | null = null;
@@ -286,7 +273,7 @@ export function reduceMean(src: Tex): [number, number, number, number] {
 }
 
 let _sq: Tex | null = null;
-/** Mean of squared texels — the spring settle metric. */
+/** Mean of squared texels (spring settle metric). */
 export function reduceMeanSquare(src: Tex): number {
   if (!_sq || _sq.w !== src.w || _sq.h !== src.h) {
     if (_sq) disposeTex(_sq.tex);
@@ -433,10 +420,9 @@ export class Spring {
     g.clear(g.COLOR_BUFFER_BIT);
   }
 
-  /** Snap position + target to `srcTex`, zero the velocity. `srcTex` may
-   *  alias one of our own position textures (the host feeds `current()` back
-   *  as the root value), so skip any copy that would read and write the same
-   *  texture — illegal GL feedback, and a no-op anyway. */
+  /** Snap position + target to `srcTex`, zero the velocity. `srcTex` may alias
+   *  one of our own position textures, so skip a copy that would read and write
+   *  the same texture (illegal GL feedback). */
   seed(srcTex: WebGLTexture): void {
     for (const tex of [this.pos[0], this.pos[1], this.targetTex])
       if (srcTex !== tex) copy(srcTex, { tex, w: this.w, h: this.h });

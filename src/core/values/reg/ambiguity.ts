@@ -1,25 +1,3 @@
-// ambiguity.ts — the construction-time unambiguity oracle.
-//
-// A `Reg` is a function from strings to values, so its grammar must be
-// *unambiguous*: every string has exactly one parse. v3 accepts the full
-// unambiguous regular class (common-prefix alternations, longest-match splits),
-// so the old local "1-unambiguous" first/followLast test is too strict. Instead
-// we decide unambiguity on the derivative automaton itself, per combinator:
-//
-//   • alternation `a | b` is unambiguous  ⟺  L(a) ∩ L(b) = ∅
-//     (common prefixes are fine; only a shared *whole* string is ambiguous).
-//   • concatenation `a · b` is unambiguous ⟺ no string splits two ways, i.e.
-//     there is NO nonempty bridge `t` such that some `u ∈ L(a)` has `u·t ∈ L(a)`
-//     (so `t` can move across the seam on the left) while some `v ∈ L(b)` has
-//     `t·v ∈ L(b)` (so the same `t` can be absorbed on the right). When such a
-//     `t` exists, `u·t·v` parses as both `(u)(t·v)` and `(u·t)(v)`.
-//
-// Both reduce to bounded searches over derivative states (finite modulo ACI),
-// and both return a concrete witness string for the error message. Star and
-// opt are expressed in terms of these (see `reg.ts`). The tests never *miss* an
-// ambiguity (detection is complete); they may be conservative on exotic
-// grammars, in which case `copy(/re/)` is the escape hatch.
-
 import { alphabetOf, der, nullable, type Re, reKey } from "./engine";
 
 const cp = (c: number): string => String.fromCharCode(c);
@@ -104,7 +82,8 @@ const dedup = (states: readonly Re[]): Re[] => {
 const MAX_STATES = 200000;
 
 /** A witness string that `a · b` factors two distinct ways, or `null` if the
- *  concatenation is unambiguous. See the module header for the criterion. */
+ *  concatenation is unambiguous. Ambiguous iff some nonempty bridge `t` can
+ *  both extend a word of `L(a)` and be absorbed into `L(b)`. */
 export function concatAmbiguity(a: Re, b: Re): string | null {
   const statesA = reachableStates(a);
   const accepting: Array<{ re: Re; word: string }> = [];

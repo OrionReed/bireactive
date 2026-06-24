@@ -1,11 +1,3 @@
-// matrix.ts — reactive 2D affine matrix (SVG/Canvas convention).
-//
-// Sparse-trait: only `equals`. Element-wise linear combine / lerp don't
-// decompose for matrices, so `spring`/`tween`/`mean` reject Matrix at
-// compile time. Two invertibles, both `: this` via `Cell#lens`:
-//   - `multiply(b)` — inverse multiplies by `invert(b)`
-//   - `invert()`    — its own inverse
-
 import {
   Cell,
   cachedDerive,
@@ -152,10 +144,8 @@ export class Matrix extends Cell<V> {
 }
 
 /** Writable `Matrix` with entries `(a, b, c, d, e, f)` (SVG/Canvas order).
- *  Each entry is a literal `number` (lifted to a fresh seed) or an existing
- *  `Writable<Num>` (identity passthrough). RO sources are rejected at the
- *  type level — use `Matrix.derive(...)` for reactive RO tracking, or
- *  `cell.value` to snapshot. Lock an entry with `Num.pin(c)`. */
+ *  Each entry is a literal (new cell) or existing writable (passed through);
+ *  for read-only sources use `Matrix.derive`. Lock an entry with `Num.pin`. */
 export function matrix(
   a: Init<Num> = 1,
   b: Init<Num> = 0,
@@ -180,7 +170,6 @@ export function matrix(
   const dN = num(d);
   const eN = num(e);
   const fN = num(f);
-  // The view fully reconstructs all 6 cells (1-arg bwd ⇒ no source read).
   return Matrix.lens(
     [aN, bN, cN, dN, eN, fN] as const,
     ([a, b, c, d, e, f]) => ({ a, b, c, d, e, f }),

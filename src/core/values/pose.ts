@@ -1,10 +1,3 @@
-// pose.ts — reactive 2D rigid-body pose: { x, y, theta }.
-//
-// Single source of truth for a rigid body. The solver binds the cell as
-// a 3-DOF block and writes back through it, so renderers, drag handlers,
-// IK, and physics all observe the same value. Vec / Num lenses compose
-// for consumers that care only about translation or rotation.
-
 import { Cell, fieldLens, type Init, type Writable } from "../cell";
 import type { Linear, Pack, Pivotal, TraitDict } from "../traits";
 import { Num } from "./num";
@@ -45,8 +38,7 @@ const packImpl: Pack<V> = {
   },
   write: (a, o) => ({ x: a[o]!, y: a[o + 1]!, theta: a[o + 2]! }),
 };
-/** Rotate-about-pivot moves the position and adds dθ to orientation;
- *  scale-about-pivot scales position, orientation untouched. */
+// rotateAbout moves position and adds dθ; scaleAbout scales position, leaves θ.
 const pivotalImpl: Pivotal<V> = {
   rotateAbout: (v, p, dθ) => {
     const cos = Math.cos(dθ);
@@ -92,10 +84,8 @@ export class Pose extends Cell<V> {
   }
 }
 
-/** Writable `Pose`. Literal seeds a fresh cell; existing `Pose` passes
- *  through by identity. RO sources are rejected at the type level — use
- *  `Pose.derive(...)` for reactive RO tracking, or `cell.value` to
- *  snapshot. */
+/** Writable `Pose` from a literal (new cell) or existing writable (passed
+ *  through). For read-only sources use `Pose.derive`. */
 export function pose(v: Init<Pose> = { x: 0, y: 0, theta: 0 }): Writable<Pose> {
   if (v instanceof Pose) return v as Writable<Pose>;
   const p = new Pose() as Writable<Pose>;

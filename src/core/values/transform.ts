@@ -1,11 +1,3 @@
-// transform.ts — reactive 2D transform.
-//
-// Invertibles (`add`, `sub`) return `: this` and ride on
-// `Cell#lens(fwd, bwd)`; chained calls compose into a lens chain.
-// Field-lens getters use `fieldLens()`, so writability propagates through
-// nested chains
-// (`Transform.translate.x.value = 5` works on writable receivers).
-
 import { type Easing, type Tween, tween } from "../../animation";
 import { Cell, fieldLens, type Inner, reader, readNow, type Val, type Writable } from "../cell";
 import type { Linear, TraitDict } from "../traits";
@@ -84,9 +76,6 @@ export class Transform extends Cell<V> {
   static traits = { linear: linearImpl, lerp, metric, equals } satisfies TraitDict<V>;
   declare readonly _t: typeof Transform.traits;
 
-  /** Scalar `scale` is the `.scale` Vec field lens, not an eager method;
-   *  scalar-multiply via `Transform.lens(...)` or field writes. */
-
   constructor(v: V = DEFAULT) {
     super(v, { equals });
   }
@@ -125,7 +114,7 @@ export class Transform extends Cell<V> {
     return fieldLens(this, "opacity", Num);
   }
 
-  /** Tween-builder, implied by the lerp trait. */
+  /** Tween-builder. */
   to(this: Writable<Transform>, target: V, dur: Val<number>, ease?: Easing): Tween<V> {
     return tween(this, target, dur, ease);
   }
@@ -133,8 +122,8 @@ export class Transform extends Cell<V> {
 
 export type TransformInit = { [K in keyof V]?: V[K] };
 
-/** Seed a `Writable<Transform>` from literal values. For reactive
- *  sources, use `Transform.lens(...)` or field-write composition. */
+/** Writable `Transform` from literal fields. For reactive sources use
+ *  `Transform.lens` or field writes. */
 export function transform(init?: TransformInit): Writable<Transform> {
   const tr = new Transform() as Writable<Transform>;
   if (init) {

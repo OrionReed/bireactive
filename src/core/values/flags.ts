@@ -1,19 +1,3 @@
-// flags.ts — named bit-flags over a packed integer.
-//
-// A `number` bitmask whose bits are named at construction. `flag(name)` is a
-// `Writable<Bool>` mask lens onto one bit — set/clear round-trips through the
-// packed value, so the integer and its named booleans are one source seen
-// two ways. Sparse-trait (`equals` only): bits are discrete, so there's no
-// linear/pack/factor surface. Bit `i` carries value `2^i`, so a flag list
-// ordered low→high makes the packed int equal the conventional mask (e.g.
-// chmod octal). Two front-ends: variadic names, or an object of defaults.
-//
-// `flag()` is the collision-free accessor (a single generic method, names
-// checked as a union) rather than dynamic `.name` members — no risk of a
-// flag named "value"/"flag" shadowing the class. Since each flag is a
-// writable Bool, `Tri.allOf([f.flag(a), f.flag(b)])` gives all/none/mixed
-// group toggles for free.
-
 import { Cell, type Writable } from "../cell";
 import type { TraitDict } from "../traits";
 import { Bool } from "./bool";
@@ -33,8 +17,7 @@ export class Flags<K extends string> extends Cell<number> {
     super(v, { equals });
   }
 
-  /** Bit lens for `name`; set/clear round-trips through the packed mask.
-   *  Cached per name so repeated calls return the same lens. */
+  /** Cached writable bit lens for `name`. */
   flag<F extends K>(name: F): Writable<Bool> {
     let lens = this.#bits.get(name);
     if (lens === undefined) {

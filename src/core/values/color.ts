@@ -1,8 +1,3 @@
-// color.ts — reactive RGBA color.
-//
-// Invertibles (`add`, `sub`, `scale`) return `: this` and ride on
-// `Cell#lens(fwd, bwd)`. Chained calls compose into a lens chain.
-
 import { type Easing, type Tween, tween } from "../../animation";
 import {
   Cell,
@@ -32,7 +27,7 @@ export const lerp = (a: V, b: V, t: number): V => ({
 });
 export const equals = (a: V, b: V) =>
   a === b || (a.r === b.r && a.g === b.g && a.b === b.b && a.a === b.a);
-/** L2 distance in RGBA-space. */
+/** Euclidean distance in RGBA-space. */
 export const metric = (a: V, b: V) => Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b, a.a - b.a);
 
 const linearImpl: Linear<V> = { add, sub, scale };
@@ -113,16 +108,14 @@ export class Color extends Cell<V> {
     );
   }
 
-  /** Tween-builder, implied by the lerp trait. */
+  /** Tween-builder. */
   to(this: Writable<Color>, target: V, dur: Val<number>, ease?: Easing): Tween<V> {
     return tween(this, target, dur, ease);
   }
 }
 
-/** Writable `Color` from RGB channels (alpha = 1). Each channel is a
- *  literal `number` (lifted to a fresh seed) or an existing `Writable<Num>`
- *  (identity passthrough). All-literal inputs take a fast path; mixed
- *  inputs build a lens so channel-writes round-trip to source. */
+/** Writable `Color` from RGB channels (alpha = 1). Each channel is a literal
+ *  or a `Writable<Num>`. */
 export function rgb(r: Init<Num>, g: Init<Num>, b: Init<Num>): Writable<Color> {
   if (typeof r === "number" && typeof g === "number" && typeof b === "number") {
     return new Color({ r, g, b, a: 1 }) as Writable<Color>;
@@ -134,7 +127,7 @@ export function rgb(r: Init<Num>, g: Init<Num>, b: Init<Num>): Writable<Color> {
   );
 }
 
-/** Writable `Color` from RGBA channels. Same lift rule as `rgb`. */
+/** Writable `Color` from RGBA channels. */
 export function rgba(r: Init<Num>, g: Init<Num>, b: Init<Num>, a: Init<Num>): Writable<Color> {
   if (
     typeof r === "number" &&

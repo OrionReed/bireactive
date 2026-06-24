@@ -1,19 +1,3 @@
-// regex.ts — compile the *regular* subset of JS `RegExp` to the engine AST.
-//
-// `Reg` owns a real regular engine (engine.ts), so leaves can no longer be
-// opaque `RegExp`s matched greedily once. This parser turns a `RegExp.source`
-// into an `Re`, and — crucially — REJECTS any construct that would take us
-// outside the regular languages (backreferences, lookaround, anchors). That
-// rejection is what keeps the ambiguity guarantee meaningful: everything the
-// engine sees is genuinely regular, so unique-decodability is decidable.
-//
-// Supported: literals, `.`, character classes (`[...]`, negation, ranges,
-// class escapes), groups `(...)`/`(?:...)`/`(?<name>...)` (all treated as plain
-// grouping — capture has no effect on the recognized language), alternation
-// `|`, and quantifiers `* + ? {n} {n,} {n,m}` (laziness is parsed and ignored;
-// it does not change the language). Flags `i` and `s` are honored; `g`/`y`/`m`
-// are inert here (no anchors are allowed, so `m` is a no-op).
-
 import {
   altAll,
   type CharSet,

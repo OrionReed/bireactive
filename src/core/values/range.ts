@@ -1,11 +1,3 @@
-// range.ts — reactive numeric interval `[lo, hi]`.
-//
-// Home for sliders, scrollbars, and timeline clip spans. Field lenses
-// give start-knob (`.lo`) and end-knob (`.hi`) drag; `.start` / `.center`
-// are body-drags (shift both, preserving width — anchored at lo / midpoint
-// respectively); `.slider(t)` is the bidirectional `t ↔ lo + t·(hi - lo)`
-// iso. Traits: `linear`, `lerp`, `equals`, `pack` (scalar-only).
-
 import { type Easing, type Tween, tween } from "../../animation";
 import {
   Cell,
@@ -34,7 +26,7 @@ export const lerp = (a: V, b: V, t: number): V => ({
   hi: a.hi + (b.hi - a.hi) * t,
 });
 export const equals = (a: V, b: V) => a === b || (a.lo === b.lo && a.hi === b.hi);
-/** L2 distance over (lo, hi). Treats a range as a point in 2-space. */
+/** Euclidean distance over (lo, hi). */
 export const metric = (a: V, b: V) => Math.hypot(a.lo - b.lo, a.hi - b.hi);
 
 export const width = (r: V) => r.hi - r.lo;
@@ -42,9 +34,8 @@ export const center = (r: V) => (r.lo + r.hi) / 2;
 export const contains = (r: V, v: number) => v >= r.lo && v <= r.hi;
 export const clamp = (r: V, v: number) => (v < r.lo ? r.lo : v > r.hi ? r.hi : v);
 
-/** Closest value STRICTLY outside `[lo, hi]`, displaced past the
- *  nearest endpoint by `eps`. Used by `Range#contains` as the bwd's
- *  false-side policy. */
+/** Closest value strictly outside `[lo, hi]`, displaced past the nearest
+ *  endpoint by `eps`. */
 export const eject = (r: V, v: number, eps = 1e-6) => {
   if (!contains(r, v)) return v;
   return v - r.lo <= r.hi - v ? r.lo - eps : r.hi + eps;
@@ -97,9 +88,8 @@ export class Range extends Cell<V> {
   get width() {
     return cachedDerive(this, "width", Num, width);
   }
-  /** Midpoint body-drag: read returns the center; write shifts the range
-   *  so the center matches (width preserved). `.start` is the lo-anchored
-   *  variant; `.lo` / `.hi` edit the endpoints. */
+  /** Midpoint body-drag: reads the center; a write shifts the range so the
+   *  center matches (width preserved). */
   get center(): Writable<Num> {
     return Num.lens(this, center, (c, src) => {
       const half = (src.hi - src.lo) / 2;
@@ -107,7 +97,7 @@ export class Range extends Cell<V> {
     });
   }
 
-  /** Translate by `by`. Reads shift the interval; writes shift back. */
+  /** Translate by `by`. */
   shift(by: Val<number>): this {
     const f = reader(by);
     return this.lens(
@@ -115,7 +105,7 @@ export class Range extends Cell<V> {
       n => ({ lo: n.lo - f(), hi: n.hi - f() }),
     );
   }
-  /** Scale uniformly about the origin. Iso for `k ≠ 0`. */
+  /** Scale about the origin. Invertible when k ≠ 0. */
   scale(k: Val<number>): this {
     const kf = reader(k);
     return this.lens(
@@ -130,8 +120,8 @@ export class Range extends Cell<V> {
     );
   }
 
-  /** Body-drag handle: read returns `lo`; write shifts the range so `lo`
-   *  matches (width preserved). For start-knob editing use `.lo`. */
+  /** Body-drag handle: reads `lo`; a write shifts the range so `lo` matches
+   *  (width preserved). */
   get start(): Writable<Num> {
     return Num.lens(
       this,
@@ -147,8 +137,8 @@ export class Range extends Cell<V> {
   /** Bidirectional `t ↔ value` slider. Read `lo + t·(hi - lo)`; write
    *  solves for `t` and updates `t` only, leaving `lo` / `hi` put. */
   slider(t: Writable<Num>): Writable<Num> {
-    // `this as Range` pins the tuple element type (polymorphic `this`
-    // defeats the mapped-tuple inference on `[this, t]`).
+    // `this as Range` pins the tuple element type; polymorphic `this` breaks
+    // the mapped-tuple inference.
     return Num.lens(
       [this as Range, t] as const,
       ([r, tv]) => sample(r, tv),
@@ -159,14 +149,12 @@ export class Range extends Cell<V> {
     );
   }
 
-  /** Membership predicate. Conditional return type: a writable `Num`
-   *  yields `Writable<Bool>` and flipping the view bumps the source
-   *  (`true` clamps into `[lo, hi]`, `false` ejects past the nearest
-   *  endpoint by `eps`). Literal / RO inputs yield a bare RO `Bool`. */
+  /** True when `v` is in `[lo, hi]`. A writable `Num` yields a `Writable<Bool>`:
+   *  flipping it clamps `v` inside (`true`) or ejects it past the nearest
+   *  endpoint (`false`). Literal/RO inputs yield a read-only `Bool`. */
   contains<P extends Val<number>>(v: P): P extends WritableBrand ? Writable<Bool> : Bool {
     if (v instanceof Num) {
-      // RO Num has no backward path → RO branch. Sources and
-      // writable lenses both accept write-back.
+      // RO Num has no backward path; only writable Nums accept write-back.
       if (!isReadonly(v)) {
         return Bool.lens(
           [this, v] as never,
@@ -181,8 +169,7 @@ export class Range extends Cell<V> {
     }
     return Bool.derive(() => contains(this.value, readNow(v))) as never;
   }
-  /** RO clamp: read `v` into `[lo, hi]`. For a writable clamping lens
-   *  on a single Num, see `Num#clamp(lo, hi)`. */
+  /** Read-only clamp of `v` into `[lo, hi]`. */
   clampedRead(v: Val<number>): Num {
     return Num.derive(() => clamp(this.value, readNow(v)));
   }
@@ -191,14 +178,13 @@ export class Range extends Cell<V> {
     return Num.derive(() => paramOf(this.value, readNow(v)));
   }
 
-  /** Tween-builder; animates `{lo, hi}` jointly. */
+  /** Tween-builder. */
   to(this: Writable<Range>, target: V, dur: Val<number>, ease?: Easing): Tween<V> {
     return tween(this, target, dur, ease);
   }
 }
 
-/** @internal — 2-input lens over two writable `Num`s; `range()` delegates
- *  here after lifting literals. */
+/** Lens combining two writable `Num`s into a `Range`. */
 function ends(lo: Writable<Num>, hi: Writable<Num>): Writable<Range> {
   return Range.lens(
     [lo, hi] as const,
@@ -207,9 +193,7 @@ function ends(lo: Writable<Num>, hi: Writable<Num>): Writable<Range> {
   );
 }
 
-/** Range over `[at, at + dur]`, parameterised by start + duration. The
- *  timeline-clip shape: `.lo` slides the start, `.hi` the end, `.start`
- *  body-drags (preserving width). Backed by the live `at` / `dur` Nums. */
+/** Range over `[at, at + dur]`, backed by the live `at` and `dur` Nums. */
 export function span(at: Writable<Num>, dur: Writable<Num>): Writable<Range> {
   return Range.lens(
     [at, dur] as const,
@@ -218,11 +202,9 @@ export function span(at: Writable<Num>, dur: Writable<Num>): Writable<Range> {
   );
 }
 
-/** Writable `Range` over `[lo, hi]`. Each endpoint is a literal `number`
- *  (lifted to a fresh seed) or an existing `Writable<Num>` (identity
- *  passthrough). RO sources are rejected at the type level — use
- *  `Range.derive(...)` for reactive RO tracking, or `cell.value` to
- *  snapshot. Lock an endpoint with `Num.pin(c)`. */
+/** Writable `Range` over `[lo, hi]`. Each endpoint is a literal (new cell) or
+ *  existing writable (passed through); for read-only sources use `Range.derive`.
+ *  Lock an endpoint with `Num.pin`. */
 export function range(lo: Init<Num> = 0, hi: Init<Num> = 1): Writable<Range> {
   if (typeof lo === "number" && typeof hi === "number") {
     return new Range({ lo, hi }) as Writable<Range>;

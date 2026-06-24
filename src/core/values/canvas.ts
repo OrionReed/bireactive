@@ -1,26 +1,3 @@
-// canvas.ts — GPU-resident reactive raster (handle-as-value).
-//
-// Every Canvas value is a float texture in the shared WebGL2 context (see
-// gpu.ts); the reactive graph transports only a tiny HEADER {tex, w, h,
-// epoch}, comparing the monotonic epoch, so propagation never reads a pixel
-// and nothing is copied across the bus. Forward lenses render into a per-lens
-// scratch texture (reused across recomputes); the single ownership rule that
-// keeps no-copy safe is the same as on the CPU — a node writes only its own
-// texture, never one another live node still reads, which holds under the
-// engine's glitch-free flush.
-//
-// Tiers mirror the rest of values/:
-//   - pure isomorphisms (`invert`, `flipH`) — one pointwise shader each way.
-//   - reactive-param invertibles (`brightness(k)`) — read `Val<number>`.
-//   - complement projections (`grayscale`, `downsample`) — the lossy view
-//     plus a complement texture (chroma / Laplacian residual) recovered on
-//     write-back, the raster analog of str.ts's case-preserving lenses.
-//   - cross-type lenses (`meanColor` → Color, `brighterThan` → Bool).
-//
-// A backward pass that produces a ROOT cell's next value reads that root and
-// writes a result that becomes its value, so it uses `scratch2` (a feedback-
-// safe pair) to avoid reading and writing the same texture.
-
 import { Cell, cachedDerive, reader, type Val, type Writable } from "../cell";
 import type { TraitDict } from "../traits";
 import { Bool } from "./bool";
@@ -38,8 +15,8 @@ import {
 } from "./gpu";
 import { Vec } from "./vec";
 
-/** Raster header. The graph compares `epoch`; `tex` is an RGBA32F texture in
- *  the shared GL context (channels 0–1, may overshoot mid-deconvolution). */
+/** Raster header; the graph compares `epoch`. `tex` is an RGBA32F texture in
+ *  the shared GL context. */
 export interface Raster {
   readonly tex: WebGLTexture;
   readonly w: number;
@@ -137,9 +114,7 @@ void main() {
 }`;
 
 // Richardson–Lucy step. RL_RATIO forms target / blur(estimate) (guarded);
-// RL_MUL multiplies the estimate by blur(ratio) and clamps to [0,1]. Both
-// the non-negativity clamp and the multiplicative form keep ringing far
-// below an additive Van-Cittert iteration.
+// RL_MUL multiplies the estimate by blur(ratio) and clamps to [0,1].
 const RL_RATIO = `${HEAD}
 uniform sampler2D u_t; uniform sampler2D u_est;
 void main() {
@@ -219,7 +194,7 @@ export class Canvas extends Cell<V> {
     super(v, { equals });
   }
 
-  /** Per-channel invert (alpha preserved). Involution. */
+  /** Per-channel invert (alpha preserved). */
   invert(): this {
     const sf = scratch();
     const sb = scratch();
@@ -231,7 +206,7 @@ export class Canvas extends Cell<V> {
     return this.lens(run(sf), run(sb));
   }
 
-  /** Horizontal flip. Involution. */
+  /** Horizontal flip. */
   flipH(): this {
     const sf = scratch();
     const sb = scratch();
@@ -263,9 +238,8 @@ export class Canvas extends Cell<V> {
     );
   }
 
-  /** Grayscale (Rec.601 luma) view; complement is the per-pixel chroma
-   *  residual `(r−Y, g−Y, b−Y)`, so editing the gray view recolours the
-   *  source. The raster analog of `caseFold`. */
+  /** Grayscale (Rec.601 luma) view; the complement is the per-pixel chroma
+   *  residual `(r−Y, g−Y, b−Y)`, so editing the gray view recolours the source. */
   grayscale(): Writable<Canvas> {
     const sc = scratch();
     const sf = scratch();
@@ -294,9 +268,8 @@ export class Canvas extends Cell<V> {
     }) as Writable<Canvas>;
   }
 
-  /** Chroma view (the dual of `grayscale`): `(r−Y, g−Y, b−Y)` on a mid-grey
-   *  base, complement is the luma `Y`. Editing the colour re-lights nothing —
-   *  it rewrites hue while keeping the original brightness. */
+  /** Chroma view: `(r−Y, g−Y, b−Y)` on a mid-grey base, complement is the luma
+   *  `Y`. Editing it rewrites hue while keeping the original brightness. */
   chroma(): Writable<Canvas> {
     const sc = scratch();
     const sf = scratch();
@@ -423,13 +396,10 @@ export class Canvas extends Cell<V> {
     }) as Writable<Canvas>;
   }
 
-  /** Gaussian blur (reactive `radius`). Writable: the backward direction
-   *  runs an iterated Richardson–Lucy deconvolution seeded from the source.
-   *  Each step is `x ← x · H(target / H(x))`, non-negative and multiplicative,
-   *  so untouched regions stay fixed (their ratio is 1) while a stroke
-   *  back-solves to a sharp pre-image with far less ringing than an additive
-   *  solve. PutGet, not exact GetPut — the residual is the honest signature
-   *  of an ill-posed inverse. */
+  /** Gaussian blur (reactive `radius`). The backward pass runs an iterated
+   *  Richardson–Lucy deconvolution seeded from the source
+   *  (`x ← x · H(target / H(x))`), so untouched regions stay fixed. PutGet,
+   *  not exact GetPut. */
   blur(radius: Val<number>): this {
     const rf = reader(radius);
     const fTmp = scratch();
@@ -477,8 +447,8 @@ export class Canvas extends Cell<V> {
     );
   }
 
-  /** Mean colour (0–1) as a writable `Color`; the GPU reduces, the write
-   *  shifts every pixel by the delta (a rigid translate in RGB). */
+  /** Mean colour (0–1) as a writable `Color`; the GPU reduces, a write shifts
+   *  every pixel by the delta. */
   meanColor(): Writable<Color> {
     const self: Canvas = this;
     const sb = scratch2();
@@ -500,9 +470,8 @@ export class Canvas extends Cell<V> {
     ) as Writable<Color>;
   }
 
-  /** Mean luma ≥ reactive `threshold` (0–1) as a writable `Bool`; flipping
-   *  the bit auto-exposes — iterate the gain (clipping caps a single step)
-   *  until the mean crosses the line. */
+  /** Mean luma ≥ `threshold` (0–1) as a writable `Bool`; flipping the bit
+   *  auto-exposes by iterating the gain until the mean crosses the threshold. */
   brighterThan(threshold: Val<number>): Writable<Bool> {
     const tf = reader(threshold);
     const self: Canvas = this;
@@ -546,9 +515,8 @@ export class Canvas extends Cell<V> {
     return cachedDerive(this, "dimensions", Vec, v => ({ x: v.w, y: v.h }));
   }
 
-  /** A GPU per-pixel spring driver seeded from this value's texture. The
-   *  host steps it and writes `current()` back into a root cell each frame;
-   *  settle is the GPU energy reduction. */
+  /** GPU per-pixel spring driver seeded from this value's texture. The host
+   *  steps it and writes `current()` back each frame. */
   spring(opts?: SpringOpts): Spring {
     const s = new Spring(this.value.w, this.value.h, opts);
     s.seed(this.value.tex);

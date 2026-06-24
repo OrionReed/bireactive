@@ -1,21 +1,5 @@
-// types.ts — the compile-time mirror of the determinism analysis.
-//
-// Every leaf builder publishes, in its type, the character classes its match
-// can *begin* and *end* with (`First`/`Last`) and whether it accepts the empty
-// string (`Nullable`). The combinators propagate these, and `then`/`seq` reject
-// — at the type level — any adjacency whose boundaries overlap, because that is
-// exactly the concatenation ambiguity that breaks the lens laws. This is the
-// same first/followLast reasoning the runtime checker performs (see
-// `engine.ts`), lifted into types so the common mistakes are caught in the
-// editor. It is deliberately sound-but-incomplete: the `copy(/re/)` escape
-// erases boundary info (`AnyBound`), and a handful of exotic overlaps slip
-// through to the complete runtime check. It never *wrongly accepts* an
-// adjacency the runtime would reject.
-
 // ── character-class atoms ─────────────────────────────────────────────
-// A closed set of disjoint classes, plus specific symbol characters as their
-// own singleton atoms (string literals), so a comma is distinguishable from
-// "some other symbol".
+// Disjoint classes plus symbol characters as their own singleton atoms.
 
 export type Digit = "𝖣";
 export type Lower = "𝖫";

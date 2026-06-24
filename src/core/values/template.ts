@@ -1,26 +1,3 @@
-// template.ts — bidirectional text templates: typed slots ⇄ rendered string.
-//
-// A template is `lit₀ slot₀ lit₁ slot₁ … litₙ` — a multi-parent `Str.lens`
-// over the slot cells. Forward RENDERS (interleave literals with each
-// slot's formatted value); backward PARSES (split the edited string on the
-// literal delimiters, decode each segment, write the changed slots back).
-// Slots-as-source: the typed cells are canonical and the string is one
-// view, so the same slots can drive several renderings at once (edit any,
-// all stay in sync) — the thing `Str`'s views can't do.
-//
-// Each slot carries a `Codec<T>` (string ⇄ T). That codec is the textual
-// dual of the `pack` trait: `pack : factor :: codec : template` — both
-// serialize a value class into a medium (Float64Array vs string) so one
-// generic lens (LSQ-solve vs parse/print) works over any class that
-// supplies it. Kept local here rather than as a `TraitDict` entry; it can
-// graduate to a trait once a second consumer wants it.
-//
-// Parse is rejection-tolerant: a segment that fails its codec (typing
-// "banana" into a number slot) yields `undefined`, the engine's GetPut
-// stop prunes the no-op, and that slot stays put. A missing delimiter
-// rejects the whole edit. Adjacent slots with no literal between them are
-// ambiguous to split — avoid empty inter-slot literals.
-
 import { type Read, SKIP, type Skip, type Writable } from "../cell";
 import { type Num, num } from "./num";
 import { Str, str } from "./str";
@@ -126,8 +103,7 @@ export function template(
   if (slots.length === 0) return str(literals.join(""));
   const cells = slots.map(s => s.cell);
   // Heterogeneous, dynamic-length parents don't fit the static N-tuple
-  // overload; bind a flat signature at the boundary. `.bind(Str)` keeps the
-  // static `this` (the lens reads it as the constructor).
+  // overload; bind a flat signature. `.bind(Str)` keeps the static `this`.
   const lensN = Str.lens.bind(Str) as unknown as (
     parents: readonly unknown[],
     fwd: (vals: readonly unknown[]) => string,

@@ -1,8 +1,3 @@
-// anchor.ts — points on the unit box `[0,1]²` (registration on a shape).
-// dir.ts — unit direction vectors in `[-1,1]²` (displacement from rest).
-//
-// Plain constants — no reactive wrapping. Use as defaults / arguments.
-
 import type { Inner } from "../cell";
 import type { Vec } from "./vec";
 

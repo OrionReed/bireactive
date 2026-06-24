@@ -1,28 +1,3 @@
-// nfa.ts — the linear submatch parser under `Reg`.
-//
-// `Reg` accepts any *unambiguous* regular grammar (not just the 1-unambiguous
-// subset): common-prefix alternations (`INFO|INes`), longest-match splits
-// (`copy(/\d\d/).then(digits())`), etc. A deterministic single-pass parser
-// can't do that, so the grammar is compiled to a tagged Thompson program and
-// run as a PikeVM (Thompson 1968; Pike's submatch VM; cf. Russ Cox's
-// "Regular Expression Matching" series and RE2):
-//
-//   • consuming instructions carry a `CharSet`; epsilon instructions are
-//     `split` / `jmp` / `mark`, where `mark` records a *structural* event
-//     (enter/leave a node, which alt branch / opt arm was taken, a separator
-//     span). The events reconstruct the exact value model `Reg` already uses
-//     (`seq`→tuple, `alt`→{branch,val}, `opt`→inner|null, `star`→{items,seps}).
-//   • the VM keeps a thread per program counter, dedups by pc each step (so a
-//     step is O(programSize) and the whole parse is O(n·programSize) — no
-//     backtracking, no ReDoS), and threads carry an *append-only* marker log
-//     (a shared cons list, so forking is O(1) and there is no per-thread copy).
-//   • greedy priority (iterate-before-exit, present-before-absent, earlier
-//     branch first) makes the first thread to reach the accept state at
-//     end-of-input the canonical parse. Because the grammar is unambiguous
-//     (enforced at construction), that thread is *the* parse.
-//
-// Whole-string anchored: a `match` instruction only accepts at `pos === len`.
-
 import type { Node, RegVal, Span } from "../reg";
 import { CharSet, type Re } from "./engine";
 

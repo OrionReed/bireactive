@@ -1,27 +1,3 @@
-// field.ts — dense, GPU-resident reactive field: a grid of `T` as ONE cell.
-//
-// A Field is a single reactive node, not one-per-texel: the value is a header
-// {tex, w, h, epoch} (the Canvas handle trick, see gpu.ts), the graph compares
-// `epoch`, and no pixel crosses the bus. So a 1000×1000 field costs the engine
-// exactly what a 4×4 does — graph size is the lens-chain length, independent of
-// resolution. Per-frame work is allocation-free: `evolve`/`splat` ping-pong
-// through reused scratch textures and mint only the small header.
-//
-// Generic over the texel encoding via `Kind<T>` (channel `dim` + the `Pack`
-// codec + the boundary cell class). The dense interior stays a flat RGBA32F
-// texture forever; `T` (Num/Vec/Color) is instantiated ONLY at the boundary —
-// `mean`, `regionMean` — never per-texel. `dim` (1/2/4) selects the channel
-// mask: scalar (heatmap / SDF / density), vector (flow / gradient), colour
-// (i.e. a Canvas).
-//
-// The point of interest is the GPU↔reactivity bridge. `evolve` runs a sim on
-// its own clock (a raf/Anim loop), committing one new value per frame; the
-// reductions (`mean`, `regionMean`) are ordinary read-only derived cells, so
-// they recompute when the field's epoch changes and only *propagate* when their
-// scalar actually moves. Reactive logic downstream (`density > 0.5` → effect)
-// is thereby loosely coupled to time: it observes a continuously-running GPU
-// simulation without knowing a frame exists.
-
 import { Cell, type Read, reader, type Val } from "../cell";
 import type { Pack, TraitDict } from "../traits";
 import { Canvas, stamp as canvasStamp } from "./canvas";
@@ -102,8 +78,7 @@ const glv3 = (c: readonly [number, number, number]): string =>
 /** A colormap stop: a field value mapped to an RGB triple (0–1). */
 export type ColorStop = readonly [number, readonly [number, number, number]];
 
-/** Build a piecewise-linear ramp shader over `channel` (baked per stop set,
- *  cached by source string in gpu.ts's program cache). */
+/** Build a piecewise-linear ramp shader over `channel`. */
 function rampFrag(channel: number, stops: readonly ColorStop[]): string {
   const ch = "rgba"[channel] ?? "r";
   let body = `  vec3 c = vec3(${glv3(stops[0]![1])});\n`;
@@ -120,9 +95,9 @@ ${body}  o = vec4(c, 1.0);
 }`;
 }
 
-/** Read-only typed view via the kind's boundary class (`Num`/`Vec`/`Color`).
- *  Cast through the concrete `derive` signature — the static's polymorphic
- *  `this` rejects the abstract `Ctor<T>`, but at runtime `k.cls` is concrete. */
+/** Read-only typed view via the kind's boundary class. The cast bypasses the
+ *  polymorphic `this` rejecting the abstract `Ctor<T>`; `k.cls` is concrete at
+ *  runtime. */
 function deriveT<T>(k: Kind<T>, parent: Read<FieldVal>, fn: (v: FieldVal) => T): Read<T> {
   const d = k.cls as unknown as {
     derive(p: Read<FieldVal>, fn: (v: FieldVal) => T): Read<T>;
@@ -191,8 +166,7 @@ export class Field<T> extends Cell<FieldVal> {
     if (last) (this as { value: FieldVal }).value = stamp(last.tex, w, h);
   }
 
-  /** Stamp a Gaussian disc of `value` at data pixel `(x, y)`, radius `r`. The
-   *  raster interaction primitive — seed a sim, inject, paint density. */
+  /** Stamp a Gaussian disc of `value` at data pixel `(x, y)`, radius `r`. */
   splat(x: number, y: number, r: number, value: T, strength = 1): void {
     const ping = this.pingTex();
     const v = this.peek();
@@ -209,15 +183,15 @@ export class Field<T> extends Cell<FieldVal> {
     (this as { value: FieldVal }).value = stamp(dst.tex, v.w, v.h);
   }
 
-  /** Whole-field mean as a read-only `T` cell. Reactive: recomputes on every
-   *  new epoch, propagates only when the value moves. One 1×1 GPU readback. */
+  /** Whole-field mean as a read-only `T` cell. Recomputes per epoch; one 1×1
+   *  GPU readback. */
   mean(): Read<T> {
     const k = this.kind;
     return deriveT(k, this, v => packT(k, reduceMean({ tex: v.tex, w: v.w, h: v.h })));
   }
 
   /** Mean over a sub-rectangle (data pixels, reactive `box`) as a read-only
-   *  `T` cell — the field's "density of this region" observation. */
+   *  `T` cell. */
   regionMean(box: Val<{ x: number; y: number; w: number; h: number }>): Read<T> {
     const k = this.kind;
     const bf = reader(box);
@@ -238,8 +212,8 @@ export class Field<T> extends Cell<FieldVal> {
     });
   }
 
-  /** Render `channel` through a colormap to a read-only `Canvas`. Reactive:
-   *  re-renders on every new epoch, so rendering is itself a reactive edge. */
+  /** Render `channel` through a colormap to a read-only `Canvas`; re-renders
+   *  per epoch. */
   colormap(channel: number, stops: readonly ColorStop[]): Canvas {
     const frag = rampFrag(channel, stops);
     const sc = scratch();

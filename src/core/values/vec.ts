@@ -1,9 +1,3 @@
-// vec.ts — reactive 2D point.
-//
-// Invertibles return `: this` and ride on `Cell#lens(fwd, bwd)`;
-// chained calls compose into a lens chain. Field-lens getters use
-// `fieldLens()` (propagates writability); `cachedDerive()` wraps RO views.
-
 import { type Easing, type Tween, tween } from "../../animation";
 import {
   Cell,
@@ -125,8 +119,7 @@ export class Vec extends Cell<V> {
       },
     );
   }
-  /** Uniform scale by `k` about `pivot` (default origin). Inverse scales
-   *  by `1/k`; exact bijection for `k ≠ 0`. */
+  /** Uniform scale by `k` about `pivot` (default origin). Invertible when k ≠ 0. */
   scale(k: Val<number>, pivot?: Val<V>): this {
     const kf = reader(k);
     const pf = pivot === undefined ? undefined : reader(pivot);
@@ -141,8 +134,7 @@ export class Vec extends Cell<V> {
       },
     );
   }
-  /** Rotate by `angle` (radians) about `pivot` (default origin). Inverse
-   *  rotates by `−angle`; exact bijection. */
+  /** Rotate by `angle` (radians) about `pivot` (default origin). */
   rotate(angle: Val<number>, pivot: Val<V> = ORIGIN): this {
     const af = reader(angle);
     const pf = reader(pivot);
@@ -159,7 +151,6 @@ export class Vec extends Cell<V> {
       n => ({ x: n.x - xf(), y: n.y - yf() }),
     );
   }
-  // Axis-aligned offset sugar — same fwd/bwd shape as offset.
   up(n: Val<number>): this {
     const f = reader(n);
     return this.lens(
@@ -212,17 +203,14 @@ export class Vec extends Cell<V> {
     return cachedDerive(this, "magnitude", Num, v => Math.hypot(v.x, v.y));
   }
 
-  /** Tween-builder; `this: Writable<Vec>` gates the call to writable
-   *  receivers. */
+  /** Tween-builder. */
   to(this: Writable<Vec>, target: V, dur: Val<number>, ease?: Easing): Tween<V> {
     return tween(this, target, dur, ease);
   }
 }
 
-/** @internal — 2-input lens over two writable `Num`s; `vec()` delegates
- *  here after lifting literals. */
+/** Lens combining two writable `Num`s into a `Vec`. */
 function axes(x: Writable<Num>, y: Writable<Num>): Writable<Vec> {
-  // The view fully reconstructs both axes (1-arg bwd ⇒ no source read).
   return Vec.lens(
     [x, y] as const,
     ([xv, yv]) => ({ x: xv, y: yv }),
@@ -230,11 +218,9 @@ function axes(x: Writable<Num>, y: Writable<Num>): Writable<Vec> {
   );
 }
 
-/** Writable `Vec` at `(x, y)`. Each axis is a literal `number` (lifted
- *  to a fresh seed) or an existing `Writable<Num>` (identity passthrough).
- *  RO sources are rejected at the type level — use `Vec.derive(...)` for
- *  reactive RO tracking, or `cell.value` to snapshot. Lock an axis with
- *  `Num.pin(c)`: `vec(slider, Num.pin(100))`. */
+/** Writable `Vec` at `(x, y)`. Each axis is a literal (new cell) or existing
+ *  writable (passed through); for read-only sources use `Vec.derive`. Lock an
+ *  axis with `Num.pin`: `vec(slider, Num.pin(100))`. */
 export function vec(x: Init<Num> = 0, y: Init<Num> = 0): Writable<Vec> {
   if (typeof x === "number" && typeof y === "number") {
     return new Vec({ x, y }) as Writable<Vec>;
@@ -250,18 +236,16 @@ export function vec(x: Init<Num> = 0, y: Init<Num> = 0): Writable<Vec> {
  *  - `circular`  — c and r fixed; project the drag onto the circle. */
 export type PolarPolicy = "rotate" | "translate" | "radial" | "circular";
 
-/** Vec at polar offset from `center`: `center + (r·cos a, r·sin a)`.
- *  Bidirectional; each input is a literal (lifted to a fresh seed) or an
- *  existing writable cell. RO inputs are rejected at the type level.
- *  `policy` selects which inputs absorb writes; lock one with
- *  `Num.pin(c)`: `polar(c, Num.pin(100), a)`. */
+/** Vec at a polar offset from `center`: `center + (r·cos a, r·sin a)`. Each
+ *  input is a literal (new cell) or existing writable (passed through); for
+ *  read-only sources use `Vec.derive`. `policy` selects which inputs absorb
+ *  writes; lock one with `Num.pin`: `polar(c, Num.pin(100), a)`. */
 export function polar(
   center: Init<Vec>,
   r: Init<Num>,
   a: Init<Num>,
   policy: PolarPolicy = "rotate",
 ): Writable<Vec> {
-  // Lift literals; already-writable inputs pass through by identity.
   const cSig: Writable<Vec> = center instanceof Vec ? center : vec(center.x, center.y);
   const rSig: Writable<Num> = num(r);
   const aSig: Writable<Num> = num(a);
@@ -271,11 +255,8 @@ export function polar(
     y: c.y + rv * Math.sin(av),
   });
 
-  // Cyclic-coordinate inverse: pick the angle closest to current, not
-  // atan2's (-π, π] representative — otherwise an accumulated-revolution
-  // angle jumps discontinuously, breaking lenses that read it directly.
-  // Source-reading lens: each policy returns per-parent updates over
-  // [center, r, a].
+  // Pick the angle nearest current, not atan2's (-π, π] value, so an
+  // accumulated-revolution angle doesn't jump.
   type Updates = readonly [V | Skip, number | Skip, number | Skip];
   let bwd: (p: V, vals: readonly [V, number, number]) => Updates;
   switch (policy) {

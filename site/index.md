@@ -167,7 +167,7 @@ The two ends of a lens needn't share a type. With a boolean target, forward is a
 
 <md-rcc8></md-rcc8>
 
-## Collections & hierarchy
+## Collections
 
 A todo tree of `Tri` values (`true | false | "mixed"`). A click propagates up to ancestors and down to children.
 
@@ -268,7 +268,7 @@ A `Field<T>` is the same idea with a generic `T`. `Field<Vec>` runs Gray–Scott
 
 <md-reaction-diffusion></md-reaction-diffusion>
 
-## Solvers & approximation
+## Approximate inverses
 
 When the inverse has no closed form, the backward pass runs a solver, still one pass from the outside. An N-link arm is a `Vec.lens` running inverse kinematics on each write.
 
@@ -294,125 +294,6 @@ The same net, wider, on raw pixels. Draw a shape; the bar is the live P(circle).
 
 <md-classify-pixels></md-classify-pixels>
 
-## Cycles & constraints
-
-Some relationships have no source end: a four-bar linkage or cloth simulation isn't a lens. These run as cyclic regions (strongly connected components) solved iteratively and written back in one `batch()`.
-
-### Propagator networks
-
-A propagator declares the cells it reads and writes and narrows the writes via `merge` (lattice meet). Meet only narrows, so termination follows from the lattice.
-
-```ts
-const est = intervalCell();
-solve(...sensors.map(m => propagator([m], [est], () => merge(est, m.value))));
-```
-
-<md-partial></md-partial>
-
-Layout combinators.
-
-```ts
-solve(
-  col(container, [{ box: toolbar, min: 44, max: 44 }, body], { gap: 10, padding: 10 }),
-  row(body, panes, { gap: 10, align: "stretch" }),
-);
-```
-
-<md-flex></md-flex>
-
-A 9×9 sudoku with 27 `allDifferent` relations to narrow to a solution (or a contradiction).
-
-<md-prop-sudoku></md-prop-sudoku>
-
-Type inference by the same approach.
-
-```ts
-function unify(a: TypeNode, b: TypeNode) {
-  return [
-    ...same(a.tag, b.tag), // intersect candidate sets both ways
-    ...(a.dom && b.dom ? unify(a.dom, b.dom) : []),
-    ...(a.cod && b.cod ? unify(a.cod, b.cod) : []),
-  ];
-}
-```
-
-<md-prop-types></md-prop-types>
-
-Graph layout on the interval lattice: `order(layer(u), layer(v), 1)` per edge, narrowed to each layer's longest path.
-
-```ts
-const layer = rank(graph); // longest-path = order() atoms run to a fixpoint
-const place = layered(graph, { direction: "TB" }); // + crossings + coordinates
-```
-
-<md-sugiyama></md-sugiyama>
-
-```ts
-const inner = layered(cluster);          // lay out each subgraph
-const meta = layered(clusters, { sizeOf: extentOf }); // then the clusters
-```
-
-<md-subgraphs></md-subgraphs>
-
-### Physics & numerical constraints
-
-Augmented Vertex Block Descent with small constraints (`distance`, `angle`, `onCircle`, `generic`, …).
-
-```ts
-const braced = cell(true);
-const c = constraints({ iterations: 20 });
-c.add(
-  distance(A, B, 160),
-  distance(B, C, 120),
-  distance(C, D, 160),
-  distance(D, A, 120),
-);
-c.addWhile(braced, distance(A, C, diag));
-```
-
-<md-sketchpad></md-sketchpad>
-
-<md-sketchpad-live></md-sketchpad-live>
-
-`physics({ gravity })` bakes a time-stepper into the pipeline, advanced with `step(dt)`.
-
-<md-cloth></md-cloth>
-
-`gap`, `inside`, and `gravity` as constraints and forces.
-
-<md-particles></md-particles>
-
-<md-rigid-stack></md-rigid-stack>
-
-<md-rigid-rope></md-rigid-rope>
-
-A four-bar linkage solved by a vector-loop Newton step each frame, seeded from the last.
-
-<md-loop></md-loop>
-
-Each circle is fixed to `(R·sin t, R·sin 2t / 2)` by a `generic` constraint. Near the origin both branches are admissible and the solver can flip.
-
-<md-figure8></md-figure8>
-
-Three numbers and one `generic` constraint solve `a² + b² = c²`.
-
-<md-equation></md-equation>
-
-Constraints as loci: `onCircle(P, center, r)`, `collinear(P, A, B)`.
-
-<md-incidence></md-incidence>
-
-A slider-crank: two distances and a `collinear` over six cells, four pinned.
-
-<md-slider-crank></md-slider-crank>
-
-Force-directed layout: edge springs plus pairwise `gap` constraints.
-
-<md-graph></md-graph>
-
-A constraint cluster exposed as a `Writable<Vec>` via `exposeVec`; `procrustes(tips)` lays a move/spin/size frame over three fingertips.
-
-<md-network-lens></md-network-lens>
 
 ## Animation
 
@@ -688,6 +569,127 @@ Editing `area` scales the box on the canvas; a slider in the inspector moves the
 <md-scene-inspector></md-scene-inspector>
 
 <md-scene-table></md-scene-table>
+
+## Cycles & constraints
+
+Some relationships have no source end: a four-bar linkage or cloth simulation isn't a lens. These run as cyclic regions (strongly connected components) solved iteratively and written back in one `batch()`.
+
+### Propagator networks
+
+A propagator declares the cells it reads and writes and narrows the writes via `merge` (lattice meet). Meet only narrows, so termination follows from the lattice.
+
+```ts
+const est = intervalCell();
+solve(...sensors.map(m => propagator([m], [est], () => merge(est, m.value))));
+```
+
+<md-partial></md-partial>
+
+Layout combinators.
+
+```ts
+solve(
+  col(container, [{ box: toolbar, min: 44, max: 44 }, body], { gap: 10, padding: 10 }),
+  row(body, panes, { gap: 10, align: "stretch" }),
+);
+```
+
+<md-flex></md-flex>
+
+A 9×9 sudoku with 27 `allDifferent` relations to narrow to a solution (or a contradiction).
+
+<md-prop-sudoku></md-prop-sudoku>
+
+Type inference by the same approach.
+
+```ts
+function unify(a: TypeNode, b: TypeNode) {
+  return [
+    ...same(a.tag, b.tag), // intersect candidate sets both ways
+    ...(a.dom && b.dom ? unify(a.dom, b.dom) : []),
+    ...(a.cod && b.cod ? unify(a.cod, b.cod) : []),
+  ];
+}
+```
+
+<md-prop-types></md-prop-types>
+
+Graph layout on the interval lattice: `order(layer(u), layer(v), 1)` per edge, narrowed to each layer's longest path.
+
+```ts
+const layer = rank(graph); // longest-path = order() atoms run to a fixpoint
+const place = layered(graph, { direction: "TB" }); // + crossings + coordinates
+```
+
+<md-sugiyama></md-sugiyama>
+
+```ts
+const inner = layered(cluster);          // lay out each subgraph
+const meta = layered(clusters, { sizeOf: extentOf }); // then the clusters
+```
+
+<md-subgraphs></md-subgraphs>
+
+### Physics & numerical constraints
+
+Augmented Vertex Block Descent with small constraints (`distance`, `angle`, `onCircle`, `generic`, …).
+
+```ts
+const braced = cell(true);
+const c = constraints({ iterations: 20 });
+c.add(
+  distance(A, B, 160),
+  distance(B, C, 120),
+  distance(C, D, 160),
+  distance(D, A, 120),
+);
+c.addWhile(braced, distance(A, C, diag));
+```
+
+<md-sketchpad></md-sketchpad>
+
+<md-sketchpad-live></md-sketchpad-live>
+
+`physics({ gravity })` bakes a time-stepper into the pipeline, advanced with `step(dt)`.
+
+<md-cloth></md-cloth>
+
+`gap`, `inside`, and `gravity` as constraints and forces.
+
+<md-particles></md-particles>
+
+<md-rigid-stack></md-rigid-stack>
+
+<md-rigid-rope></md-rigid-rope>
+
+A four-bar linkage solved by a vector-loop Newton step each frame, seeded from the last.
+
+<md-loop></md-loop>
+
+Each circle is fixed to `(R·sin t, R·sin 2t / 2)` by a `generic` constraint. Near the origin both branches are admissible and the solver can flip.
+
+<md-figure8></md-figure8>
+
+Three numbers and one `generic` constraint solve `a² + b² = c²`.
+
+<md-equation></md-equation>
+
+Constraints as loci: `onCircle(P, center, r)`, `collinear(P, A, B)`.
+
+<md-incidence></md-incidence>
+
+A slider-crank: two distances and a `collinear` over six cells, four pinned.
+
+<md-slider-crank></md-slider-crank>
+
+Force-directed layout: edge springs plus pairwise `gap` constraints.
+
+<md-graph></md-graph>
+
+A constraint cluster exposed as a `Writable<Vec>` via `exposeVec`; `procrustes(tips)` lays a move/spin/size frame over three fingertips.
+
+<md-network-lens></md-network-lens>
+
 
 ## ~ Scratchboard ~
 
