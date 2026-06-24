@@ -48,7 +48,7 @@ export class MdMultitrack extends Diagram {
 
     s(
       rect(STRIP_X, STRIP_Y, STRIP_W, STRIP_H_TOTAL, {
-        fill: "#f5f5f5",
+        fill: "color-mix(in srgb, var(--text-color, #000) 6%, var(--bg-color, #fff))",
         stroke: "none",
         corner: 4,
       }),
@@ -96,7 +96,7 @@ export class MdMultitrack extends Diagram {
       const startKnob = s(
         circle(body.left, 4.5, {
           fill: color,
-          stroke: "white",
+          stroke: "var(--bg-color, white)",
           strokeWidth: 1.5,
         }),
       );
@@ -108,7 +108,7 @@ export class MdMultitrack extends Diagram {
       const endKnob = s(
         circle(body.right, 4.5, {
           fill: color,
-          stroke: "white",
+          stroke: "var(--bg-color, white)",
           strokeWidth: 1.5,
         }),
       );
@@ -132,7 +132,7 @@ export class MdMultitrack extends Diagram {
       circle(
         Vec.derive(() => ({ x: ballX.value, y: STAGE_Y })),
         ballR,
-        { fill: "#1a1a1a", opacity: ballOpacity },
+        { fill: "var(--text-color, #1a1a1a)", opacity: ballOpacity },
       ),
     );
 

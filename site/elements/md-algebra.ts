@@ -85,7 +85,7 @@ export class MdAlgebra extends Diagram {
       const pos = mix(weights, branches);
       s(circle(pos, 26, { fill: term.fill, stroke: "var(--bg-color, #fff)", strokeWidth: 2 }));
       s(label(pos, term.label, { size: 22, bold: true, fill: "#fff" }));
-      s(label(pos.down(40), String(term.value), { size: 11, fill: "var(--text-muted)" }));
+      s(label(pos.down(40), String(term.value), { size: 11 }));
     });
 
     // Keyframe ticks along the track.
@@ -95,7 +95,6 @@ export class MdAlgebra extends Diagram {
       s(
         label(vec(t.x, t.y + 22), ORDERS[k]!.map(j => TERMS[j]!.label).join("+"), {
           size: 11,
-          fill: "var(--text-muted)",
         }),
       );
     }
@@ -133,7 +132,7 @@ export class MdAlgebra extends Diagram {
       label(
         view.bottom.up(14),
         "mix(tent weights, orderings) morphs continuously · closest snaps to a clean form on release",
-        { size: 10, fill: "var(--text-muted)" },
+        { size: 10 },
       ),
     );
   }

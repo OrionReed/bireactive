@@ -129,7 +129,7 @@ export class MdPlanets extends Diagram {
       label(
         view.bottom.up(14),
         "each orbit is a d.vary track · d.closest picks the ring · the body springs to the projected drop",
-        { size: 10, fill: "var(--text-muted)" },
+        { size: 10 },
       ),
     );
   }

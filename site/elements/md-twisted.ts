@@ -183,7 +183,6 @@ export class MdTwisted extends Diagram {
       s(
         label(vec(c.x, c.y + (i === 1 ? -16 : 18)), cornerNames[i]!, {
           size: 11,
-          fill: "var(--text-muted)",
         }),
       );
     });
@@ -213,7 +212,7 @@ export class MdTwisted extends Diagram {
       label(
         view.bottom.up(16),
         "d.between(pointer, corners, mix) → weights · every node is the weighted blend · clamped to the hull",
-        { size: 10, fill: "var(--text-muted)" },
+        { size: 10 },
       ),
     );
   }

@@ -156,8 +156,8 @@ export class MdAllen extends Diagram {
       drag(barRect, body);
       barRect.el.style.cursor = "grab";
       s(
-        handle(onTrack(R.lo), { fill: "#222", r: 5 }),
-        handle(onTrack(R.hi), { fill: "#222", r: 5 }),
+        handle(onTrack(R.lo), { fill: "var(--text-color, #222)", r: 5 }),
+        handle(onTrack(R.hi), { fill: "var(--text-color, #222)", r: 5 }),
       );
     };
     bar(A, yA, "#5b8def");
@@ -193,13 +193,13 @@ export class MdAllen extends Diagram {
         rect(0, 0, CW - 8, CH, {
           corner: 7,
           fill: derive(() => (active.value ? "#2f6df0" : "rgba(150,150,150,0.12)")),
-          stroke: derive(() => (active.value ? "#2f6df0" : "#bbb")),
+          stroke: derive(() => (active.value ? "#2f6df0" : "color-mix(in srgb, var(--text-color, #000) 30%, transparent)")),
           thin: true,
         }),
         label(vec((CW - 8) / 2, CH / 2), r, {
           size: 10,
           align: Anchor.Center,
-          fill: derive(() => (active.value ? "#fff" : "#444")),
+          fill: derive(() => (active.value ? "#fff" : "var(--text-color, #444)")),
         }),
       );
       g.el.style.cursor = "pointer";

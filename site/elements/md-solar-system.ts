@@ -17,7 +17,7 @@ const TAU = Math.PI * 2;
 
 export class MdSolarSystem extends Diagram {
   protected scene(s: Mount): void {
-    const view = this.view(560, 360);
+    const view = this.view(560, 420);
 
     // The whole solar system is deterministic in `time`. Each body's
     // angle is `time.affine(τ/period, phase)` — a single invertible op.

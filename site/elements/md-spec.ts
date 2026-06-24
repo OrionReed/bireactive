@@ -82,7 +82,7 @@ export class MdSpec extends Diagram {
         label(markers[m]!.right(16), name, {
           size: 12,
           align: { x: 0, y: 0.5 },
-          fill: derive(() => (active.value ? "#5b8def" : "var(--text-muted)")),
+          fill: derive(() => (active.value ? "#5b8def" : "var(--text-color)")),
         }),
       );
     });
@@ -175,7 +175,7 @@ export class MdSpec extends Diagram {
       label(
         view.bottom.up(14),
         "the spec is [grid, free, ring][mode] — a cell · closest snaps, vary frees · swap it live, no rewiring",
-        { size: 10, fill: "var(--text-muted)" },
+        { size: 10 },
       ),
     );
   }

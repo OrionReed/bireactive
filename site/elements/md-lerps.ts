@@ -24,10 +24,15 @@ const W = 640;
 const H = 320;
 const ROW_H = 50;
 const TOP = 50;
-const LABEL_X = 24;
-const VIS_X = 110;
 const VIS_W = 220;
-const READ_X = VIS_X + VIS_W + 24;
+// Centered three-column layout: name · viz · readout.
+const LABEL_GAP = 86;
+const READ_GAP = 24;
+const READ_W = 84;
+const CONTENT_W = LABEL_GAP + VIS_W + READ_GAP + READ_W;
+const LABEL_X = (W - CONTENT_W) / 2;
+const VIS_X = LABEL_X + LABEL_GAP;
+const READ_X = VIS_X + VIS_W + READ_GAP;
 const DUR = 0.7;
 const DWELL = 0.45;
 

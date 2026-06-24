@@ -159,7 +159,7 @@ interface Link {
 }
 
 // LensLink — the backward dual of `Link`, the one structure both backward
-// traversals ride. A lens-edge connects a `child` (a writable view) to one
+// traversals use. A lens-edge connects a `child` (a writable view) to one
 // `parent` (a back-target) at tuple position `index`. It lives in two lists,
 // the backward mirror of forward's `deps`/`subs`:
 //   child.parentEdges  (down: my back-targets)      via nextParent
@@ -909,8 +909,8 @@ export class Cell<T = unknown> implements ReactiveNode {
     return lens(this as Read<unknown>, o.get, bwd) as Writable<Cell<unknown>>;
   }
 
-  /** Backward fan-in: forward the identity view of its parent, backward the point
-   *  where N contributors fold into one value. `fold` defaults to last-writer-wins. */
+  /** Backward fan-in: forwards its parent's value unchanged; on write, folds N
+   *  contributors into one value. `fold` defaults to last-writer-wins. */
   merge(this: Cell<T>, fold?: MergeFold<T>): Cell<T> {
     if (this.getter !== undefined && this._bwd === undefined) {
       throw new TypeError("merge: receiver is read-only");
@@ -1452,8 +1452,8 @@ function markDown(start: Cell<unknown>): void {
  *  `writeBack`ing each. Source-centric — a source reflects all its writers, so a
  *  call on it resolves every co-writer together and commits once.
  *
- *  Iterative post-order over the back-cone (was a recursion bounded by lens-nesting
- *  depth), via an explicit frame stack of {node, next-child cursor}. On entering a
+ *  Iterative post-order over the back-cone, via an explicit frame stack of
+ *  {node, next-child cursor}. On entering a
  *  node (pre): clear a merge's contributions, then `writeBack` if it holds an armed
  *  target. After its children drain (post): clear `BF.Pending`, then fold a merge.
  *  Children are walked in forward `childEdges` order (so a co-writer's last write
@@ -1578,8 +1578,7 @@ function resolveBackDeps(node: ReactiveNode): void {
  *
  *  Iterative depth-first, left-to-right (children pushed in reverse onto the
  *  pooled `wbNode`/`wbTarget` stack), so a sibling read sees a prior sibling's
- *  staged write exactly as the old recursion did — bounded by stack memory, not
- *  the call stack. */
+ *  staged write — bounded by pooled stack memory, not the call stack. */
 function writeBack(node: Cell<unknown>, target: unknown): void {
   wbNode[0] = node;
   wbTarget[0] = target;
@@ -2014,9 +2013,9 @@ export function untracked<R>(fn: () => R): R {
 }
 
 // network() — reactive sub-DAG with explicit topology and self-excluded writes
-// (an `Effect` in `NoTrack | Exclude` mode), the building block for constraint
-// networks. Its body fires when any subscribed dep changes; its own writes
-// self-exclude so it doesn't re-trigger itself.
+// (an `Effect` in `NoTrack | Exclude` mode), used to build constraint networks.
+// Its body fires when any subscribed dep changes; its own writes self-exclude so
+// it doesn't re-trigger itself.
 
 /** Handle to a `network` invocation. */
 export interface Network {
@@ -2156,7 +2155,7 @@ export function fieldLens<
 }
 
 /** Read-only derived view via `Cls.derive(parent, fn)`, memoized per
- *  (instance, key). The cache is the point.
+ *  (instance, key).
  *
  *      get magnitude() {
  *        return cachedDerive(this, "magnitude", Num, v => Math.hypot(v.x, v.y));

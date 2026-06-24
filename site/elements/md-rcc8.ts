@@ -179,19 +179,18 @@ export class MdRcc8 extends Diagram {
         rect(0, 0, CW - 8, CH, {
           corner: 7,
           fill: derive(() => (active.value ? "#2f6df0" : "rgba(150,150,150,0.12)")),
-          stroke: derive(() => (active.value ? "#2f6df0" : "#bbb")),
+          stroke: derive(() =>
+            active.value ? "#2f6df0" : "color-mix(in srgb, var(--text-color, #000) 30%, transparent)",
+          ),
           thin: true,
         }),
-        label(vec(14, CH / 2), r.code, {
+        // Code only — the spelled-out name already shows in the "A is … B"
+        // readout above, and both together overflowed the chip.
+        label(vec((CW - 8) / 2, CH / 2), r.code, {
           size: 12,
           bold: true,
-          align: Anchor.Left,
-          fill: derive(() => (active.value ? "#fff" : "#333")),
-        }),
-        label(vec(CW - 8 - 12, CH / 2), r.name, {
-          size: 9,
-          align: Anchor.Right,
-          fill: derive(() => (active.value ? "rgba(255,255,255,0.85)" : "#888")),
+          align: Anchor.Center,
+          fill: derive(() => (active.value ? "#fff" : "var(--text-color, #333)")),
         }),
       );
       g.el.style.cursor = "pointer";

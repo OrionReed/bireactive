@@ -115,7 +115,7 @@ export class MdConformalDisc extends Diagram {
     const view = this.view(440, 440);
     const cx = view.center.value.x;
     const cy = view.center.value.y;
-    const R = 180;
+    const R = 160;
 
     s(circle(view.center, R, { thin: true, opacity: 0.6 }));
 

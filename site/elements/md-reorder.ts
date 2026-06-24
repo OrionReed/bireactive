@@ -151,7 +151,7 @@ export class MdReorder extends Diagram {
       label(
         view.bottom.up(18),
         "Vec.lens(order.indexOf(tile), place, locate) · one lens chain · no candidate states, no separate locate",
-        { size: 10, fill: "var(--text-muted)" },
+        { size: 10 },
       ),
     );
   }

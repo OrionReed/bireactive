@@ -103,6 +103,10 @@ const FN_COLOR: Record<string, string> = {
 const PASS = "#2ecc71";
 const FAIL = "#e74c3c";
 const NEUTRAL = "#bbb";
+// Theme-aware surfaces so the tracks/plot/buttons aren't blown-out white in dark mode.
+const PANEL = "color-mix(in srgb, var(--text-color, #000) 4%, var(--bg-color, #fff))";
+const PANEL_BORDER = "color-mix(in srgb, var(--text-color, #000) 12%, transparent)";
+const INK = "var(--text-color, #222)";
 
 // ~120 covers ~2s at 60fps, plenty for the loop's intro window.
 const SAMPLES = 120;
@@ -226,7 +230,7 @@ export class MdDebugger extends Diagram {
       const y = TIMELINE_TOP + lane * (GANTT_TRACK_H + GANTT_TRACK_GAP);
       s(
         rect(PAD_X, y, GANTT_W, GANTT_TRACK_H, {
-          fill: "#fafafa",
+          fill: PANEL,
           stroke: "none",
         }),
       );
@@ -307,8 +311,8 @@ export class MdDebugger extends Diagram {
         align: Anchor.Left,
       }),
       rect(PAD_X, PLOT_TOP, GANTT_W, PLOT_H, {
-        fill: "#fafafa",
-        stroke: "#ececec",
+        fill: PANEL,
+        stroke: PANEL_BORDER,
         corner: 3,
       }),
       // y=1: the claim bound.
@@ -394,7 +398,7 @@ export class MdDebugger extends Diagram {
       const y = CLAIMS_TOP + i * (CLAIM_TRACK_H + CLAIM_TRACK_GAP);
       s(
         rect(PAD_X, y, GANTT_W, CLAIM_TRACK_H, {
-          fill: "#fafafa",
+          fill: PANEL,
           stroke: "none",
           corner: 2,
         }),
@@ -414,7 +418,7 @@ export class MdDebugger extends Diagram {
       const x = cursorX.value.toFixed(2);
       return `M${x} ${TIMELINE_TOP - 3} L${x} ${CLAIMS_BOT + 3}`;
     });
-    s(pathD(cursorD, { stroke: "#222", thin: true }));
+    s(pathD(cursorD, { stroke: INK, thin: true }));
 
     const playPause = chunkButton(
       vec(PAD_X, TRANSPORT_Y),
@@ -528,8 +532,10 @@ function chunkButton(
   const g = group(
     { translate: pos },
     rect(0, 0, width, BTN_H, {
-      fill: derive(() => (active.value ? "#dceaff" : "#ffffff")),
-      stroke: "#222",
+      fill: derive(() =>
+        active.value ? "color-mix(in srgb, #5b8def 28%, var(--bg-color, #fff))" : "var(--bg-color, #fff)",
+      ),
+      stroke: INK,
       thin: true,
       corner: 4,
     }),

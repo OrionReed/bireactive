@@ -49,7 +49,8 @@ const ejectOut = (p: V, b: BoxV, eps = 6): V => {
 };
 
 const TRUE_FILL = "#5b8def";
-const FALSE_FILL = "#d8dde6";
+const FALSE_FILL = "color-mix(in srgb, var(--text-color, #000) 16%, var(--bg-color, #fff))";
+const DOT = "var(--text-color, #222)";
 const IND_W = 90;
 const IND_H = 22;
 
@@ -77,7 +78,7 @@ function boolIndicator(
         size: 11,
         bold: true,
         align: Anchor.Center,
-        fill: derive(() => (b.value ? "#fff" : "#333")),
+        fill: derive(() => (b.value ? "#fff" : "var(--text-color, #333)")),
       },
     ),
   );
@@ -122,7 +123,7 @@ export class MdBoolBridges extends Diagram {
           fill: "rgba(91,141,239,0.10)",
           stroke: "#5b8def",
         }),
-        handle(p1, { fill: "#222", r: 6 }),
+        handle(p1, { fill: DOT, r: 6 }),
       );
       boolIndicator(s, cx, IND_Y, inBox, "inside", "outside");
       s(label(vec(cx, LABEL_Y), "Box#contains(Vec)", { size: 10, opacity: 0.6 }));
@@ -151,7 +152,7 @@ export class MdBoolBridges extends Diagram {
         line(vec(trackX0, trackY), vec(trackX1, trackY), { thin: true, opacity: 0.4 }),
         line(vec(tx, trackY - 12), vec(tx, trackY + 12), { thin: true, opacity: 0.6 }),
         label(vec(tx, trackY - 18), `${threshold}`, { size: 9, opacity: 0.6 }),
-        handle(knobPos, { fill: "#222", r: 6 }),
+        handle(knobPos, { fill: DOT, r: 6 }),
       );
       boolIndicator(s, cx, IND_Y, above, "above", "below");
       s(label(vec(cx, LABEL_Y), "Num#greaterThan", { size: 10, opacity: 0.6 }));
@@ -220,7 +221,7 @@ export class MdBoolBridges extends Diagram {
           fill: "rgba(91,141,239,0.10)",
           stroke: "#5b8def",
         }),
-        ...points.map(p => handle(p, { fill: "#222", r: 5 })),
+        ...points.map(p => handle(p, { fill: DOT, r: 5 })),
       );
       boolIndicator(s, cx, IND_Y, allIn, "all in", "some out");
       s(label(vec(cx, LABEL_Y), "Array<Vec> → Bool", { size: 10, opacity: 0.6 }));
@@ -251,7 +252,7 @@ export class MdBoolBridges extends Diagram {
         line(vec(trackX0, trackY), vec(trackX1, trackY), { thin: true, opacity: 0.4 }),
         ...ticks,
         label(vec(cx, trackY - 22), readout, { size: 10, opacity: 0.7 }),
-        handle(knobPos, { fill: "#222", r: 6 }),
+        handle(knobPos, { fill: DOT, r: 6 }),
       );
       boolIndicator(s, cx, IND_Y, even, "even", "odd");
       s(label(vec(cx, LABEL_Y), "Num#isEven", { size: 10, opacity: 0.6 }));

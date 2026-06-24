@@ -88,7 +88,33 @@ export class MdGears extends Diagram {
 
     const drive0 = num(0);
     const dragging = cell(false);
-    const root = vec(150, 165);
+
+    // Pure geometry walk (positions + radii only, no signals) to find the
+    // tree's bounding box, so the root can be placed to center the whole mesh.
+    const toothDepth = 3.5;
+    const discs: { x: number; y: number; r: number }[] = [];
+    const walk = (spec: GearSpec, cx: number, cy: number): void => {
+      discs.push({ x: cx, y: cy, r: K * spec.teeth + toothDepth });
+      if (spec.compound) discs.push({ x: cx, y: cy, r: K * spec.compound.teeth + toothDepth });
+      const step = (drivingTeeth: number, kids: GearSpec[]) => {
+        for (const child of kids) {
+          const alpha = ((child.at ?? 0) * Math.PI) / 180;
+          const dist = K * (drivingTeeth + child.teeth);
+          walk(child, cx + Math.cos(alpha) * dist, cy + Math.sin(alpha) * dist);
+        }
+      };
+      step(spec.teeth, spec.children ?? []);
+      if (spec.compound) step(spec.compound.teeth, spec.compound.children ?? []);
+    };
+    walk(tree, 0, 0);
+    const minX = Math.min(...discs.map(d => d.x - d.r));
+    const maxX = Math.max(...discs.map(d => d.x + d.r));
+    const minY = Math.min(...discs.map(d => d.y - d.r));
+    const maxY = Math.max(...discs.map(d => d.y + d.r));
+    const root = vec(
+      view.center.value.x - (minX + maxX) / 2,
+      view.center.value.y - (minY + maxY) / 2,
+    );
 
     // Initial phase must interlock teeth at the contact line: with parent
     // crest reference θp0 and contact direction α, the child's start angle is

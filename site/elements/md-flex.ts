@@ -64,7 +64,7 @@ export class MdFlex extends Diagram {
         corner: 6,
       }),
       rect(toolbar.x, toolbar.y, toolbar.w, toolbar.h, { fill: "#8884", corner: 4 }),
-      label(toolbar.center, "toolbar · fixed 44", { size: 10, fill: "var(--text-muted)" }),
+      label(toolbar.center, "toolbar · fixed 44", { size: 10 }),
     );
 
     panes.forEach((b, i) => {
@@ -77,12 +77,11 @@ export class MdFlex extends Diagram {
         ),
         label(b.center.down(18), `min ${MIN} · grow ${i === 1 ? 2 : 1}`, {
           size: 9,
-          fill: "var(--text-muted)",
         }),
       );
     });
 
-    s(handle(rightEdge, { r: 7, fill: "#444", cursor: "ew-resize" }));
+    s(handle(rightEdge, { r: 7, fill: "var(--text-color, #444)", cursor: "ew-resize" }));
 
     s(
       label(
