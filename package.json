@@ -1,6 +1,6 @@
 {
   "name": "bireactive",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Bi-directional reactive programming.",
   "type": "module",
   "main": "./dist/index.js",
