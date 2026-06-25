@@ -19,12 +19,16 @@
 import type { DocHandle } from "@automerge/automerge-repo";
 import { type Cell, cell, effect, type Writable } from "../core/cell";
 import { type Store, store } from "../core/store";
-import { type By, reconcile } from "./reconcile";
+import { type By, type Replace, reconcile } from "./reconcile";
 
 /** Bridge options shared by every `connect*` entry. */
 export interface DocOptions {
   /** Identity key for list elements, enabling keyed reconciliation (see `reconcile`). */
   by?: By;
+  /** Keys whose values are written wholesale (a `put`) rather than deep-merged —
+   *  for opaque blobs a downstream bridge can only apply as whole-object puts
+   *  (see `reconcile`'s `Replace`). */
+  replace?: Replace;
 }
 
 function deepEqual(a: unknown, b: unknown): boolean {
@@ -65,14 +69,19 @@ export interface StoreBridge<T> extends DocLifecycle<T> {
 export interface DocBridge<T> extends CellBridge<T>, StoreBridge<T> {}
 
 /** Wire an existing cell to a handle in both directions; returns an unbind. */
-function bind<T extends object>(c: Writable<Cell<T>>, handle: DocHandle<T>, by?: By): () => void {
+function bind<T extends object>(
+  c: Writable<Cell<T>>,
+  handle: DocHandle<T>,
+  by?: By,
+  replace?: Replace,
+): () => void {
   const onChange = (): void => {
     c.value = structuredClone(handle.doc()) as T;
   };
   handle.on("change", onChange);
   const stop = effect(() => {
     const next = c.value;
-    handle.change((d: T) => reconcile(d, next, by));
+    handle.change((d: T) => reconcile(d, next, by, replace));
   });
   return () => {
     stop();
@@ -83,8 +92,9 @@ function bind<T extends object>(c: Writable<Cell<T>>, handle: DocHandle<T>, by?:
 /** Core: a doc-backed cell plus lifecycle. The cell projections layer on top. */
 function connect<T extends object>(handle: DocHandle<T>, opts?: DocOptions): CellBridge<T> {
   const by = opts?.by;
+  const replace = opts?.replace;
   const c = cell<T>(structuredClone(handle.doc()) as T, { equals: deepEqual, name: "doc" });
-  let unbind = bind(c, handle, by);
+  let unbind = bind(c, handle, by, replace);
   return {
     cell: c,
     retarget: next => {
@@ -92,7 +102,7 @@ function connect<T extends object>(handle: DocHandle<T>, opts?: DocOptions): Cel
       // Seed the cell from the new doc *before* re-binding, so the cell→doc
       // effect doesn't push the old value into the freshly targeted doc.
       c.value = structuredClone(next.doc()) as T;
-      unbind = bind(c, next, by);
+      unbind = bind(c, next, by, replace);
     },
     dispose: () => unbind(),
   };

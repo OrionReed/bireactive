@@ -8,7 +8,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { batch } from "../../core/cell";
 import { at } from "../../core/optics";
 import { connectCell, connectDoc, connectStore } from "../doc-cell";
-import { type By, reconcile } from "../reconcile";
+import { type By, type Replace, reconcile } from "../reconcile";
 
 beforeAll(async () => {
   await initSubduction();
@@ -127,6 +127,23 @@ describe("connectCell / connectStore", () => {
       cell.value = { cubes: [[1], [0], [2]] };
     });
     expect(h.doc().cubes).toEqual([[1], [0], [2]]);
+    dispose();
+  });
+
+  it("connectDoc with replace writes the chosen key wholesale", () => {
+    const r = repo();
+    const a = r.create<{ blob: { x: number; y: number } }>({ blob: { x: 1, y: 1 } });
+    const b = r.clone(a);
+    const { cell, dispose } = connectDoc(a, { replace: k => k === "blob" });
+    batch(() => {
+      cell.value = { blob: { x: 2, y: 1 } };
+    });
+    b.change(d => reconcile(d, { blob: { x: 1, y: 2 } }, undefined, k => k === "blob"));
+    a.merge(b);
+    // Wholesale put on both sides → one whole blob wins, never a {x:2,y:2} merge.
+    expect([JSON.stringify({ x: 2, y: 1 }), JSON.stringify({ x: 1, y: 2 })]).toContain(
+      JSON.stringify(a.doc().blob),
+    );
     dispose();
   });
 });
@@ -307,6 +324,66 @@ describe("reconcile (keyed) — edge cases", () => {
     const total: By = e => idBy(e) ?? by(e);
     h.change(d => reconcile(d, { rows: [{ id: 1, cells: [[1], [0], [2]] }] }, total));
     expect((h.doc() as Doc).rows).toEqual([{ id: 1, cells: [[1], [0], [2]] }]);
+  });
+});
+
+describe("reconcile (replace)", () => {
+  const blobOnly: Replace = k => k === "blob";
+
+  it("assigns a replace key wholesale, result deep-equals next", () => {
+    const h = repo().create<Record<string, unknown>>({ blob: { x: 1 }, n: 0 });
+    h.change(d => reconcile(d, { blob: { x: 2, y: 3 }, n: 1 }, undefined, blobOnly));
+    expect(h.doc()).toEqual({ blob: { x: 2, y: 3 }, n: 1 });
+  });
+
+  it("clobbers (no field-level merge) on concurrent edits to a replace key", () => {
+    const r = repo();
+    const a = r.create<{ blob: { x: number; y: number } }>({ blob: { x: 1, y: 1 } });
+    const b = r.clone(a);
+    a.change(d => reconcile(d, { blob: { x: 2, y: 1 } }, undefined, blobOnly));
+    b.change(d => reconcile(d, { blob: { x: 1, y: 2 } }, undefined, blobOnly));
+    a.merge(b);
+    // Wholesale puts conflict → one side's *whole* blob wins; never a {x:2,y:2} merge.
+    expect([JSON.stringify({ x: 2, y: 1 }), JSON.stringify({ x: 1, y: 2 })]).toContain(
+      JSON.stringify(a.doc().blob),
+    );
+  });
+
+  it("merges field-level for the SAME edits without replace (contrast)", () => {
+    const r = repo();
+    const a = r.create<{ blob: { x: number; y: number } }>({ blob: { x: 1, y: 1 } });
+    const b = r.clone(a);
+    a.change(d => reconcile(d, { blob: { x: 2, y: 1 } }));
+    b.change(d => reconcile(d, { blob: { x: 1, y: 2 } }));
+    a.merge(b);
+    expect(a.doc().blob).toEqual({ x: 2, y: 2 });
+  });
+
+  it("skips the write when the replace key is already deep-equal (guard)", () => {
+    const r = repo();
+    const a = r.create<{ blob: { x: number }; n: number }>({ blob: { x: 1 }, n: 0 });
+    const b = r.clone(a);
+    // a touches only `n`; blob is deep-equal so the guard avoids a spurious put.
+    a.change(d => reconcile(d, { blob: { x: 1 }, n: 5 }, undefined, blobOnly));
+    // b replaces blob wholesale.
+    b.change(d => reconcile(d, { blob: { x: 9 }, n: 0 }, undefined, blobOnly));
+    a.merge(b);
+    // No conflict: a's blob put never happened, so b's blob survives alongside a's n.
+    expect(a.doc()).toEqual({ blob: { x: 9 }, n: 5 });
+  });
+
+  it("does not rewrite a deep-equal nested array under a replace key", () => {
+    const h = repo().create<{ blob: { xs: number[] } }>({ blob: { xs: [1, 2, 3] } });
+    const before = changeCount(h);
+    h.change(d => reconcile(d, { blob: { xs: [1, 2, 3] } }, undefined, blobOnly));
+    expect(changeCount(h) - before).toBe(0); // deep-equal → empty change
+  });
+
+  it("replaces a chosen list index wholesale (numeric key)", () => {
+    const h = repo().create<{ xs: { v: number }[] }>({ xs: [{ v: 1 }, { v: 2 }] });
+    const replaceFirst: Replace = k => k === 1;
+    h.change(d => reconcile(d, { xs: [{ v: 1 }, { v: 22 }] }, undefined, replaceFirst));
+    expect(h.doc().xs).toEqual([{ v: 1 }, { v: 22 }]);
   });
 });
 

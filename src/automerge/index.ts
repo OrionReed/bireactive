@@ -12,5 +12,5 @@
 
 export type { CellBridge, DocBridge, DocLifecycle, DocOptions, StoreBridge } from "./doc-cell";
 export { connectCell, connectDoc, connectStore } from "./doc-cell";
-export type { By } from "./reconcile";
+export type { By, Replace } from "./reconcile";
 export { reconcile } from "./reconcile";
