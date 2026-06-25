@@ -53,13 +53,21 @@
     "postversion": "npm publish && git push --follow-tags"
   },
   "dependencies": {
-    "@automerge/automerge-repo": "^2.6.0-subduction.34",
-    "@automerge/automerge-repo-network-broadcastchannel": "^2.6.0-subduction.34",
-    "@automerge/automerge-repo-storage-indexeddb": "^2.6.0-subduction.34",
     "prism-esm": "^1.29.0-fix.6",
     "temml": "^0.13.3"
   },
+  "peerDependencies": {
+    "@automerge/automerge-repo": "^2.6.0-subduction.34"
+  },
+  "peerDependenciesMeta": {
+    "@automerge/automerge-repo": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@automerge/automerge-repo": "^2.6.0-subduction.34",
+    "@automerge/automerge-repo-network-broadcastchannel": "^2.6.0-subduction.34",
+    "@automerge/automerge-repo-storage-indexeddb": "^2.6.0-subduction.34",
     "@biomejs/biome": "2.4.15",
     "@preact/signals-core": "^1.14.2",
     "@types/node": "^22.0.0",

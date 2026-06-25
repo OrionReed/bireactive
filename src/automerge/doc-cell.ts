@@ -19,7 +19,13 @@
 import type { DocHandle } from "@automerge/automerge-repo";
 import { type Cell, cell, effect, type Writable } from "../core/cell";
 import { type Store, store } from "../core/store";
-import { reconcile } from "./reconcile";
+import { type By, reconcile } from "./reconcile";
+
+/** Bridge options shared by every `connect*` entry. */
+export interface DocOptions {
+  /** Identity key for list elements, enabling keyed reconciliation (see `reconcile`). */
+  by?: By;
+}
 
 function deepEqual(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
@@ -37,27 +43,36 @@ function deepEqual(a: unknown, b: unknown): boolean {
   return true;
 }
 
-/** Two-way bridge between an Automerge doc and the reactive graph. */
-export interface DocBridge<T> {
-  /** Source cell mirroring the doc; writes (direct or via a lens) flow back to the CRDT. */
-  cell: Writable<Cell<T>>;
-  /** Deep `store` view over `cell` — `bridge.store.a.b.value = x` commits to the doc. */
-  store: Store<T>;
+/** Lifecycle shared by every bridge: retarget the doc, detach both directions. */
+export interface DocLifecycle<T> {
   /** Point the same cell at a different doc, keeping every bound lens/view alive. */
   retarget: (handle: DocHandle<T>) => void;
   /** Detach both directions (call from `disconnectedCallback`). */
   dispose: () => void;
 }
 
+/** Doc bridged to a writable cell; writes (direct or via a lens) flow to the CRDT. */
+export interface CellBridge<T> extends DocLifecycle<T> {
+  cell: Writable<Cell<T>>;
+}
+
+/** Doc bridged to a deep `store` — `bridge.store.a.b.value = x` commits to the doc. */
+export interface StoreBridge<T> extends DocLifecycle<T> {
+  store: Store<T>;
+}
+
+/** Doc bridged to both a cell and a deep store. */
+export interface DocBridge<T> extends CellBridge<T>, StoreBridge<T> {}
+
 /** Wire an existing cell to a handle in both directions; returns an unbind. */
-function bind<T extends object>(c: Writable<Cell<T>>, handle: DocHandle<T>): () => void {
+function bind<T extends object>(c: Writable<Cell<T>>, handle: DocHandle<T>, by?: By): () => void {
   const onChange = (): void => {
     c.value = structuredClone(handle.doc()) as T;
   };
   handle.on("change", onChange);
   const stop = effect(() => {
     const next = c.value;
-    handle.change((d: T) => reconcile(d, next));
+    handle.change((d: T) => reconcile(d, next, by));
   });
   return () => {
     stop();
@@ -65,30 +80,46 @@ function bind<T extends object>(c: Writable<Cell<T>>, handle: DocHandle<T>): () 
   };
 }
 
-/** Connect a `DocHandle` to a reactive cell + store, syncing both ways. */
-export function connectDoc<T extends object>(handle: DocHandle<T>): DocBridge<T> {
+/** Core: a doc-backed cell plus lifecycle. The cell projections layer on top. */
+function connect<T extends object>(handle: DocHandle<T>, opts?: DocOptions): CellBridge<T> {
+  const by = opts?.by;
   const c = cell<T>(structuredClone(handle.doc()) as T, { equals: deepEqual, name: "doc" });
-  let unbind = bind(c, handle);
+  let unbind = bind(c, handle, by);
   return {
     cell: c,
-    store: store(c),
     retarget: next => {
       unbind();
       // Seed the cell from the new doc *before* re-binding, so the cell→doc
       // effect doesn't push the old value into the freshly targeted doc.
       c.value = structuredClone(next.doc()) as T;
-      unbind = bind(c, next);
+      unbind = bind(c, next, by);
     },
     dispose: () => unbind(),
   };
 }
 
-/** Doc as a writable cell (page-lifetime; use {@link connectDoc} when you need disposal). */
-export function docCell<T extends object>(handle: DocHandle<T>): Writable<Cell<T>> {
-  return connectDoc(handle).cell;
+/** Connect a `DocHandle` to a reactive cell, syncing both ways. */
+export function connectCell<T extends object>(
+  handle: DocHandle<T>,
+  opts?: DocOptions,
+): CellBridge<T> {
+  return connect(handle, opts);
 }
 
-/** Doc as a deep store (page-lifetime; use {@link connectDoc} when you need disposal). */
-export function docStore<T extends object>(handle: DocHandle<T>): Store<T> {
-  return connectDoc(handle).store;
+/** Connect a `DocHandle` to a deep `store`, syncing both ways. */
+export function connectStore<T extends object>(
+  handle: DocHandle<T>,
+  opts?: DocOptions,
+): StoreBridge<T> {
+  const { cell: c, retarget, dispose } = connect(handle, opts);
+  return { store: store(c), retarget, dispose };
+}
+
+/** Connect a `DocHandle` to a reactive cell + store, syncing both ways. */
+export function connectDoc<T extends object>(
+  handle: DocHandle<T>,
+  opts?: DocOptions,
+): DocBridge<T> {
+  const b = connect(handle, opts);
+  return { ...b, store: store(b.cell) };
 }
