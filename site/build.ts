@@ -1,9 +1,9 @@
-/* Builds the single landing page: `site/index.md` → root `index.html`
- * (and `dist/index.html` once vite has emitted the bundle). Markdown is
- * rendered with marked + footnotes + Temml math, code fences become
- * `<md-syntax>`, and the prose is wrapped in a minimal shell that loads
- * the custom-element bundle. There is no post list, header, or byline —
- * the page is the whole site. */
+/* Builds the landing page and slide deck:
+ *   site/index.md  → index.html
+ *   site/slides.md → slides.html
+ * Markdown is rendered with marked + footnotes + Temml math, code fences
+ * become `<md-syntax>`, and each page is wrapped in a shell that loads the
+ * custom-element bundle. */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,7 @@ import temml from "temml";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SOURCE = fileURLToPath(new URL("./index.md", import.meta.url));
+const SLIDES_SOURCE = fileURLToPath(new URL("./slides.md", import.meta.url));
 const DIST_DIR = `${ROOT}/dist-web`;
 
 // GitHub Pages serves this project repo under /bireactive/, so the production
@@ -105,8 +106,8 @@ function normalizeWs(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-function renderPage(): Page {
-  const raw = readFileSync(SOURCE, "utf-8");
+function renderMarkdown(file: string): { frontmatter: Record<string, string>; html: string; toc: TocEntry[] } {
+  const raw = readFileSync(file, "utf-8");
   const { content: markdown, data: frontmatter } = matter(raw);
 
   const toc: TocEntry[] = [];
@@ -117,20 +118,12 @@ function renderPage(): Page {
     .use({
       renderer: {
         heading(text: string, level: number) {
-          // `text` is marked's rendered HTML. Strip tags to get the display
-          // text (entities like &amp; stay encoded, rendering correctly in HTML).
-          // Also decode entities for the slug so "&amp;" → "&" → "-" not "amp-".
           const stripped = normalizeWs(stripTags(text));
           const id = slugify(decodeEntities(stripped));
-          // h1 is the page title — omit from the outline.
-          if (level === 2 || level === 3) {
-            toc.push({ level, id, text: stripped });
-          }
+          if (level === 2 || level === 3) toc.push({ level, id, text: stripped });
           return `<h${level} id="${id}"><a class="heading-anchor" href="#${id}">${text}</a></h${level}>\n`;
         },
         code(code: string, language?: string) {
-          // md-syntax tokenizes innerText, so HTML-escape the raw source
-          // before embedding (parse5 treats `<` as a tag start).
           const escaped = code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
           const lang = language ? ` lang="${language}"` : "";
           return `<md-syntax${lang}>${escaped}</md-syntax>`;
@@ -146,10 +139,15 @@ function renderPage(): Page {
       },
     });
 
+  return { frontmatter, html: marked.parse(markdown) as string, toc };
+}
+
+function renderPage(): Page {
+  const { frontmatter, html, toc } = renderMarkdown(SOURCE);
   return {
     title: frontmatter.title || "Bireactive",
     description: frontmatter.description || frontmatter.title || "Bireactive",
-    content: marked.parse(markdown) as string,
+    content: html,
     toc,
   };
 }
@@ -318,11 +316,130 @@ export function buildSite() {
 
   writeFileSync(`${ROOT}/index.html`, pageHTML(page, false));
 
-  // The prod page is written into the vite bundle dir once it exists (the
-  // build script runs this file again after `vite build`).
   if (existsSync(DIST_DIR)) {
     writeFileSync(`${DIST_DIR}/index.html`, pageHTML(page, true));
   }
 
   console.log("✅ Built landing page");
+}
+
+// ── Slide deck ────────────────────────────────────────────────────────────────
+
+const slideNavScript = `
+(function () {
+  var slides = Array.from(document.querySelectorAll('.slide'));
+  var counter = document.getElementById('slide-counter');
+  var total = slides.length;
+  var cur = Math.max(0, Math.min(parseInt(new URLSearchParams(location.search).get('s') || '0'), total - 1));
+
+  function show(i) {
+    slides[cur].classList.remove('active');
+    cur = (i + total) % total;
+    slides[cur].classList.add('active');
+    history.replaceState(null, '', cur === 0 ? location.pathname : '?s=' + cur);
+    if (counter) counter.textContent = (cur + 1) + ' / ' + total;
+  }
+
+  show(cur);
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') {
+      e.preventDefault(); show(cur + 1);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault(); show(cur - 1);
+    }
+  });
+
+  // Touch/swipe
+  var tx = 0;
+  document.addEventListener('touchstart', function (e) { tx = e.touches[0].clientX; }, { passive: true });
+  document.addEventListener('touchend', function (e) {
+    var dx = e.changedTouches[0].clientX - tx;
+    if (Math.abs(dx) > 40) show(cur + (dx < 0 ? 1 : -1));
+  }, { passive: true });
+})();
+`;
+
+function slidesHTML(
+  slides: string[],
+  title: string,
+  description: string,
+  isProduction: boolean,
+): string {
+  const base = isProduction ? PROD_BASE : "/";
+  const elementsScript = isProduction ? `${base}js/elements.js` : "/site/elements/index.ts";
+
+  const slideHtml = slides
+    .map((s, i) => {
+      const cls = i === 0 ? "slide slide-title" : "slide";
+      return `  <section class="${cls}">\n    <div class="slide-body">${s}</div>\n  </section>`;
+    })
+    .join("\n");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${title}</title>
+    <link rel="icon" type="image/svg+xml" href="${base}favicon.svg?v=7" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="${base}css/reset.css" />
+    <link rel="stylesheet" href="${base}css/color.css" />
+    <link rel="stylesheet" href="${base}css/md-syntax.css" />
+    <link rel="stylesheet" href="${base}css/slides.css" />
+    <script>
+      (function () {
+        var saved = localStorage.getItem("theme");
+        var theme = saved || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        var root = document.documentElement;
+        root.setAttribute("data-theme", theme);
+        root.style.colorScheme = theme === "dark" ? "dark" : "light";
+      })();
+    </script>
+    <meta name="description" content="${description}" />
+  </head>
+  <body>
+    <div class="deck">
+${slideHtml}
+    </div>
+    <div class="slide-chrome">
+      <dark-mode-toggle></dark-mode-toggle>
+      <span id="slide-counter" class="slide-counter"></span>
+    </div>
+    <script type="module" src="${elementsScript}"></script>
+    <script>${slideNavScript}</script>
+  </body>
+</html>`;
+}
+
+export function buildSlides() {
+  if (!existsSync(SLIDES_SOURCE)) {
+    console.log("No site/slides.md found, skipping...");
+    return;
+  }
+
+  const { frontmatter, html } = renderMarkdown(SLIDES_SOURCE);
+
+  // Split on <hr> tags (marked renders `---` as `<hr>`)
+  const slides = html
+    .split(/<hr\s*\/?>/)
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+
+  const title = frontmatter.title || "Bireactive";
+  const description = frontmatter.description || title;
+
+  writeFileSync(`${ROOT}/slides.html`, slidesHTML(slides, title, description, false));
+
+  if (existsSync(DIST_DIR)) {
+    writeFileSync(`${DIST_DIR}/slides.html`, slidesHTML(slides, title, description, true));
+  }
+
+  console.log(`✅ Built slides (${slides.length} slides)`);
 }

@@ -26,9 +26,9 @@ const BASE_PUZZLE =
 const ALL_9: readonly number[] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 type Cell9 = LatticeCell<ReadonlySet<number>>;
 
-const GIVEN = "var(--text)";
+const GIVEN = "var(--text-color)";
 const SOLVED = "#5b8def";
-const CANDIDATE = "var(--text-muted, #888)";
+const CANDIDATE = "var(--text-secondary, #888)";
 
 export class MdPropSudoku extends Diagram {
   protected scene(s: Mount): void {

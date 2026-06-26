@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import topLevelAwait from "vite-plugin-top-level-await";
 import wasm from "vite-plugin-wasm";
-import { buildSite, PROD_BASE } from "./site/build";
+import { buildSite, buildSlides, PROD_BASE } from "./site/build";
 
 const src = fileURLToPath(new URL("./src", import.meta.url));
 
@@ -34,6 +34,7 @@ export default defineConfig(({ command }) => ({
     rollupOptions: {
       input: {
         main: "index.html",
+        slides: "slides.html",
         elements: "site/elements/index.ts",
       },
       output: {
@@ -74,16 +75,20 @@ export default defineConfig(({ command }) => ({
       // exists, so the prod HTML can point at the hashed bundle.
       buildStart() {
         buildSite();
+        buildSlides();
       },
       closeBundle() {
         buildSite();
+        buildSlides();
       },
       configureServer(server) {
         buildSite();
+        buildSlides();
         server.watcher.add("/site/**/*");
         server.watcher.on("change", file => {
           if (file.includes("/site/")) {
             buildSite();
+            buildSlides();
             server.ws.send({
               type: "full-reload",
             });

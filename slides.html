@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bireactive — Talk</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=7" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/reset.css" />
+    <link rel="stylesheet" href="/css/color.css" />
+    <link rel="stylesheet" href="/css/md-syntax.css" />
+    <link rel="stylesheet" href="/css/slides.css" />
+    <script>
+      (function () {
+        var saved = localStorage.getItem("theme");
+        var theme = saved || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        var root = document.documentElement;
+        root.setAttribute("data-theme", theme);
+        root.style.colorScheme = theme === "dark" ? "dark" : "light";
+      })();
+    </script>
+    <meta name="description" content="A talk about bidirectional reactive programming." />
+  </head>
+  <body>
+    <div class="deck">
+  <section class="slide slide-title">
+    <div class="slide-body"><h1 id="bidirectional-reactive-programming"><a class="heading-anchor" href="#bidirectional-reactive-programming">(Bidirectional) Reactive Programming</a></h1>
+<p><md-bireactive></md-bireactive></p>
+<p>Orion Reed</p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="animation"><a class="heading-anchor" href="#animation">Animation</a></h2>
+<p><md-centering></md-centering></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><table>
+<thead>
+<tr>
+<th>Yield</th>
+<th>Means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>yield</td>
+<td>wait one frame, resume with dt</td>
+</tr>
+<tr>
+<td>yield 0.5</td>
+<td>sleep half a second</td>
+</tr>
+<tr>
+<td>yield gen</td>
+<td>spawn a child, wait for it</td>
+</tr>
+<tr>
+<td>yield [a, b]</td>
+<td>spawn N in parallel, wait for all</td>
+</tr>
+<tr>
+<td>yield (wake) =&gt; …</td>
+<td>suspend on a callback-shaped source</td>
+</tr>
+<tr>
+<td>yield detach(g)</td>
+<td>spawn at root; outlives the yielding parent</td>
+</tr>
+<tr>
+<td>yield cut(v)</td>
+<td>from inside a group: settle group with v</td>
+</tr>
+</tbody></table></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="anchors"><a class="heading-anchor" href="#anchors">Anchors</a></h2>
+<p><md-anchors></md-anchors></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="interpolation"><a class="heading-anchor" href="#interpolation">Interpolation</a></h2>
+<p><md-lerps></md-lerps></p>
+<p><md-morph></md-morph></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="reactive-tex"><a class="heading-anchor" href="#reactive-tex">Reactive TeX</a></h2>
+<p><md-tex-demo></md-tex-demo></p>
+<p>Markers tie prose to the diagram: <md-marker sym="osc:gamma">damping</md-marker>, <md-marker sym="osc:A">amplitude</md-marker>, <md-marker sym="osc:omega">frequency</md-marker>.</p>
+<p><md-oscillator></md-oscillator></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="reactivity"><a class="heading-anchor" href="#reactivity">Reactivity</a></h2>
+<md-syntax lang="ts">const dots = [vec(0, 0)];
+for (let i = 0; i &lt; n; i++)
+  dots.push(Vec.derive(() =&gt; dots[i].value.rotate(0.6, p).scale(0.85, p)));</md-syntax><p><md-forward-reactive></md-forward-reactive></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="independent-cells"><a class="heading-anchor" href="#independent-cells">Independent cells</a></h2>
+<md-syntax lang="ts">const dots = [vec(0, 0)];
+for (let i = 0; i &lt; n; i++)
+  dots.push(vec(dots[i].value.rotate(0.6, p).scale(0.85, p)));</md-syntax><p><md-independent-cells></md-independent-cells></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="bidirectionality"><a class="heading-anchor" href="#bidirectionality">Bidirectionality</a></h2>
+<md-syntax lang="ts">const dots = [vec(0, 0)];
+for (let i = 0; i &lt; n; i++)
+  dots.push(dots[i].rotate(0.6, p).scale(0.85, p));</md-syntax><p><md-invertible></md-invertible></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="one-scalar-every-body"><a class="heading-anchor" href="#one-scalar-every-body">One scalar, every body</a></h2>
+<p><md-solar-system></md-solar-system></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="colour"><a class="heading-anchor" href="#colour">Colour</a></h2>
+<p><md-color-hsv></md-color-hsv></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="units"><a class="heading-anchor" href="#units">Units</a></h2>
+<p><md-units></md-units></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="coordinate-spaces"><a class="heading-anchor" href="#coordinate-spaces">Coordinate spaces</a></h2>
+<p><md-coordinate-spaces></md-coordinate-spaces></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="gears-pulleys"><a class="heading-anchor" href="#gears-pulleys">Gears &amp; pulleys</a></h2>
+<p><md-gears></md-gears></p>
+<p><md-pulley></md-pulley></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><p><md-triangle></md-triangle></p>
+<p><md-loop></md-loop></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="n-parents"><a class="heading-anchor" href="#n-parents">N parents</a></h2>
+<p><md-best-fit></md-best-fit></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="cross-domain-traits"><a class="heading-anchor" href="#cross-domain-traits">Cross-domain traits</a></h2>
+<p><md-traits-cross-domain></md-traits-cross-domain></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="blending"><a class="heading-anchor" href="#blending">Blending</a></h2>
+<p><md-twisted></md-twisted></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="across-types"><a class="heading-anchor" href="#across-types">Across types</a></h2>
+<p><md-bool-bridges></md-bool-bridges></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="allen-relations"><a class="heading-anchor" href="#allen-relations">Allen relations</a></h2>
+<p><md-allen></md-allen></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="text"><a class="heading-anchor" href="#text">Text</a></h2>
+<p><md-madlibs></md-madlibs></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="one-source-many-formats"><a class="heading-anchor" href="#one-source-many-formats">One source, many formats</a></h2>
+<p><md-syntax-lens></md-syntax-lens></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="schema-evolution"><a class="heading-anchor" href="#schema-evolution">Schema evolution</a></h2>
+<p><md-schema-evolution></md-schema-evolution></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="collaboration"><a class="heading-anchor" href="#collaboration">Collaboration</a></h2>
+<p><md-scene-canvas></md-scene-canvas></p>
+<p><md-scene-inspector></md-scene-inspector></p>
+<p><md-scene-table></md-scene-table></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="large-costly-data"><a class="heading-anchor" href="#large-costly-data">Large &amp; costly data</a></h2>
+<p><md-canvas-graph></md-canvas-graph></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="reaction-diffusion"><a class="heading-anchor" href="#reaction-diffusion">Reaction–diffusion</a></h2>
+<p><md-reaction-diffusion></md-reaction-diffusion></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="learning"><a class="heading-anchor" href="#learning">Learning</a></h2>
+<p><md-classify-points></md-classify-points></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="on-raw-pixels"><a class="heading-anchor" href="#on-raw-pixels">…on raw pixels</a></h2>
+<p><md-classify-pixels></md-classify-pixels></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="cycles-constraints"><a class="heading-anchor" href="#cycles-constraints">Cycles &amp; constraints</a></h2>
+<p><md-flex></md-flex></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="sudoku"><a class="heading-anchor" href="#sudoku">Sudoku</a></h2>
+<p><md-prop-sudoku></md-prop-sudoku></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="graph-layout"><a class="heading-anchor" href="#graph-layout">Graph layout</a></h2>
+<p><md-sugiyama></md-sugiyama></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="physics"><a class="heading-anchor" href="#physics">Physics</a></h2>
+<p><md-figure8></md-figure8></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="cloth"><a class="heading-anchor" href="#cloth">Cloth</a></h2>
+<p><md-cloth></md-cloth></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h2 id="stacking"><a class="heading-anchor" href="#stacking">Stacking</a></h2>
+<p><md-rigid-stack></md-rigid-stack></p></div>
+  </section>
+  <section class="slide">
+    <div class="slide-body"><h1 id="thank-you"><a class="heading-anchor" href="#thank-you">Thank you</a></h1>
+<p><a href="https://github.com/OrionReed/bireactive">github.com/OrionReed/bireactive</a></p>
+<p><a href="https://www.npmjs.com/package/bireactive">npmjs.com/package/bireactive</a></p>
+<p><a href="https://orionreed.com">orionreed.com</a></p></div>
+  </section>
+    </div>
+    <div class="slide-chrome">
+      <dark-mode-toggle></dark-mode-toggle>
+      <span id="slide-counter" class="slide-counter"></span>
+    </div>
+    <script type="module" src="/site/elements/index.ts"></script>
+    <script>
+(function () {
+  var slides = Array.from(document.querySelectorAll('.slide'));
+  var counter = document.getElementById('slide-counter');
+  var total = slides.length;
+  var cur = Math.max(0, Math.min(parseInt(new URLSearchParams(location.search).get('s') || '0'), total - 1));
+
+  function show(i) {
+    slides[cur].classList.remove('active');
+    cur = (i + total) % total;
+    slides[cur].classList.add('active');
+    history.replaceState(null, '', cur === 0 ? location.pathname : '?s=' + cur);
+    if (counter) counter.textContent = (cur + 1) + ' / ' + total;
+  }
+
+  show(cur);
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') {
+      e.preventDefault(); show(cur + 1);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault(); show(cur - 1);
+    }
+  });
+
+  // Touch/swipe
+  var tx = 0;
+  document.addEventListener('touchstart', function (e) { tx = e.touches[0].clientX; }, { passive: true });
+  document.addEventListener('touchend', function (e) {
+    var dx = e.changedTouches[0].clientX - tx;
+    if (Math.abs(dx) > 40) show(cur + (dx < 0 ? 1 : -1));
+  }, { passive: true });
+})();
+</script>
+  </body>
+</html>
