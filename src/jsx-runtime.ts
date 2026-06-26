@@ -57,7 +57,7 @@ function applyProp(el: Element, key: string, value: unknown): void {
     if (typeof value === "function") (value as (e: Element) => void)(el);
     return;
   }
-  if (key === "lens") return bindLens(el as HTMLInputElement, value as Writable<Cell<unknown>>);
+  if (key === "lens") return bindLens(el as HTMLElement, value as Writable<Cell<unknown>>);
   if (key.startsWith("on") && typeof value === "function") {
     el.addEventListener(key.slice(2).toLowerCase(), value as EventListener);
     return;
@@ -119,31 +119,60 @@ function reactiveText(get: () => unknown): Text {
   return node;
 }
 
-/** Two-way bind a form control to a writable cell: read forward into the
- *  control, write back on input. The forward write is skipped while the
- *  control is focused, so a live edit is never clobbered mid-drag (the
+/** Two-way bind a form control or `contenteditable` to a writable cell: read
+ *  forward into the control, write back on input. The forward write is skipped
+ *  while the control is focused, so a live edit is never clobbered mid-drag (the
  *  controlled-input focus guard, written once). */
-function bindLens(el: HTMLInputElement, lens: Writable<Cell<unknown>>): void {
-  const checkbox = el.type === "checkbox";
+function bindLens(el: HTMLElement, lens: Writable<Cell<unknown>>): void {
+  if (el.isContentEditable) return bindContentEditable(el, lens);
+  const input = el as HTMLInputElement;
+  const checkbox = input.type === "checkbox";
   track(
     effect(() => {
       const v = lens.value;
       if (checkbox) {
-        el.checked = !!v;
+        input.checked = !!v;
         return;
       }
       const next = v == null ? "" : String(v);
-      const root = el.getRootNode() as Document | ShadowRoot;
-      if (root.activeElement !== el && el.value !== next) el.value = next;
+      const root = input.getRootNode() as Document | ShadowRoot;
+      if (root.activeElement !== input && input.value !== next) input.value = next;
     }),
   );
-  const evt = checkbox || el.tagName === "SELECT" ? "change" : "input";
-  el.addEventListener(evt, () => {
+  const evt = checkbox || input.tagName === "SELECT" ? "change" : "input";
+  input.addEventListener(evt, () => {
     lens.value = checkbox
-      ? el.checked
-      : el.type === "range" || el.type === "number"
-        ? Number(el.value)
-        : el.value;
+      ? input.checked
+      : input.type === "range" || input.type === "number"
+        ? Number(input.value)
+        : input.value;
+  });
+}
+
+/** Bind a `contenteditable` element to a writable string cell via `textContent`.
+ *  Forward writes are skipped while focused or mid IME composition; the back-write
+ *  fires on input and at composition end. Assumes plaintext — prefer
+ *  `contenteditable="plaintext-only"` where supported; rich markup is the caller's. */
+function bindContentEditable(el: HTMLElement, lens: Writable<Cell<unknown>>): void {
+  let composing = false;
+  track(
+    effect(() => {
+      const v = lens.value;
+      const next = v == null ? "" : String(v);
+      const root = el.getRootNode() as Document | ShadowRoot;
+      if (root.activeElement !== el && el.textContent !== next) el.textContent = next;
+    }),
+  );
+  const writeBack = (): void => {
+    if (!composing) lens.value = el.textContent ?? "";
+  };
+  el.addEventListener("input", writeBack);
+  el.addEventListener("compositionstart", () => {
+    composing = true;
+  });
+  el.addEventListener("compositionend", () => {
+    composing = false;
+    writeBack();
   });
 }
 
@@ -172,6 +201,52 @@ export function scope<T>(fn: () => T): [T, Disposer] {
     ];
   } finally {
     currentOwner = prev;
+  }
+}
+
+// A parent supporting the state-preserving move (Chromium 133+, Firefox 135+,
+// Safari 18.4+); typed locally since lib.dom doesn't ship it yet.
+type Movable = Element & { moveBefore(node: Node, ref: Node | null): void };
+
+/** Bring `parent`'s children to exactly `nodes` in order, touching the DOM only
+ *  where it differs. Relocates existing nodes with `moveBefore` (preserves focus,
+ *  selection, and IME composition on items that didn't move); inserts fresh nodes
+ *  and falls back to `replaceChildren` where `moveBefore` is unavailable. */
+function reorder(parent: Element, nodes: readonly Node[]): void {
+  // Identical order — re-inserting would steal focus and reset clicks mid-interaction.
+  const cur = parent.childNodes;
+  let same = cur.length === nodes.length;
+  for (let i = 0; same && i < nodes.length; i++) same = cur[i] === nodes[i];
+  if (same) return;
+
+  const move = (parent as Partial<Movable>).moveBefore;
+  if (typeof move !== "function") {
+    parent.replaceChildren(...nodes);
+    return;
+  }
+
+  const wanted = new Set(nodes);
+  for (let i = cur.length - 1; i >= 0; i--) {
+    const n = cur[i] as ChildNode;
+    if (!wanted.has(n)) n.remove();
+  }
+  let ref = parent.firstChild;
+  for (const node of nodes) {
+    if (node === ref) {
+      ref = ref.nextSibling;
+      continue;
+    }
+    // moveBefore relocates an already-connected node; brand-new nodes (and the
+    // disconnected/cross-document cases that make moveBefore throw) use insertBefore.
+    if (node.parentNode === parent) {
+      try {
+        move.call(parent, node, ref);
+      } catch {
+        parent.insertBefore(node, ref);
+      }
+    } else {
+      parent.insertBefore(node, ref);
+    }
   }
 }
 
@@ -209,12 +284,7 @@ export function each<T>(
         cache.delete(k);
       }
     }
-    // Only touch the DOM when the ordered node set actually changed — re-inserting
-    // identical children mid-interaction would steal focus and reset clicks.
-    const cur = parent.childNodes;
-    let same = cur.length === nodes.length;
-    for (let i = 0; same && i < nodes.length; i++) same = cur[i] === nodes[i];
-    if (!same) parent.replaceChildren(...nodes);
+    reorder(parent, nodes);
   });
   track(() => {
     stop();

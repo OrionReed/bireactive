@@ -101,6 +101,144 @@ describe("each (keyed list rendering)", () => {
     expect(parent.children).toHaveLength(1);
   });
 
+  it("reorders via moveBefore (no remove/insert) when supported", () => {
+    // Faithful-enough fake DOM: tracks parentage so `reorder` takes the moveBefore
+    // path and we can assert surviving nodes are moved, never detached.
+    class Node {
+      parent: Parent | null = null;
+      removed = 0;
+      constructor(public id: string) {}
+      get nextSibling(): Node | null {
+        const ks = this.parent?.kids;
+        if (!ks) return null;
+        const i = ks.indexOf(this);
+        return i >= 0 && i + 1 < ks.length ? ks[i + 1]! : null;
+      }
+      get parentNode(): Parent | null {
+        return this.parent;
+      }
+      remove(): void {
+        const ks = this.parent?.kids;
+        if (ks) ks.splice(ks.indexOf(this), 1);
+        this.removed++;
+        this.parent = null;
+      }
+    }
+    class Parent {
+      kids: Node[] = [];
+      moves = 0;
+      get childNodes(): Node[] {
+        return this.kids;
+      }
+      get firstChild(): Node | null {
+        return this.kids[0] ?? null;
+      }
+      insertBefore(node: Node, ref: Node | null): void {
+        if (node.parent) {
+          const ks = node.parent.kids;
+          ks.splice(ks.indexOf(node), 1);
+        }
+        const i = ref ? this.kids.indexOf(ref) : this.kids.length;
+        this.kids.splice(i < 0 ? this.kids.length : i, 0, node);
+        node.parent = this;
+      }
+      moveBefore(node: Node, ref: Node | null): void {
+        if (node.parent !== this) throw new Error("moveBefore: not a child");
+        this.moves++;
+        this.kids.splice(this.kids.indexOf(node), 1);
+        const i = ref ? this.kids.indexOf(ref) : this.kids.length;
+        this.kids.splice(i < 0 ? this.kids.length : i, 0, node);
+      }
+      replaceChildren(): void {
+        throw new Error("replaceChildren should not be called on the moveBefore path");
+      }
+    }
+
+    const items = cell<Item[]>([{ id: "a" }, { id: "b" }, { id: "c" }]);
+    const parent = new Parent();
+    const made: Record<string, Node> = {};
+    let renders = 0;
+    each(
+      parent as unknown as Element,
+      items,
+      it => it.id,
+      it => {
+        renders++;
+        return (made[it.id] = new Node(it.id)) as unknown as globalThis.Node;
+      },
+    );
+    expect(parent.kids.map(k => k.id)).toEqual(["a", "b", "c"]);
+
+    batch(() => {
+      items.value = [{ id: "c" }, { id: "a" }, { id: "b" }];
+    });
+    // Same node objects, reordered via moveBefore — no re-render, no detach.
+    expect(renders).toBe(3);
+    expect(parent.kids[0]).toBe(made.c);
+    expect(parent.kids.map(k => k.id)).toEqual(["c", "a", "b"]);
+    expect(parent.moves).toBeGreaterThan(0);
+    expect([made.a, made.b, made.c].every(n => n.removed === 0)).toBe(true);
+  });
+
+  it("removes departed nodes on the moveBefore path", () => {
+    class Node {
+      parent: Parent | null = null;
+      removed = 0;
+      constructor(public id: string) {}
+      get nextSibling(): Node | null {
+        const ks = this.parent?.kids;
+        if (!ks) return null;
+        const i = ks.indexOf(this);
+        return i >= 0 && i + 1 < ks.length ? ks[i + 1]! : null;
+      }
+      get parentNode(): Parent | null {
+        return this.parent;
+      }
+      remove(): void {
+        const ks = this.parent?.kids;
+        if (ks) ks.splice(ks.indexOf(this), 1);
+        this.removed++;
+        this.parent = null;
+      }
+    }
+    class Parent {
+      kids: Node[] = [];
+      get childNodes(): Node[] {
+        return this.kids;
+      }
+      get firstChild(): Node | null {
+        return this.kids[0] ?? null;
+      }
+      insertBefore(node: Node, ref: Node | null): void {
+        if (node.parent) node.parent.kids.splice(node.parent.kids.indexOf(node), 1);
+        const i = ref ? this.kids.indexOf(ref) : this.kids.length;
+        this.kids.splice(i < 0 ? this.kids.length : i, 0, node);
+        node.parent = this;
+      }
+      moveBefore(node: Node, ref: Node | null): void {
+        this.kids.splice(this.kids.indexOf(node), 1);
+        const i = ref ? this.kids.indexOf(ref) : this.kids.length;
+        this.kids.splice(i < 0 ? this.kids.length : i, 0, node);
+      }
+      replaceChildren(): void {
+        throw new Error("replaceChildren should not be called on the moveBefore path");
+      }
+    }
+
+    const items = cell<Item[]>([{ id: "a" }, { id: "b" }, { id: "c" }]);
+    const parent = new Parent();
+    each(
+      parent as unknown as Element,
+      items,
+      it => it.id,
+      it => new Node(it.id) as unknown as globalThis.Node,
+    );
+    batch(() => {
+      items.value = [{ id: "a" }, { id: "c" }];
+    });
+    expect(parent.kids.map(k => k.id)).toEqual(["a", "c"]);
+  });
+
   it("does not re-run the list when an item's own cell changes", () => {
     const items = cell<Item[]>([{ id: "a" }, { id: "b" }]);
     const cells: Record<string, Writable<Cell<number>>> = {};

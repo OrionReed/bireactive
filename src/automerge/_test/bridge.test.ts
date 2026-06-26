@@ -5,8 +5,9 @@
 import { getAllChanges, initSubduction, Repo } from "@automerge/automerge-repo";
 import fc from "fast-check";
 import { beforeAll, describe, expect, it } from "vitest";
-import { batch } from "../../core/cell";
+import { batch, effect, settle } from "../../core/cell";
 import { at } from "../../core/optics";
+import { applyPatches } from "../apply-patches";
 import { connectCell, connectDoc, connectStore } from "../doc-cell";
 import { type By, type Replace, reconcile } from "../reconcile";
 
@@ -134,11 +135,11 @@ describe("connectCell / connectStore", () => {
     const r = repo();
     const a = r.create<{ blob: { x: number; y: number } }>({ blob: { x: 1, y: 1 } });
     const b = r.clone(a);
-    const { cell, dispose } = connectDoc(a, { replace: k => k === "blob" });
+    const { cell, dispose } = connectDoc(a, { replace: ["blob"] });
     batch(() => {
       cell.value = { blob: { x: 2, y: 1 } };
     });
-    b.change(d => reconcile(d, { blob: { x: 1, y: 2 } }, undefined, k => k === "blob"));
+    b.change(d => reconcile(d, { blob: { x: 1, y: 2 } }, undefined, ["blob"]));
     a.merge(b);
     // Wholesale put on both sides → one whole blob wins, never a {x:2,y:2} merge.
     expect([JSON.stringify({ x: 2, y: 1 }), JSON.stringify({ x: 1, y: 2 })]).toContain(
@@ -328,7 +329,7 @@ describe("reconcile (keyed) — edge cases", () => {
 });
 
 describe("reconcile (replace)", () => {
-  const blobOnly: Replace = k => k === "blob";
+  const blobOnly: Replace = ["blob"];
 
   it("assigns a replace key wholesale, result deep-equals next", () => {
     const h = repo().create<Record<string, unknown>>({ blob: { x: 1 }, n: 0 });
@@ -381,9 +382,33 @@ describe("reconcile (replace)", () => {
 
   it("replaces a chosen list index wholesale (numeric key)", () => {
     const h = repo().create<{ xs: { v: number }[] }>({ xs: [{ v: 1 }, { v: 2 }] });
-    const replaceFirst: Replace = k => k === 1;
+    const replaceFirst: Replace = path => path[path.length - 1] === 1;
     h.change(d => reconcile(d, { xs: [{ v: 1 }, { v: 22 }] }, undefined, replaceFirst));
     expect(h.doc().xs).toEqual([{ v: 1 }, { v: 22 }]);
+  });
+
+  it("scopes a path predicate so a same-named key elsewhere still merges", () => {
+    type Blob = { x: number; y: number };
+    type Doc = { store: { blob: Blob }; blob: Blob };
+    const r = repo();
+    // Replace only store.blob; a top-level `blob` of the same name must still merge.
+    const scoped: Replace = path => path.length === 2 && path[0] === "store" && path[1] === "blob";
+    const a = r.create<Doc>({ store: { blob: { x: 1, y: 1 } }, blob: { x: 1, y: 1 } });
+    const b = r.clone(a);
+    // a edits x, b edits y on both blobs — disjoint fields.
+    a.change(d =>
+      reconcile(d, { store: { blob: { x: 2, y: 1 } }, blob: { x: 2, y: 1 } }, undefined, scoped),
+    );
+    b.change(d =>
+      reconcile(d, { store: { blob: { x: 1, y: 2 } }, blob: { x: 1, y: 2 } }, undefined, scoped),
+    );
+    a.merge(b);
+    // Top-level blob merges field-level → both edits survive.
+    expect(a.doc().blob).toEqual({ x: 2, y: 2 });
+    // store.blob is a wholesale put → one side's whole object wins (never {x:2,y:2}).
+    expect([JSON.stringify({ x: 2, y: 1 }), JSON.stringify({ x: 1, y: 2 })]).toContain(
+      JSON.stringify(a.doc().store.blob),
+    );
   });
 });
 
@@ -517,6 +542,225 @@ describe("reconcile — properties", () => {
         expect(positional.doc().items).toEqual(to);
       }),
       { numRuns: 120 },
+    );
+  });
+
+  it("replace (key-name + path predicate): result still deep-equals next", () => {
+    const names = fc.uniqueArray(key, { maxLength: 3 });
+    fc.assert(
+      fc.property(obj, obj, names, (from, to, picked) => {
+        const sugar = repo().create(from as Record<string, unknown>);
+        sugar.change(d => reconcile(d, to, undefined, picked));
+        expect(sugar.doc()).toEqual(to);
+
+        const set = new Set(picked);
+        const pred = repo().create(from as Record<string, unknown>);
+        pred.change(d =>
+          reconcile(d, to, undefined, path => set.has(String(path[path.length - 1]))),
+        );
+        expect(pred.doc()).toEqual(to);
+      }),
+      { numRuns: 120 },
+    );
+  });
+});
+
+describe("connect* — patch-driven invalidation", () => {
+  type Store = { store: Record<string, { props: { text: string } }> };
+  const seed = (): Store => ({
+    store: { a: { props: { text: "a0" } }, b: { props: { text: "b0" } } },
+  });
+
+  it("shares untouched subtrees by identity across a change", () => {
+    const h = repo().create<Store>(seed());
+    const { cell, dispose } = connectCell(h);
+    const beforeA = cell.value.store.a;
+    h.change(d => {
+      d.store.b.props.text = "b1";
+    });
+    // Editing b must not give a a fresh identity (so a's lenses don't recompute).
+    expect(cell.value.store.a).toBe(beforeA);
+    // The edited spine is rebuilt and reflects the new value.
+    expect(cell.value.store.b.props.text).toBe("b1");
+    expect(cell.value.store.b).not.toBe(seed().store.b);
+    dispose();
+  });
+
+  it("a deep store view off an untouched slice doesn't recompute on a sibling edit", () => {
+    const h = repo().create<Store>(seed());
+    const { store: s, dispose } = connectStore(h);
+    let aComputes = 0;
+    const stop = effect(() => {
+      s.store.a.props.text.value;
+      aComputes++;
+    });
+    expect(aComputes).toBe(1);
+    h.change(d => {
+      d.store.b.props.text = "b1";
+    });
+    settle(); // run any woken effects so a spurious recompute would be observable
+    expect(s.store.a.props.text.value).toBe("a0"); // unchanged
+    expect(aComputes).toBe(1); // sibling edit didn't wake a's view
+    stop();
+    dispose();
+  });
+
+  it("object-key deletion keeps surviving siblings shared", () => {
+    const h = repo().create<Store>(seed());
+    const { cell, dispose } = connectCell(h);
+    const beforeA = cell.value.store.a;
+    h.change(d => {
+      delete d.store.b;
+    });
+    expect(cell.value.store.a).toBe(beforeA);
+    expect(cell.value.store.b).toBeUndefined();
+    dispose();
+  });
+
+  it("char-level text edits update the field and preserve siblings", () => {
+    const h = repo().create<Store>(seed());
+    const { cell, dispose } = connectCell(h);
+    const beforeB = cell.value.store.b;
+    h.change(d => {
+      // a splice on a's text (the bridge applies updateText for object string fields)
+      d.store.a.props.text = "a0!";
+    });
+    expect(cell.value.store.a.props.text).toBe("a0!");
+    expect(cell.value.store.b).toBe(beforeB);
+    dispose();
+  });
+});
+
+describe("applyPatches — properties", () => {
+  const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object";
+  const plainObj = (v: unknown): v is Record<string, unknown> => isObj(v) && !Array.isArray(v);
+
+  const deepEqual = (a: unknown, b: unknown): boolean => {
+    if (Object.is(a, b)) return true;
+    if (!isObj(a) || !isObj(b)) return false;
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    const ak = Object.keys(a);
+    const bk = Object.keys(b);
+    if (ak.length !== bk.length) return false;
+    return ak.every(k => Object.hasOwn(b, k) && deepEqual(a[k], b[k]));
+  };
+
+  // JSON-ish docs automerge accepts: objects, arrays, ints, bools, short strings.
+  // Plain `{}` prototypes only (automerge rejects null-prototype objects).
+  const k = fc.string({ minLength: 1, maxLength: 4 });
+  const leaf = fc.oneof(
+    fc.integer({ min: -50, max: 50 }),
+    fc.boolean(),
+    fc.string({ maxLength: 6 }),
+  );
+  const { node } = fc.letrec(tie => ({
+    node: fc.oneof(
+      { maxDepth: 3, depthIdentifier: "n" },
+      leaf,
+      fc.array(tie("node"), { maxLength: 4 }),
+      fc.dictionary(k, tie("node"), { maxKeys: 4, noNullPrototype: true }),
+    ),
+  }));
+  const docArb = fc.dictionary(k, node, { maxKeys: 5, noNullPrototype: true });
+
+  // Recursively assert: any object reachable through object keys that is unchanged
+  // (deep-equal) keeps its reference. Stops at arrays (structural list ops clone the
+  // whole array, so element identity is intentionally not preserved).
+  const assertShared = (p: unknown, n: unknown): void => {
+    if (!plainObj(p) || !plainObj(n)) return;
+    for (const key of Object.keys(n)) {
+      const pv = p[key];
+      const nv = n[key];
+      if (!plainObj(nv)) continue;
+      if (plainObj(pv)) {
+        if (deepEqual(pv, nv)) expect(nv).toBe(pv);
+        else assertShared(pv, nv);
+      }
+    }
+  };
+
+  // Wire applyPatches directly to a handle's change stream — the doc-cell onChange
+  // path, isolated from the cell engine.
+  const track = (h: ReturnType<Repo["create"]>) => {
+    const box = { value: structuredClone(h.doc()) as Record<string, unknown> };
+    h.on("change", ({ patches, patchInfo }) => {
+      box.value = applyPatches(box.value, patches, patchInfo.after as Record<string, unknown>);
+    });
+    return box;
+  };
+
+  it("reconstructs the doc across an arbitrary change sequence", () => {
+    fc.assert(
+      fc.property(docArb, fc.array(docArb, { minLength: 1, maxLength: 8 }), (init, steps) => {
+        const h = repo().create(init as Record<string, unknown>);
+        const tracked = track(h);
+        for (const s of steps) {
+          h.change(d => reconcile(d, s));
+          expect(tracked.value).toEqual(structuredClone(h.doc()));
+        }
+      }),
+      { numRuns: 150 },
+    );
+  });
+
+  it("keeps unchanged object subtrees identical (structural sharing)", () => {
+    fc.assert(
+      fc.property(docArb, docArb, (a, b) => {
+        const h = repo().create(a as Record<string, unknown>);
+        const before = structuredClone(h.doc()) as Record<string, unknown>;
+        let after: Record<string, unknown> | undefined;
+        h.on("change", ({ patches, patchInfo }) => {
+          after = applyPatches(before, patches, patchInfo.after as Record<string, unknown>);
+        });
+        h.change(d => reconcile(d, b));
+        if (after) assertShared(before, after);
+      }),
+      { numRuns: 150 },
+    );
+  });
+
+  it("an empty change leaves the value reference untouched", () => {
+    fc.assert(
+      fc.property(docArb, init => {
+        const h = repo().create(init as Record<string, unknown>);
+        const tracked = track(h);
+        const ref = tracked.value;
+        h.change(d => reconcile(d, init)); // no-op: deep-equal target
+        expect(tracked.value).toBe(ref);
+      }),
+      { numRuns: 100 },
+    );
+  });
+
+  it("tracks a doc driven by concurrent merges (remote/merge patches)", () => {
+    fc.assert(
+      fc.property(docArb, docArb, docArb, (init, ea, eb) => {
+        const r = repo();
+        const a = r.create(init as Record<string, unknown>);
+        const b = r.clone(a);
+        const tracked = track(a);
+        a.change(d => reconcile(d, ea));
+        b.change(d => reconcile(d, eb));
+        a.merge(b);
+        expect(tracked.value).toEqual(structuredClone(a.doc()));
+      }),
+      { numRuns: 150 },
+    );
+  });
+
+  it("connectCell stays correct end-to-end across a change sequence", () => {
+    fc.assert(
+      fc.property(docArb, fc.array(docArb, { minLength: 1, maxLength: 6 }), (init, steps) => {
+        const h = repo().create(init as Record<string, unknown>);
+        const { cell, dispose } = connectCell(h);
+        for (const s of steps) {
+          h.change(d => reconcile(d, s));
+          settle();
+          expect(cell.value).toEqual(structuredClone(h.doc()));
+        }
+        dispose();
+      }),
+      { numRuns: 80 },
     );
   });
 });

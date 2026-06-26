@@ -16,9 +16,10 @@
 // hang off one `connectDoc` — that's the symmetric, no-primary topology: the
 // CRDT is the shared core, every schema is just a projection.
 
-import type { DocHandle } from "@automerge/automerge-repo";
+import type { DocHandle, DocHandleChangePayload } from "@automerge/automerge-repo";
 import { type Cell, cell, effect, type Writable } from "../core/cell";
 import { type Store, store } from "../core/store";
+import { applyPatches } from "./apply-patches";
 import { type By, type Replace, reconcile } from "./reconcile";
 
 /** Bridge options shared by every `connect*` entry. */
@@ -75,8 +76,13 @@ function bind<T extends object>(
   by?: By,
   replace?: Replace,
 ): () => void {
-  const onChange = (): void => {
-    c.value = structuredClone(handle.doc()) as T;
+  // Patch-driven invalidation: rebuild only the spine to each changed value so
+  // untouched slices keep their identity and their lenses don't recompute. Fall
+  // back to a full snapshot when the change replaced this handle's whole scope.
+  const onChange = (p: DocHandleChangePayload<T>): void => {
+    c.value = p.scopeReplaced
+      ? (structuredClone(handle.doc()) as T)
+      : (applyPatches(c.peek() as object, p.patches, p.patchInfo.after as object) as T);
   };
   handle.on("change", onChange);
   const stop = effect(() => {

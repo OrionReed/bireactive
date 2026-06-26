@@ -25,20 +25,32 @@ type Any = any;
  *  collision) on any element makes that list fall back to positional. */
 export type By = (element: unknown) => unknown;
 
-/** Predicate over an object key (or list index): return `true` to *replace* that
- *  field's value wholesale (a scalar assignment → an Automerge `put`) instead of
- *  recursively merging into it. Use this for opaque JSON blobs that a downstream
- *  bridge can only consume as whole-object puts — e.g. tldraw's `richText`, whose
- *  patch applier rejects nested text `splice`s and mis-reads nested `del`s. The
- *  value is still only written when it actually differs, so unrelated commits
- *  don't churn it. */
-export type Replace = (key: string | number) => boolean;
+/** Selects fields whose value is *replaced* wholesale (a scalar assignment → an
+ *  Automerge `put`) instead of recursively merged. Use this for opaque JSON blobs
+ *  a downstream bridge can only consume as whole-object puts — e.g. tldraw's
+ *  `richText`, whose patch applier rejects nested text `splice`s and mis-reads
+ *  nested `del`s. A predicate receives the value's full path from the doc root
+ *  (e.g. `["store", "shape:1", "props", "richText"]`); an array or Set of names
+ *  matches any path whose last segment is one of them (key-name sugar). The value
+ *  is still only written when it differs, so unrelated commits don't churn it. */
+export type Replace =
+  | ((path: (string | number)[]) => boolean)
+  | readonly string[]
+  | ReadonlySet<string>;
 
-/** Reconcile context threaded through the recursion: keyed-list identity (`by`)
- *  and the wholesale-`replace` predicate. */
+/** Reconcile context threaded through the recursion: keyed-list identity (`by`),
+ *  the wholesale-`replace` predicate, and the live path to the current node. */
 interface Ctx {
   by?: By;
-  replace?: Replace;
+  replace?: (path: (string | number)[]) => boolean;
+  path: (string | number)[];
+}
+
+/** Normalize the `Replace` sugar (array/Set of key names) into a path predicate. */
+function toReplacePred(r: Replace): (path: (string | number)[]) => boolean {
+  if (typeof r === "function") return r;
+  const names = r instanceof Set ? r : new Set(r as readonly string[]);
+  return path => names.has(String(path[path.length - 1]));
 }
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
@@ -74,7 +86,7 @@ function deepEq(a: unknown, b: unknown): boolean {
  *  the plain value `next`. Pass `by` for identity-keyed list reconciliation, and
  *  `replace` to assign chosen keys wholesale instead of merging into them. */
 export function reconcile(target: Any, next: Any, by?: By, replace?: Replace): void {
-  const ctx: Ctx = { by, replace };
+  const ctx: Ctx = { by, replace: replace && toReplacePred(replace), path: [] };
   if (Array.isArray(next) && Array.isArray(target)) reconcileList(target, next, ctx);
   else reconcileObject(target, next, ctx);
 }
@@ -151,26 +163,31 @@ function setKey(
   inList: boolean,
   ctx: Ctx,
 ): void {
-  // Wholesale-replace keys bypass the merge entirely: assign the value so
-  // Automerge emits a single `put` of the (re)built subtree — no nested text
-  // `splice`s, no `del`s — which is all some bridges can apply. Guard on
-  // deep-equality so reconciling an unrelated change doesn't rewrite it.
-  if (ctx.replace?.(key)) {
-    if (!deepEq(a, b)) parent[key] = b;
-    return;
-  }
-  if (typeof b === "string" && typeof a === "string") {
-    // Char-level merge for object text fields; list string elements just assign
-    // (path-relative updateText targets a keyed field, not an array slot).
-    if (a !== b) {
-      if (inList) parent[key] = b;
-      else updateText(parent, [key as string], b);
+  ctx.path.push(key);
+  try {
+    // Wholesale-replace paths bypass the merge entirely: assign the value so
+    // Automerge emits a single `put` of the (re)built subtree — no nested text
+    // `splice`s, no `del`s — which is all some bridges can apply. Guard on
+    // deep-equality so reconciling an unrelated change doesn't rewrite it.
+    if (ctx.replace?.(ctx.path)) {
+      if (!deepEq(a, b)) parent[key] = b;
+      return;
     }
-  } else if (Array.isArray(b) && Array.isArray(a)) {
-    reconcileList(a, b, ctx);
-  } else if (isPlainObject(b) && isPlainObject(a)) {
-    reconcileObject(a, b, ctx);
-  } else if (a !== b) {
-    parent[key] = b;
+    if (typeof b === "string" && typeof a === "string") {
+      // Char-level merge for object text fields; list string elements just assign
+      // (path-relative updateText targets a keyed field, not an array slot).
+      if (a !== b) {
+        if (inList) parent[key] = b;
+        else updateText(parent, [key as string], b);
+      }
+    } else if (Array.isArray(b) && Array.isArray(a)) {
+      reconcileList(a, b, ctx);
+    } else if (isPlainObject(b) && isPlainObject(a)) {
+      reconcileObject(a, b, ctx);
+    } else if (a !== b) {
+      parent[key] = b;
+    }
+  } finally {
+    ctx.path.pop();
   }
 }
