@@ -220,7 +220,7 @@ Each projection is lossy, so it keeps what it drops in a complement. Edit any pa
 
 `Str` has `trim` / `reverse` / `slice` / `split`; `split(/\s+/)` returns an `Arr` of segment lenses, so editing, adding, or reordering a word rewrites the source.
 
-`Reg` is a bidirectional regex-lens algebra: `copy` / `lit` / `seq` / `alt` / `opt` / `star`, each combinator a lens. Leaves compile to a Brzozowski automaton and the grammar to a tagged Thompson program run as a PikeVM, so an unambiguous grammar parses in linear time without backtracking. Ambiguity is rejected at construction with a witness string that parses two ways (`copy(/\d+/).then(copy(/\d+/))` names `"00"`). A write whose source is off-language is rejected instead of clobbering the rest. `bind` exposes each named capture as an editable handle (`copy` → `Writable<Str>`, `star` → `Arr`); the backward pass reprints the source, preserving anything the view never named. `reg.optic()` exposes a grammar as an `Optic<string, V>` for `compose(...)` and `cell.through(...)`. A `star`'s element cells are lenses, so grammars nest: a line-splitter over a cell-splitter makes a grid editable in both dimensions.
+`Reg` is a bidirectional regex-lens algebra: `copy` / `lit` / `seq` / `alt` / `opt` / `star`, each combinator a lens. Leaves compile to a Brzozowski automaton and the grammar to a tagged Thompson program run as a PikeVM, so an unambiguous grammar parses in linear time without backtracking. Ambiguity is rejected at construction with a witness string that parses two ways (`copy(/\d+/).then(copy(/\d+/))` names `"00"`). A write whose source is off-language is rejected instead of clobbering the rest. `bind` exposes each named capture as an editable handle (`copy` → `Writable<Str>`, `star` → `Arr`); the backward pass reprints the source, preserving anything the view never named. `reg.optic()` exposes a grammar as an `Optic<string, V>` for `cell.lens(...)`. A `star`'s element cells are lenses, so grammars nest: a line-splitter over a cell-splitter makes a grid editable in both dimensions.
 
 <md-reg-table></md-reg-table>
 
@@ -232,7 +232,7 @@ Compose a grammar's word cells with `caseFold` for case-preserving find/replace:
 
 <md-reg-rename></md-reg-rename>
 
-Because `reg.optic()` is an `Optic`, one string can be edited through several grammars at once. Each pane is `source.through(canonical, format(other))` — the same key/value list as a URL query, as `key: value` lines, and as a compact form.
+Because `reg.optic()` is an `Optic`, one string can be edited through several grammars at once. Each pane is `source.lens(canonical, format(other))` — the same key/value list as a URL query, as `key: value` lines, and as a compact form.
 
 <md-reg-formats></md-reg-formats>
 
@@ -557,9 +557,9 @@ An adapter to [Automerge](https://automerge.org/) CRDT documents makes a doc int
 - spreadsheet — a view of the inspector (C): the same shape lens reprojected through centre, area, aspect ratio, hex.
 
 ```ts
-const shape  = doc.through(byId(id));         // A ▸ B   the inspector's per-shape lens
-const area   = shape.through(areaOptic);      // B ▸ C   edit it and w·h scale, aspect held
-const hex    = shape.through(hexOptic);        // B ▸ C   the HSL triple as one #rrggbb
+const shape  = doc.lens(byId(id));         // A ▸ B   the inspector's per-shape lens
+const area   = shape.lens(areaOptic);      // B ▸ C   edit it and w·h scale, aspect held
+const hex    = shape.lens(hexOptic);        // B ▸ C   the HSL triple as one #rrggbb
 ```
 
 Editing `area` scales the box on the canvas; a slider in the inspector moves the centre in the sheet. Edits run both ways, across tabs too. Copy the scene id (under the canvas) into a second tab to collaborate.
@@ -753,7 +753,7 @@ Kepler orbits. The forward path solves `M = E − e·sin E` numerically; the bac
 
 <md-kepler-system></md-kepler-system>
 
-A waveform and its spectrum: `coeffs.through(iso(synthesize, analyze))`, an invertible change of basis.
+A waveform and its spectrum: `coeffs.lens(iso(synthesize, analyze))`, an invertible change of basis.
 
 <md-fourier></md-fourier>
 

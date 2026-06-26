@@ -1,6 +1,6 @@
 /** @jsxImportSource @bireactive */
 // The spreadsheet view — and the payoff of composition. Every editable cell is
-// `shapeLens(doc, id).through(toField(col))`: the *exact* lens the inspector
+// `shapeLens(doc, id).lens(toField(col))`: the *exact* lens the inspector
 // binds (layer B), with one more optic stacked on top (layer C). So the
 // spreadsheet is a view of the inspector, which is a view of the doc — A ▸ B ▸ C,
 // all from plain composable optic values. The Hex column stacks `hexOptic`
@@ -206,12 +206,12 @@ function row(doc: Writable<Cell<Scene>>, shape: Shape): Node {
       onClick={() => selectShape(doc, shape.id)}
     >
       <div class="sw" style={() => `background:${cssColor(s.value)}`} />
-      <input class="cell text" type="text" lens={s.through(toField("label"))} />
-      <input class="cell" type="number" lens={s.through(centerX)} />
-      <input class="cell" type="number" lens={s.through(centerY)} />
-      <input class="cell" type="number" step="100" lens={s.through(area)} />
-      <input class="cell" type="number" step="0.05" lens={s.through(aspect)} />
-      <input class="cell hex" type="text" lens={s.through(hexOptic)} />
+      <input class="cell text" type="text" lens={s.lens(toField("label"))} />
+      <input class="cell" type="number" lens={s.lens(centerX)} />
+      <input class="cell" type="number" lens={s.lens(centerY)} />
+      <input class="cell" type="number" step="100" lens={s.lens(area)} />
+      <input class="cell" type="number" step="0.05" lens={s.lens(aspect)} />
+      <input class="cell hex" type="text" lens={s.lens(hexOptic)} />
       <button
         type="button"
         class="del"

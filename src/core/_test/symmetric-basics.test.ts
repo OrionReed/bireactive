@@ -1,6 +1,6 @@
-// Stateful-lens foundations: init complement, step refresh, bwd recovering
-// discarded info, and the trap case (scale-to-zero round trip recoverable
-// because unit deviations live in the complement, not the collapsed source).
+// Stateful-lens foundations: complement seed, forward-only refresh (in `get`),
+// put recovering discarded info, and the trap case (scale-to-zero round trip
+// recoverable because unit deviations live in the complement, not the source).
 
 import { describe, expect, it } from "vitest";
 import { cell, effect, lens, settle } from "../index";
@@ -8,54 +8,55 @@ import { Num, num } from "../values/num";
 import { vec } from "../values/vec";
 
 describe("stateful lens — single input, identity-ish", () => {
-  it("init complement is used for the first read", () => {
+  it("seed complement is used for the first read", () => {
     const src = num(7);
     let seenComplement: number | null = null;
     const view = Num.lens(src, {
-      init: () => ({ v: -1 }),
-      step: (_s, c) => {
+      complement: () => ({ v: -1 }),
+      get: (s, c) => {
         seenComplement = c.v;
-        return { v: c.v + 1 };
+        return s;
       },
-      fwd: s => s,
-      bwd: (t, _s, c) => ({ update: t, complement: c }),
+      put: t => t,
     });
     expect(view.value).toBe(7);
     expect(seenComplement).toBe(-1);
   });
 
-  it("step refreshes the complement on each (dirtying) read", () => {
+  it("get refreshes the complement on each (dirtying) read", () => {
     const src = num(10);
     let calls = 0;
     const view = Num.lens(src, {
-      init: () => ({ v: 0 }),
-      step: (_s, c) => {
+      complement: () => ({ v: 0 }),
+      get: (s, c) => {
         calls += 1;
-        return { v: c.v + 1 };
+        c.v += 1;
+        return s;
       },
-      fwd: s => s,
-      bwd: (t, _s, c) => ({ update: t, complement: c }),
+      put: t => t,
     });
     view.value;
+    view.value; // cached — no recompute
     view.value;
-    view.value;
-    src.value = 11;
+    src.value = 11; // dirties → next read recomputes
     view.value;
     expect(calls).toBeGreaterThanOrEqual(2);
   });
 
-  it("bwd threads complement into write decisions", () => {
+  it("put threads complement into write decisions", () => {
     // The complement stores the last write; subsequent writes use it to
-    // "snap" non-monotonic writes upward (a write below the stored value
-    // re-projects to the current view and is stopped by the equality check).
+    // "snap" non-monotonic writes upward.
     const src = num(0);
     const snapped = Num.lens(src, {
-      init: () => ({ last: 0 }),
-      step: s => ({ last: s }),
-      fwd: s => s,
-      bwd: (t, _s, c) => {
+      complement: () => ({ last: 0 }),
+      get: (s, c) => {
+        c.last = s;
+        return s;
+      },
+      put: (t, _s, c) => {
         const next = t < c.last ? c.last : t; // monotonic
-        return { update: next, complement: { last: next } };
+        c.last = next;
+        return next;
       },
     });
     snapped.value = 5;
@@ -65,6 +66,41 @@ describe("stateful lens — single input, identity-ish", () => {
     snapped.value = 8;
     expect(src.value).toBe(8);
   });
+
+  // The forward-only refresh (no version stamp) is sound only because the cache
+  // runs `get` at most once per settled source: a path-dependent complement must
+  // not double-advance across `peek`, repeated `.value`, or peek-then-value.
+  it("refresh runs once per settled source — peek/value/repeat don't double-step", () => {
+    const src = num(0);
+    let steps = 0;
+    // Accumulating (genuinely path-dependent) complement: each refresh counts.
+    const view = Num.lens(src, {
+      complement: () => ({ n: 0 }),
+      get: (s, c) => {
+        c.n += 1;
+        steps += 1;
+        return s;
+      },
+      put: t => t,
+    });
+
+    view.peek(); // first realize
+    view.value; // cached
+    view.peek(); // cached
+    view.value; // cached
+    expect(steps).toBe(1); // exactly one refresh for one settled source
+
+    src.value = 1; // genuine move → one more refresh on next read
+    view.peek();
+    view.value;
+    expect(steps).toBe(2);
+
+    // An own back-write dirties the view; the next read re-runs `get`, which —
+    // being idempotent on the (now settled) source — leaves the view consistent.
+    view.value = 9;
+    expect(src.value).toBe(9);
+    expect(view.value).toBe(9);
+  });
 });
 
 describe("stateful lens — multi-input scaling (the trap case)", () => {
@@ -73,8 +109,8 @@ describe("stateful lens — multi-input scaling (the trap case)", () => {
   // collapses all points to the centroid, destroying directions; you
   // cannot recover them later by setting spread > 0.
   //
-  // Stateful-lens fix: complement = unit deviation per point. `step`
-  // refreshes the unit deviations whenever spread reads > 0; `bwd`
+  // Stateful-lens fix: complement = unit deviation per point. `get`
+  // refreshes the unit deviations whenever spread reads > 0; `put`
   // multiplies them by the new spread and adds the centroid back.
 
   type V = { x: number; y: number };
@@ -107,16 +143,17 @@ describe("stateful lens — multi-input scaling (the trap case)", () => {
 
   const makeSpread = (pts: ReturnType<typeof vec>[]) =>
     Num.lens(pts, {
-      init: (positions: readonly V[]) => recompute(positions, undefined),
-      step: (positions: readonly V[], c: C) => recompute(positions, c),
-      fwd: (positions: readonly V[], c: C) => meanRadius(positions, c.centroid),
-      bwd: (newSpread: number, positions: readonly V[], c: C) => {
+      complement: (positions: readonly V[]) => recompute(positions, undefined),
+      get: (positions: readonly V[], c: C) => {
+        Object.assign(c, recompute(positions, c));
+        return meanRadius(positions, c.centroid);
+      },
+      put: (newSpread: number, positions: readonly V[], c: C) => {
         const k = Math.max(0, newSpread);
-        const out = positions.map((_, i) => ({
+        return positions.map((_, i) => ({
           x: c.centroid.x + c.units[i]!.x * k,
           y: c.centroid.y + c.units[i]!.y * k,
         }));
-        return { updates: out, complement: c };
       },
     });
 
@@ -233,12 +270,15 @@ describe("same-view back-write short-circuits", () => {
     // the source AND the complement are left untouched.
     const src = num(5);
     const snapped = Num.lens(src, {
-      init: () => ({ hi: 0 }),
-      step: (s, c) => (s > c.hi ? { hi: s } : c),
-      fwd: (_s, c) => c.hi,
-      bwd: (t, _s, c) => {
+      complement: () => ({ hi: 0 }),
+      get: (s, c) => {
+        if (s > c.hi) c.hi = s;
+        return c.hi;
+      },
+      put: (t, _s, c) => {
         const hi = Math.max(t, c.hi);
-        return { update: hi, complement: { hi } };
+        c.hi = hi;
+        return hi;
       },
     });
 

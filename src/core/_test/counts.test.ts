@@ -31,7 +31,6 @@ describe("counts: minimal-work baselines", () => {
     expect(counts.armBlocked).toBe(0);
     expect(counts.put).toBe(D); // one backward callback per lens — the minimum
     expect(counts.fold).toBe(0);
-    expect(counts.step).toBe(0);
     expect(counts.markDownVisit).toBe(D + 1); // D lenses + the source
   });
 
@@ -78,15 +77,14 @@ describe("counts: minimal-work baselines", () => {
     expect(counts.put).toBe(0); // a merge has no put; it folds then writes its parent
   });
 
-  it("a pure own back-write puts once and does not step", () => {
+  it("a stateful own back-write puts exactly once", () => {
     const s = cell(1);
     const st = lens(
       s as never,
       {
-        init: () => 0,
-        step: (_s: number, c: number) => c,
-        fwd: (v: number) => v,
-        bwd: (t: number) => ({ update: t, complement: 0 }),
+        complement: () => ({ off: 0 }),
+        get: (v: number, c: { off: number }) => v + c.off,
+        put: (t: number) => t,
       } as never,
     ) as unknown as V;
     void st.value; // realize forward before measuring the backward path
@@ -97,28 +95,5 @@ describe("counts: minimal-work baselines", () => {
       void (s as unknown as V).value; // pull → resolve
     });
     expect(counts.put).toBe(1);
-    // No step: the source hasn't moved since the last sync (version stamp matches),
-    // so `bwd`'s complement is committed directly — provenance says "own write".
-    expect(counts.step).toBe(0);
-  });
-
-  it("an external source change steps the complement once on the next read", () => {
-    const s = cell(1);
-    const st = lens(
-      s as never,
-      {
-        init: (v: number) => v,
-        fwd: (v: number, c: number) => v + c,
-        bwd: (t: number) => ({ update: t, complement: 0 }),
-      } as never,
-    ) as unknown as V;
-    void st.value; // sync stamp to s.version
-    settle();
-
-    const { counts } = withCounts(() => {
-      (s as unknown as V).value = 9; // outside change → bumps s.version
-      void st.value; // read: version moved → step (default init) once
-    });
-    expect(counts.step).toBe(1);
   });
 });

@@ -1,12 +1,12 @@
-// Ergonomics layer: optic-as-value (`through`/`iso`/`atKey`/`compose`), the
-// lens-backed `store` proxy, debug labels/`explain`/`dumpGraph`/`traceWrites`,
-// and the `name` cell option. All sit on top of the engine, so these mostly
-// pin the user-visible contracts (round-trips, spread-replace, identity).
+// Ergonomics layer: optic-as-value (`lens`/`iso`/`atKey`), the lens-backed
+// `store` proxy, debug labels/`explain`/`dumpGraph`/`traceWrites`, and the
+// `name` cell option. All sit on top of the engine, so these mostly pin the
+// user-visible contracts (round-trips, spread-replace, identity).
 
 import { describe, expect, it } from "vitest";
 import { cell, lens } from "../cell";
 import { dumpGraph, explain, label, traceWrites } from "../debug";
-import { atKey, compose, iso, optic } from "../optic";
+import { atKey, iso, optic } from "../optic";
 import { at } from "../optics";
 import { store } from "../store";
 
@@ -15,7 +15,7 @@ type Rgb = { r: number; g: number; b: number };
 describe("optics as values", () => {
   it("iso round-trips forward and writes back", () => {
     const c = cell(0);
-    const f = c.through(
+    const f = c.lens(
       iso(
         x => (x * 9) / 5 + 32,
         x => ((x - 32) * 5) / 9,
@@ -28,18 +28,18 @@ describe("optics as values", () => {
 
   it("atKey projects a field and puts back spread-replace", () => {
     const o = cell<Rgb>({ r: 1, g: 2, b: 3 });
-    const r = o.through(atKey("r"));
+    const r = o.lens(atKey("r"));
     expect(r.value).toBe(1);
     r.value = 9;
     expect(o.value).toEqual({ r: 9, g: 2, b: 3 });
   });
 
-  it("variadic through composes left-to-right", () => {
+  it("variadic lens composes left-to-right", () => {
     const c = cell<Rgb>({ r: 10, g: 20, b: 30 });
     // pick g, then scale it ×2
-    const g2 = c.through(
-      atKey("g"),
-      iso(
+    const g2 = c.lens(
+      atKey<Rgb, "g">("g"),
+      iso<number, number>(
         x => x * 2,
         x => x / 2,
       ),
@@ -49,36 +49,18 @@ describe("optics as values", () => {
     expect(c.value).toEqual({ r: 10, g: 50, b: 30 });
   });
 
-  it("compose() equals chained .through()", () => {
-    const a = iso<number, number>(
-      x => x + 1,
-      x => x - 1,
-    );
-    const b = iso<number, number>(
-      x => x * 3,
-      x => x / 3,
-    );
-    const viaCompose = cell(2).through(compose(a, b));
-    const viaChain = cell(2).through(a.through(b));
-    expect(viaCompose.value).toBe((2 + 1) * 3);
-    expect(viaChain.value).toBe((2 + 1) * 3);
-    viaCompose.value = 30;
-    // viaCompose's own source moved to (30/3) - 1 = 9
-    expect(viaCompose.value).toBe(30);
-  });
-
-  it("optic() infers source-reading from put arity", () => {
+  it("optic put arity distinguishes source-reading from iso", () => {
     const sourceReading = optic<Rgb, number>(
       o => o.r,
       (v, o) => ({ ...o, r: v }),
     );
-    expect(sourceReading.readsSource).toBe(true);
+    expect(sourceReading.put.length).toBe(2);
     expect(
       iso(
         (x: number) => x,
         x => x,
-      ).readsSource,
-    ).toBe(false);
+      ).put.length,
+    ).toBe(1);
   });
 });
 
@@ -127,7 +109,7 @@ describe("lens-backed store", () => {
 
   it("works over a lens root (stays one source of truth)", () => {
     const s = cell(seed());
-    const userLens = s.through(atKey("user"));
+    const userLens = s.lens(atKey("user"));
     const st = store(userLens);
     st.age.value = 37;
     expect(s.value.user.age).toBe(37);
@@ -160,7 +142,7 @@ describe("debug tools", () => {
 
   it("traceWrites records source writes from a back-write", () => {
     const s = cell(0, { name: "s" });
-    const f = s.through(
+    const f = s.lens(
       iso(
         x => x + 1,
         x => x - 1,

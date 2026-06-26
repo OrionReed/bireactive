@@ -144,12 +144,13 @@ export function nearestIndex(
   const parents = [pointer, ...candidates] as readonly Read<V>[];
   type C = { index: number };
   return lens(parents, {
-    init: (sources: readonly V[]) => ({ index: pick(sources, -1, 0) }),
-    step: (sources: readonly V[], c: C) => ({ index: pick(sources, c.index, sticky) }),
-    fwd: (_sources: readonly V[], c: C) => c.index,
-    bwd: (_t: number, sources: readonly V[], c: C) => ({
-      updates: sources.map(() => SKIP) as never,
-      complement: c,
-    }),
+    complement: (sources: readonly V[]) => ({ index: pick(sources, -1, 0) }),
+    // `get` is the sole refresh: re-pick with hysteresis from the current pick.
+    // Idempotent — re-running on a settled source keeps the same index.
+    get: (sources: readonly V[], c: C) => {
+      c.index = pick(sources, c.index, sticky);
+      return c.index;
+    },
+    put: (_t: number, sources: readonly V[], _c: C) => sources.map(() => SKIP) as never,
   }) as Cell<number>;
 }

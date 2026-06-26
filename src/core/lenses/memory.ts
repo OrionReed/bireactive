@@ -60,28 +60,28 @@ export function remember<T, S extends Cell<T> & Traits<T, "linear">>(
   type C = { shape: T[] };
   // biome-ignore lint/suspicious/noExplicitAny: spec is checked structurally
   return (Num as any).lens(sources as unknown as readonly Writable<Cell<T>>[], {
-    init: (vals: readonly T[]): C => {
+    complement: (vals: readonly T[]): C => {
       const a = anchor(vals);
       return { shape: shapeOf(vals, a, feature(vals, a), null) };
     },
-    step: (vals: readonly T[], c: C): C => {
+    // `get` is the sole refresh: recompute the view and (idempotently) the shape.
+    get: (vals: readonly T[], c: C): number => {
       const a = anchor(vals);
-      return { shape: shapeOf(vals, a, feature(vals, a), c.shape) };
+      const f = feature(vals, a);
+      c.shape = shapeOf(vals, a, f, c.shape);
+      return f;
     },
-    fwd: (vals: readonly T[]): number => feature(vals, anchor(vals)),
-    bwd: (target: number, vals: readonly T[], c: C) => {
+    put: (target: number, vals: readonly T[], c: C) => {
       const a = anchor(vals);
       const f = feature(vals, a);
       // Magnitude is lossy (|−f| = f): a same-magnitude target re-projects
       // to the current feature, so the cluster is left put.
-      if (magnitude && Math.abs(target) === f) {
-        return { updates: vals.map(() => SKIP), complement: c };
-      }
+      if (magnitude && Math.abs(target) === f) return vals.map(() => SKIP);
       if (f > eps) {
         const k = target / f;
-        return { updates: vals.map(v => lin.add(a, lin.scale(lin.sub(v, a), k))), complement: c };
+        return vals.map(v => lin.add(a, lin.scale(lin.sub(v, a), k)));
       }
-      return { updates: c.shape.map(s => lin.add(a, lin.scale(s, target))), complement: c };
+      return c.shape.map(s => lin.add(a, lin.scale(s, target)));
     },
   }) as Writable<Num>;
 }
@@ -115,23 +115,26 @@ export function continuous<T>(
   type C = { prev: number };
   // biome-ignore lint/suspicious/noExplicitAny: spec is checked structurally
   return (Num as any).lens(sources as never, {
-    init: (vals: readonly T[]): C => {
+    complement: (vals: readonly T[]): C => {
       const r = raw(vals);
       return { prev: r.defined ? r.value : 0 };
     },
-    step: (vals: readonly T[], c: C): C => {
+    // `get` is the sole refresh: unwrap relative to `prev` and accumulate the
+    // winding. Idempotent — once the source settles, `unwrap` is a fixpoint.
+    get: (vals: readonly T[], c: C): number => {
       const r = raw(vals);
-      return r.defined ? { prev: unwrap(r.value, c.prev) } : c;
+      if (r.defined) c.prev = unwrap(r.value, c.prev);
+      return c.prev;
     },
-    fwd: (vals: readonly T[], c: C): number => {
+    put: (target: number, vals: readonly T[], c: C) => {
       const r = raw(vals);
-      return r.defined ? unwrap(r.value, c.prev) : c.prev;
-    },
-    bwd: (target: number, vals: readonly T[], c: C) => {
-      const r = raw(vals);
-      if (!r.defined) return { updates: vals.map(() => SKIP), complement: { prev: target } };
+      if (!r.defined) {
+        c.prev = target;
+        return vals.map(() => SKIP);
+      }
       const current = unwrap(r.value, c.prev);
-      return { updates: apply(target, vals, current), complement: { prev: target } };
+      c.prev = target;
+      return apply(target, vals, current);
     },
   }) as Writable<Num>;
 }

@@ -38,8 +38,6 @@ export interface Counts {
   put: number;
   /** A merge `fold` was invoked. */
   fold: number;
-  /** A stateful `step` was invoked (backward commit path). */
-  step: number;
 }
 
 function fresh(): Counts {
@@ -59,7 +57,6 @@ function fresh(): Counts {
     reassertScan: 0,
     put: 0,
     fold: 0,
-    step: 0,
   };
 }
 

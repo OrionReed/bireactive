@@ -533,7 +533,9 @@ function chunkButton(
     { translate: pos },
     rect(0, 0, width, BTN_H, {
       fill: derive(() =>
-        active.value ? "color-mix(in srgb, #5b8def 28%, var(--bg-color, #fff))" : "var(--bg-color, #fff)",
+        active.value
+          ? "color-mix(in srgb, #5b8def 28%, var(--bg-color, #fff))"
+          : "var(--bg-color, #fff)",
       ),
       stroke: INK,
       thin: true,

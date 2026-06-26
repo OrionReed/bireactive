@@ -6,13 +6,13 @@
 // value this text last agreed with (by identity — the hub only changes
 // identity on a real change). The spoke:
 //
-//   bwd   — parse the written text. Clean ⇒ push the recovered value to
-//           the hub. Errors ⇒ `updates: [SKIP]` (hub untouched),
-//           but the complement keeps the broken text so the view echoes
-//           it back instead of trampling the editor.
-//   step  — when the hub moved away from `synced`, absorb it by
-//           three-way surgical merge around any error regions.
-//   fwd   — the complement's text.
+//   put   — parse the written text. Clean ⇒ push the recovered value to
+//           the hub. Errors ⇒ `SKIP` (hub untouched), but the complement
+//           keeps the broken text so the view echoes it back instead of
+//           trampling the editor.
+//   get   — when the hub moved away from `synced`, absorb it by three-way
+//           surgical merge around any error regions (the sole refresh,
+//           idempotent once synced); then emit the complement's text.
 
 import { type Cell, cell, lens, SKIP, type Writable } from "../core/cell";
 import {
@@ -57,17 +57,24 @@ export function formatSpoke(
   hub: Writable<Cell<JsonValue>>,
   adapter: FormatAdapter,
 ): Writable<Cell<string>> {
-  return lens<JsonValue, string, Complement>(hub, {
-    init: v => fromValue(adapter, v),
-    step: (v, c) => (v === c.synced ? c : absorb(adapter, c, v)),
-    fwd: (_v, c) => c.text,
-    bwd: (target, _v, c) => {
+  return lens(hub, {
+    complement: (v: JsonValue): Complement => fromValue(adapter, v),
+    // `get` is the sole refresh: when the hub moved off `synced`, absorb it by
+    // surgical merge (idempotent — once `synced === v`, re-reading is a no-op).
+    get: (v: JsonValue, c: Complement): string => {
+      if (v !== c.synced) Object.assign(c, absorb(adapter, c, v));
+      return c.text;
+    },
+    put: (target: string, _v: JsonValue, c: Complement) => {
       const { tree, errors } = adapter.parse(target);
       if (errors.length === 0) {
         const v = valueOf(tree);
-        return { update: v, complement: { text: target, tree, errors, synced: v } };
+        Object.assign(c, { text: target, tree, errors, synced: v });
+        return v;
       }
-      return { update: SKIP, complement: { text: target, tree, errors, synced: c.synced } };
+      // Broken edit: keep the text (so the view echoes it) but hold `synced`.
+      Object.assign(c, { text: target, tree, errors });
+      return SKIP;
     },
   });
 }

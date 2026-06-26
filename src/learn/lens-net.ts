@@ -121,11 +121,9 @@ function denseLens(
 ): Writable<Cell<Float64Array>> {
   const parents: readonly [Writable<Cell<LayerParams>>, Cell<Float64Array>] = [params, input];
   return lens(parents, {
-    init: (): null => null,
-    step: (_s: readonly [LayerParams, Float64Array], c: null): null => c,
-    fwd: (s: readonly [LayerParams, Float64Array]): Float64Array =>
+    get: (s: readonly [LayerParams, Float64Array]): Float64Array =>
       denseForward(s[0], inDim, outDim, act, s[1]),
-    bwd: (cot: Float64Array, s: readonly [LayerParams, Float64Array], c: null) => {
+    put: (cot: Float64Array, s: readonly [LayerParams, Float64Array]) => {
       const { dIn, gW, gb } = denseBackward(s[0], inDim, outDim, act, s[1], cot);
       let pUpd: LayerParams | Skip;
       if (cfg.frozen) {
@@ -138,7 +136,7 @@ function denseLens(
         for (let o = 0; o < b.length; o++) b[o] = b[o]! - lr * gb[o]!;
         pUpd = { W, b };
       }
-      return { updates: [pUpd, dIn] as [LayerParams | Skip, Float64Array], complement: c };
+      return [pUpd, dIn] as [LayerParams | Skip, Float64Array];
     },
   }) as Writable<Cell<Float64Array>>;
 }

@@ -750,9 +750,8 @@ export class Reg<
   /** This grammar as a first-class, composable `Optic<string, V>`: `get`
    *  parses (falling back to the default value off-language), `put` reprints
    *  and round-trip-guards (an off-language source or a non-round-tripping
-   *  value leaves the source untouched). Drops straight into `compose(...)`
-   *  and `cell.through(...)`, so it chains with `atKey`/`iso` and string
-   *  lenses like `caseFold`. */
+   *  value leaves the source untouched). Drops straight into `cell.lens(...)`,
+   *  so it chains with `atKey`/`iso` and string lenses like `caseFold`. */
   optic(): Optic<string, V> {
     const def = defaultVal(this.root);
     return optic<string, V>(
@@ -767,7 +766,7 @@ export class Reg<
 
   /** The whole abstract value as a writable lens over `source`. */
   view(source: Cell<string>): Writable<Cell<V>> {
-    return source.through(this.optic());
+    return source.lens(this.optic());
   }
 
   /** Bind named captures (`.as`) to editable handles over `source`: a string

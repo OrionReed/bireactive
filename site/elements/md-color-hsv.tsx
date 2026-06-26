@@ -99,7 +99,7 @@ export default function ColorPicker() {
   // a no-op write — the input's focus guard holds it until it parses.
   const { h, s, v } = fields(hsv);
   const { r, g, b } = fields(rgb);
-  const hex = rgb.through(optic(toHex, (text: string, cur: Rgb) => parseHex(text) ?? cur));
+  const hex = rgb.lens(optic(toHex, (text: string, cur: Rgb) => parseHex(text) ?? cur));
 
   return (
     <div class="picker">

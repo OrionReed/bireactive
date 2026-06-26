@@ -150,9 +150,12 @@ describe("Reg v3 — optic composition", () => {
         fc.stringMatching(/^\d{1,3}$/),
         (y, m, d) => {
           const s = `${y}-${m}-${d}`;
-          expect(o.put(o.get(s), s)).toBe(s); // GetPut
+          // Pure optic (no complement): call its get/put as plain function pairs.
+          const get = o.get as (s: string) => [string, string, string];
+          const put = o.put as (t: [string, string, string], s: string) => string;
+          expect(put(get(s), s)).toBe(s); // GetPut
           const v: [string, string, string] = [y, m, d];
-          expect(o.get(o.put(v, s))).toEqual(v); // PutGet
+          expect(get(put(v, s))).toEqual(v); // PutGet
         },
       ),
     );
@@ -160,7 +163,7 @@ describe("Reg v3 — optic composition", () => {
 
   it("composes through an iso into a different surface syntax", () => {
     const s = str("12-7-2024");
-    const slashed = s.through(
+    const slashed = s.lens(
       dateGrammar.optic(),
       iso(
         (v: [string, string, string]) => v.join("/"),
@@ -172,7 +175,7 @@ describe("Reg v3 — optic composition", () => {
     expect(s.value).toBe("1-2-3");
   });
 
-  it("cell.through(reg.optic()) matches view()", () => {
+  it("cell.lens(reg.optic()) matches view()", () => {
     const s = str("12-7-2024");
     const view = dateGrammar.view(s);
     expect(view.value).toEqual(["12", "7", "2024"]);
@@ -199,8 +202,8 @@ describe("Reg v3 — optic composition", () => {
     const compact = Reg.word().then(Reg.lit(","), Reg.until(";")).star(Reg.lit(";")) as G;
 
     const source = str("host=localhost&port=8080");
-    const linesView = source.through(query.optic(), fmt(lines)) as unknown as { value: string };
-    const compactView = source.through(query.optic(), fmt(compact)) as unknown as {
+    const linesView = source.lens(query.optic(), fmt(lines)) as unknown as { value: string };
+    const compactView = source.lens(query.optic(), fmt(compact)) as unknown as {
       value: string;
     };
 

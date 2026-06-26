@@ -426,16 +426,22 @@ export function recurse(build: (self: OLens) => OLens): OLens {
 
 // ── reactive lifting (cells) ─────────────────────────────────────────
 
-/** Lift a value-lens onto a reactive cell. */
+/** Lift a value-lens onto a reactive cell. The value-level complement `C` is
+ *  functional (heterogeneous products, possibly `null`), so a small engine-side
+ *  holder `{ c }` carries it: `get`/`put` swap `holder.c` in place. `get` is the
+ *  sole refresh (folds `step`; idempotent when `step` is). */
 export function toStep<C>(vl: VLens<Obj, Obj, C>): Step {
   return src =>
-    lens<Obj, Obj, C>(src, {
-      init: v => vl.init(v),
-      step: (v, c) => (vl.step ? vl.step(v, c) : c),
-      fwd: (v, c) => vl.fwd(v, c),
-      bwd: (t: Obj, v, c) => {
-        const r = vl.bwd(t, v, c);
-        return { update: r.s, complement: r.c };
+    lens(src, {
+      complement: (v: Obj): { c: C } => ({ c: vl.init(v) }),
+      get: (v: Obj, h: { c: C }): Obj => {
+        if (vl.step) h.c = vl.step(v, h.c);
+        return vl.fwd(v, h.c);
+      },
+      put: (t: Obj, v: Obj, h: { c: C }) => {
+        const r = vl.bwd(t, v, h.c);
+        h.c = r.c;
+        return r.s;
       },
     });
 }

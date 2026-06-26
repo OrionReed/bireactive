@@ -5,12 +5,12 @@
 // (`a=1&b=2`), key/value lines (`a: 1`…), and a compact form (`a,1;b,2`). Each
 // grammar is exposed as `reg.optic(): Optic<string, Pairs>`, so a pane is just
 // the source composed *through* the canonical grammar and *back out through*
-// another's print: `source.through(canonical, format(other))`. Edit any pane
+// another's print: `source.lens(canonical, format(other))`. Edit any pane
 // and the shared value updates; the other panes re-derive. The separators are
 // normalised at the grammar boundary, so each format renders with its own.
 //
 // This is the "compose with the rest of the lens algebra" payoff: `Reg` drops
-// straight into `cell.through(...)` alongside `iso` / `atKey` / `compose`.
+// straight into `cell.lens(...)` alongside `iso` / `atKey`.
 
 import { effect, type Optic, optic, Reg, str } from "@bireactive";
 import { BaseElement, css } from "./base-element";
@@ -132,14 +132,14 @@ export class MdRegFormats extends BaseElement {
 
     const panes: Pane[] = [
       { label: "url query", rows: 4, lens: source },
-      { label: "key: value lines", rows: 4, lens: source.through(canonical, format(lines)) },
-      { label: "compact", rows: 4, lens: source.through(canonical, format(compact)) },
+      { label: "key: value lines", rows: 4, lens: source.lens(canonical, format(lines)) },
+      { label: "compact", rows: 4, lens: source.lens(canonical, format(compact)) },
     ];
 
     const hint = document.createElement("p");
     hint.className = "hint";
     hint.textContent =
-      "One backing string, three encodings of the same key/value list. Each pane is source.through(canonical, format(other)) — the grammar composed as an Optic. Edit any pane; the shared value updates and the others re-derive. Type something off-grammar and that pane just stops writing.";
+      "One backing string, three encodings of the same key/value list. Each pane is source.lens(canonical, format(other)) — the grammar composed as an Optic. Edit any pane; the shared value updates and the others re-derive. Type something off-grammar and that pane just stops writing.";
     this.shadow.append(hint);
 
     const panesEl = document.createElement("div");

@@ -91,8 +91,8 @@ function genRecipe(r: () => number, allowDerive: boolean): Recipe {
 
 describe("ground truth: the engine is deterministic with no cross-build state leak", () => {
   // Re-running the same recipe on a FRESH graph must reproduce the trace exactly.
-  // This is what guards the module-level `writeBack` pools (e.g. the stateful
-  // re-stamp stack): a pool left non-empty would taint the next build.
+  // This is what guards the module-level `writeBack` pools (`wbNode`/`wbTarget`):
+  // a pool left non-empty would taint the next build.
   it("reproduces identical observables on rebuild across 20000 random graphs", () => {
     const r = rng(0xbada55);
     let fails = 0;

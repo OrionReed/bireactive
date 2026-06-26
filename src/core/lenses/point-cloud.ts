@@ -90,31 +90,35 @@ export function scaleAbout<T extends { x: number; y: number }>(
 
   // biome-ignore lint/suspicious/noExplicitAny: variance escape — spec is checked structurally
   return (Num as any).lens(points as unknown as readonly Writable<Cell<T>>[], {
-    init: (vals: readonly T[]): C => {
+    complement: (vals: readonly T[]): C => {
       const p = pivot.peek();
       return { devs: vals.map(v => ({ x: v.x - p.x, y: v.y - p.y })) };
     },
-    step: (vals: readonly T[], c: C): C => ({ devs: refresh(c.devs, vals, pivot.peek()) }),
-    fwd: (vals: readonly T[]): number => {
+    // `get` is the sole refresh: re-derive the offsets (idempotent on a settled
+    // source), then emit the radius.
+    get: (vals: readonly T[], c: C): number => {
       const p = pivot.peek();
+      c.devs = refresh(c.devs, vals, p);
       return Math.hypot(vals[0]!.x - p.x, vals[0]!.y - p.y);
     },
-    bwd: (target: number, vals: readonly T[], c: C) => {
+    put: (target: number, vals: readonly T[], c: C) => {
       const p = pivot.peek();
       // Lossy magnitude view: |−r| = r, so a same-magnitude target
       // re-projects to the current radius and is absorbed (sources put).
       const rNow = Math.hypot(vals[0]!.x - p.x, vals[0]!.y - p.y);
-      if (Math.abs(target) === rNow) return { updates: vals.map(() => SKIP), complement: c };
-      const d0 = c.devs[0]!;
+      if (Math.abs(target) === rNow) return vals.map(() => SKIP);
+      // Re-derive offsets from the live source (so a sibling move is reflected);
+      // the guard keeps the stored direction through a collapse.
+      const devs = (c.devs = refresh(c.devs, vals, p));
+      const d0 = devs[0]!;
       const r0 = Math.hypot(d0.x, d0.y);
-      if (r0 < 1e-12) return { updates: vals.map(() => SKIP), complement: c };
+      if (r0 < 1e-12) return vals.map(() => SKIP);
       const k = target / r0;
-      const out = vals.map((v, i) => ({
+      return vals.map((v, i) => ({
         ...v,
-        x: p.x + k * c.devs[i]!.x,
-        y: p.y + k * c.devs[i]!.y,
+        x: p.x + k * devs[i]!.x,
+        y: p.y + k * devs[i]!.y,
       }));
-      return { updates: out, complement: c };
     },
   }) as Writable<Num>;
 }
@@ -142,7 +146,7 @@ export function scaleAboutXY(points: readonly Writable<Vec>[], pivot: Read<V>): 
   };
 
   return Vec.lens(points, {
-    init: (vals: readonly V[]): C => {
+    complement: (vals: readonly V[]): C => {
       const p = pivot.peek();
       const ox = vals[0]!.x - p.x;
       const oy = vals[0]!.y - p.y;
@@ -153,15 +157,19 @@ export function scaleAboutXY(points: readonly Writable<Vec>[], pivot: Read<V>): 
         })),
       };
     },
-    step: (vals: readonly V[], c: C): C => ({ fracs: refresh(c.fracs, vals, pivot.peek()) }),
-    fwd: (vals: readonly V[]): V => {
+    // `get` is the sole refresh: re-derive the per-axis fractions, then emit
+    // point 0's offset from the pivot.
+    get: (vals: readonly V[], c: C): V => {
       const p = pivot.peek();
+      c.fracs = refresh(c.fracs, vals, p);
       return { x: vals[0]!.x - p.x, y: vals[0]!.y - p.y };
     },
-    bwd: (target: V, _vals: readonly V[], c: C) => {
+    put: (target: V, vals: readonly V[], c: C) => {
       const p = pivot.peek();
-      const out = c.fracs.map(f => ({ x: p.x + f.x * target.x, y: p.y + f.y * target.y }));
-      return { updates: out, complement: c };
+      // Re-derive fractions from the live source (reflect a sibling move); the
+      // guard keeps the stored fraction through a per-axis collapse.
+      const fracs = (c.fracs = refresh(c.fracs, vals, p));
+      return fracs.map(f => ({ x: p.x + f.x * target.x, y: p.y + f.y * target.y }));
     },
   });
 }
@@ -412,7 +420,7 @@ export function pca(points: readonly Writable<Vec>[]): {
     };
 
     return Num.lens(points, {
-      init: (vals: readonly V[]): AxisC => {
+      complement: (vals: readonly V[]): AxisC => {
         const seed: AxisC = {
           uX: 1,
           uY: 0,
@@ -426,26 +434,27 @@ export function pca(points: readonly Writable<Vec>[]): {
         const d = decompose(vals);
         return d ? axisFrom(d, seed, vals) : seed;
       },
-      step: (vals: readonly V[], c: AxisC): AxisC => {
+      // `get` is the sole refresh: recompute the axis frame (idempotent — the
+      // sign is pinned to the previous frame), then emit this axis's length.
+      get: (vals: readonly V[], c: AxisC): number => {
         const d = decompose(vals);
-        return d ? axisFrom(d, c, vals) : c;
+        if (d) Object.assign(c, axisFrom(d, c, vals));
+        return d ? c.lenThis : 0;
       },
-      fwd: (vals: readonly V[], c: AxisC): number => (decompose(vals) ? c.lenThis : 0),
-      bwd: (target: number, vals: readonly V[], c: AxisC) => {
+      put: (target: number, vals: readonly V[], c: AxisC) => {
         const d = decompose(vals);
+        // Re-derive the frame from the live source (reflect a sibling move); when
+        // collapsed (`!d`) the stored frame/projections are kept as the fallback.
+        if (d) Object.assign(c, axisFrom(d, c, vals));
         if (d && c.lenThis > 1e-12) {
           // Lossy magnitude view: a same-magnitude target re-projects to
           // the current axis length and is absorbed (cluster left put).
-          if (Math.abs(target) === c.lenThis)
-            return { updates: vals.map((): typeof SKIP => SKIP), complement: c };
-          // Non-degenerate fast path: scale current cluster along axis. The scale
-          // sets the axis length to |target|, so the complement is consistent
-          // without a post-write `step` (the engine no longer re-steps own writes).
+          if (Math.abs(target) === c.lenThis) return vals.map((): typeof SKIP => SKIP);
+          // Non-degenerate fast path: scale current cluster along the axis.
           const k = target / c.lenThis;
-          return {
-            updates: scaleAlongAxis(vals, d.cx, d.cy, c.uX, c.uY, k),
-            complement: { ...c, lenThis: Math.abs(target) },
-          };
+          const out = scaleAlongAxis(vals, d.cx, d.cy, c.uX, c.uY, k);
+          c.lenThis = Math.abs(target);
+          return out;
         }
         // Degenerate: reconstruct from complement. Centroid still
         // derivable from current source (mean translates always work).
@@ -463,7 +472,8 @@ export function pca(points: readonly Writable<Vec>[]): {
           const b = c.projOther[i]! * c.lenOther;
           out[i] = { x: cx + a * c.uX + b * c.vX, y: cy + a * c.uY + b * c.vY };
         }
-        return { updates: out, complement: { ...c, lenThis: Math.abs(target) } };
+        c.lenThis = Math.abs(target);
+        return out;
       },
     });
   };
@@ -597,23 +607,26 @@ export function procrustes(points: readonly Writable<Vec>[]): {
   };
 
   const scale = Num.lens(points, {
-    init: (vals: readonly V[]): C => {
+    complement: (vals: readonly V[]): C => {
       const c = centroidOf(vals);
       return { devs: vals.map(v => ({ x: v.x - c.x, y: v.y - c.y })) };
     },
-    step: (vals: readonly V[], c: C): C => ({ devs: refreshDevs(c.devs, vals) }),
-    fwd: (vals: readonly V[]): number => {
-      const c = centroidOf(vals);
-      return Math.hypot(vals[0]!.x - c.x, vals[0]!.y - c.y);
-    },
-    bwd: (target: number, vals: readonly V[], c: C) => {
+    // `get` is the sole refresh: re-derive the centroid offsets, then emit the radius.
+    get: (vals: readonly V[], c: C): number => {
       const cen = centroidOf(vals);
-      const d0 = c.devs[0]!;
+      c.devs = refreshDevs(c.devs, vals);
+      return Math.hypot(vals[0]!.x - cen.x, vals[0]!.y - cen.y);
+    },
+    put: (target: number, vals: readonly V[], c: C) => {
+      const cen = centroidOf(vals);
+      // Re-derive offsets from the live source (reflect a sibling move); the
+      // guard keeps the stored direction through a collapse to the centroid.
+      const devs = (c.devs = refreshDevs(c.devs, vals));
+      const d0 = devs[0]!;
       const r0 = Math.hypot(d0.x, d0.y);
-      if (r0 < 1e-12) return { updates: vals.map((): typeof SKIP => SKIP), complement: c };
+      if (r0 < 1e-12) return vals.map((): typeof SKIP => SKIP);
       const k = target / r0;
-      const out = c.devs.map(d => ({ x: cen.x + k * d.x, y: cen.y + k * d.y }));
-      return { updates: out, complement: c };
+      return devs.map(d => ({ x: cen.x + k * d.x, y: cen.y + k * d.y }));
     },
   });
 
@@ -683,7 +696,7 @@ export function bbox(points: readonly Writable<Vec>[]): {
   };
 
   const size = Vec.lens(points, {
-    init: (vals: readonly V[]): C => {
+    complement: (vals: readonly V[]): C => {
       const b = computeBox(vals);
       const halfX0 = b.sx > 1e-12 ? b.sx / 2 : 1;
       const halfY0 = b.sy > 1e-12 ? b.sy / 2 : 1;
@@ -694,17 +707,20 @@ export function bbox(points: readonly Writable<Vec>[]): {
         })),
       };
     },
-    step: (vals: readonly V[], c: C): C => ({ fracs: refreshFracs(c.fracs, vals) }),
-    fwd: (vals: readonly V[]): V => {
+    // `get` is the sole refresh: re-derive the half-size fractions, then emit the size.
+    get: (vals: readonly V[], c: C): V => {
       const b = computeBox(vals);
+      c.fracs = refreshFracs(c.fracs, vals);
       return { x: b.sx, y: b.sy };
     },
-    bwd: (target: V, vals: readonly V[], c: C) => {
+    put: (target: V, vals: readonly V[], c: C) => {
       const b = computeBox(vals);
       const halfTx = target.x / 2;
       const halfTy = target.y / 2;
-      const out = c.fracs.map(f => ({ x: b.cx + f.x * halfTx, y: b.cy + f.y * halfTy }));
-      return { updates: out, complement: c };
+      // Re-derive fractions from the live source (reflect a sibling move); the
+      // guard keeps the stored fraction through a per-axis collapse.
+      const fracs = (c.fracs = refreshFracs(c.fracs, vals));
+      return fracs.map(f => ({ x: b.cx + f.x * halfTx, y: b.cy + f.y * halfTy }));
     },
   });
 

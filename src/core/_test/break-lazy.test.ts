@@ -274,7 +274,7 @@ describe("deep recursion: backward resolve/write stack safety", () => {
 // D. Stateful complement under random interleaving (exact reference).
 //    "stash" lens: view = source + offset; writing the view stores the offset
 //    (offset = target − source) WITHOUT moving the source. Timing-stable
-//    (step never mutates the complement), so the reference is exact — it
+//    (get never mutates the complement), so the reference is exact — it
 //    pins the buffer-rotation + source-reading-bwd + stash-propagation paths.
 // ════════════════════════════════════════════════════════════════════════
 
@@ -287,13 +287,12 @@ describe("stateful stash lens: exact reference under interleaving", () => {
       const view = lens(
         [src] as never,
         {
-          init: () => 0,
-          step: (_s: number[], c: number) => c,
-          fwd: ([s]: number[], c: number) => s + c,
-          bwd: (t: number, [s]: number[], _c: number) => ({
-            updates: [SKIP],
-            complement: t - s,
-          }),
+          complement: () => ({ off: 0 }),
+          get: ([s]: number[], c: { off: number }) => s + c.off,
+          put: (t: number, [s]: number[], c: { off: number }) => {
+            c.off = t - s;
+            return [SKIP];
+          },
         } as never,
       ) as unknown as Cell<number>;
       let refS = s0;
@@ -332,13 +331,12 @@ describe("stateful multi-source stash (n≥2): exact reference, exercises buffer
       const view = lens(
         srcs as never,
         {
-          init: () => 0,
-          step: (_s: number[], c: number) => c,
-          fwd: (s: number[], c: number) => sum(s) + c,
-          bwd: (t: number, s: number[], _c: number) => ({
-            updates: s.map(() => SKIP),
-            complement: t - sum(s),
-          }),
+          complement: () => ({ off: 0 }),
+          get: (s: number[], c: { off: number }) => sum(s) + c.off,
+          put: (t: number, s: number[], c: { off: number }) => {
+            c.off = t - sum(s);
+            return s.map(() => SKIP);
+          },
         } as never,
       ) as unknown as Cell<number>;
       const refS = [...inits];
@@ -367,29 +365,53 @@ describe("stateful multi-source stash (n≥2): exact reference, exercises buffer
   });
 });
 
-describe("stateful own-vs-external detection (the version-stamp gate)", () => {
-  it("forgets the complement on an external source change but not on its own back-write", () => {
+describe("stateful refresh is forward-only (get owns the complement)", () => {
+  it("a stash complement persists across own AND external source changes (no provenance gate)", () => {
     const src = cell(10) as unknown as Cell<number>;
-    // No `step`: the default refresh is `init` (→ 0), and the engine runs it only
-    // when the source's version moves (an outside change), not on an own back-write.
+    // `get` is the sole refresh and leaves the offset untouched, so the stash
+    // survives every change — there's no own-vs-external distinction to draw.
     const view = lens(
       src as never,
       {
-        init: () => 0,
-        fwd: (s: number, c: number) => s + c,
-        bwd: (t: number, s: number, _c: number) => ({
-          update: SKIP,
-          complement: t - s,
-        }),
+        complement: () => ({ off: 0 }),
+        get: (s: number, c: { off: number }) => s + c.off,
+        put: (t: number, s: number, c: { off: number }) => {
+          c.off = t - s;
+          return SKIP;
+        },
       } as never,
     ) as unknown as Cell<number>;
 
-    expect(view.value).toBe(10); // first read: complement seeded to 0 → 10 + 0
-    (view as { value: number }).value = 15; // own back-write: stores offset c = 5, source unmoved
-    expect(view.value).toBe(15); // own: source version unchanged → no step → c = 5 kept
+    expect(view.value).toBe(10); // seeded offset 0 → 10 + 0
+    (view as { value: number }).value = 15; // own back-write: stores offset 5, source unmoved
+    expect(view.value).toBe(15); // offset 5 kept → 10 + 5
     expect(view.value).toBe(15); // idempotent re-read
-    (src as { value: number }).value = 20; // EXTERNAL source change (bumps src.version)
-    expect(view.value).toBe(20); // version moved → step (default init) → c forgotten (0)
+    (src as { value: number }).value = 20; // external change: get doesn't re-seed
+    expect(view.value).toBe(25); // offset 5 persists → 20 + 5
+  });
+
+  it("a get that re-derives from the source refreshes on every read", () => {
+    const src = cell(10) as unknown as Cell<number>;
+    // Here `get` recomputes the complement from the source each read (idempotent),
+    // so it always tracks the latest source — the opposite of a stash.
+    const view = lens(
+      src as never,
+      {
+        complement: (s: number) => ({ base: s }),
+        get: (s: number, c: { base: number }) => {
+          c.base = s;
+          return s;
+        },
+        put: (t: number, _s: number, c: { base: number }) => {
+          c.base = t;
+          return t;
+        },
+      } as never,
+    ) as unknown as Cell<number>;
+
+    expect(view.value).toBe(10);
+    (src as { value: number }).value = 20;
+    expect(view.value).toBe(20); // refreshed from the new source
   });
 });
 
@@ -489,13 +511,12 @@ describe("re-entrancy: back-writes observed by effects", () => {
     const view = lens(
       [src] as never,
       {
-        init: () => 0,
-        step: (_s: number[], c: number) => c,
-        fwd: ([x]: number[], c: number) => x + c,
-        bwd: (t: number, [x]: number[], _c: number) => ({
-          updates: [SKIP],
-          complement: t - x,
-        }),
+        complement: () => ({ off: 0 }),
+        get: ([x]: number[], c: { off: number }) => x + c.off,
+        put: (t: number, [x]: number[], c: { off: number }) => {
+          c.off = t - x;
+          return [SKIP];
+        },
       } as never,
     ) as unknown as Cell<number>;
     let seen = -1;
@@ -785,26 +806,22 @@ describe("source-reading bwd: last-settled primal", () => {
 // G. Co-writer LWW over a shared source, both ends STATEFUL.
 // ════════════════════════════════════════════════════════════════════════
 //
-// The version-stamp post-pass marks an own back-write as "synced", so it cannot
-// (the way the retired value-witness did) tell that a *sibling* co-writer's
-// last-write-wins overwrote the shared source out from under this lens. That
-// difference is invisible to the forward view here (the complement is a constant
-// memory offset, recomputed-free), but we pin the invariants any correct engine
-// must keep regardless of which writer wins: forward consistency, LWW (the source
-// equals one of the two intended writes), stability, and GetPut idempotence.
+// Two stateful lenses last-write-wins onto a shared source. The complement is a
+// constant memory offset (not derivable from the source), so the forward view is
+// recompute-free; we pin the invariants any correct engine must keep regardless of
+// which writer wins: forward consistency, LWW (the source equals one of the two
+// intended writes), stability, and GetPut idempotence.
 describe("co-writer LWW: two STATEFUL lenses sharing one source", () => {
   it("stays consistent, stable, and idempotent under batched conflicting writes", () => {
     const s = cell(0) as unknown as Cell<number>;
-    // view = source + a constant memory offset; `step` keeps the offset (genuine
-    // complement memory, not derivable from the source), `bwd` keeps it too.
+    // view = source + a constant memory offset; both `get` and `put` keep it.
     const mk = (off: number) =>
       lens(
         s as never,
         {
-          init: () => off,
-          step: (_x: number, c: number) => c,
-          fwd: (x: number, c: number) => x + c,
-          bwd: (t: number, _x: number, c: number) => ({ update: t - c, complement: c }),
+          complement: () => ({ off }),
+          get: (x: number, c: { off: number }) => x + c.off,
+          put: (t: number, _x: number, c: { off: number }) => t - c.off,
         } as never,
       ) as unknown as Cell<number>;
     const a = mk(10);

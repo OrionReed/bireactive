@@ -180,7 +180,9 @@ export class MdRcc8 extends Diagram {
           corner: 7,
           fill: derive(() => (active.value ? "#2f6df0" : "rgba(150,150,150,0.12)")),
           stroke: derive(() =>
-            active.value ? "#2f6df0" : "color-mix(in srgb, var(--text-color, #000) 30%, transparent)",
+            active.value
+              ? "#2f6df0"
+              : "color-mix(in srgb, var(--text-color, #000) 30%, transparent)",
           ),
           thin: true,
         }),

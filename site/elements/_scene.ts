@@ -132,7 +132,7 @@ async function setup(): Promise<SceneCtx> {
 // the doc (A); the inspector focuses one shape with `byId` (B); the spreadsheet
 // is *a view of the inspector* — it takes the very same shape lens and composes
 // one more optic on top (C = B `.through` field / hex). Because optics are plain
-// values, `shapeLens(doc, id).through(toField("hue"))` is the inspector's lens
+// values, `shapeLens(doc, id).lens(toField("hue"))` is the inspector's lens
 // with a field selector appended; edits flow C ▸ B ▸ A and back out everywhere.
 
 /** A▸B: focus one shape by id; writing splices it back into the array. */
@@ -159,7 +159,7 @@ export const hexOptic: Optic<Shape, string> = optic<Shape, string>(
 
 /** The inspector's writable lens onto shape `id` (layer B). */
 export function shapeLens(doc: Writable<Cell<Scene>>, id: string): Writable<Cell<Shape>> {
-  return doc.through(byId(id));
+  return doc.lens(byId(id));
 }
 
 // Derived B▸C optics — these read several fields at once, so the spreadsheet

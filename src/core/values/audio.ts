@@ -89,14 +89,15 @@ export class Audio extends Cell<V> {
     const tf = reader(target);
     const self: Audio = this;
     return Audio.lens(self, {
-      init: s => peak(s),
-      fwd: s => {
-        const p = peak(s);
+      complement: (s: V) => ({ peak: peak(s) }),
+      // `get` is the sole refresh: re-measure the source peak (pure ⇒ idempotent).
+      get: (s: V, c: { peak: number }) => {
+        const p = (c.peak = peak(s));
         return p === 0 ? s : scaled(s, tf() / p);
       },
-      bwd: (view, _src, c) => {
+      put: (view, _src, c: { peak: number }) => {
         const t = tf();
-        return { update: t === 0 ? view : scaled(view, c / t), complement: c };
+        return t === 0 ? view : scaled(view, c.peak / t);
       },
     }) as Writable<Audio>;
   }

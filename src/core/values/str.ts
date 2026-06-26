@@ -73,23 +73,24 @@ export class Str extends Cell<V> {
    *  write. A write's own edge whitespace is stripped first. */
   trim(): Writable<Str> {
     return Str.lens(this, {
-      init: (s: V): TrimComplement => {
+      complement: (s: V): TrimComplement => {
         const lead = /^\s*/.exec(s)?.[0] ?? "";
         // Slice lead off first so trail can't overlap it on all-whitespace.
         const remain = s.slice(lead.length);
         const trail = /\s*$/.exec(remain)?.[0] ?? "";
         return { lead, trail };
       },
-      fwd: (s: V): V => {
+      // `get` is the sole refresh: re-capture the edge padding (pure ⇒ idempotent).
+      get: (s: V, c: TrimComplement): V => {
         const lead = /^\s*/.exec(s)?.[0] ?? "";
         const remain = s.slice(lead.length);
         const trail = /\s*$/.exec(remain)?.[0] ?? "";
+        c.lead = lead;
+        c.trail = trail;
         return remain.slice(0, remain.length - trail.length);
       },
-      bwd: (target: V, _s: V, c: TrimComplement) => ({
-        update: c.lead + target.replace(/^\s+/, "").replace(/\s+$/, "") + c.trail,
-        complement: c,
-      }),
+      put: (target: V, _s: V, c: TrimComplement) =>
+        c.lead + target.replace(/^\s+/, "").replace(/\s+$/, "") + c.trail,
     }) as Writable<Str>;
   }
 

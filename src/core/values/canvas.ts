@@ -251,19 +251,22 @@ export class Canvas extends Cell<V> {
     };
     const self: Canvas = this;
     return Canvas.lens(self, {
-      init: s => chromaOf(s),
-      fwd: s => {
+      complement: (s: V) => chromaOf(s),
+      // `get` is the sole refresh: re-run the chroma pass into the complement
+      // tex (pure GPU pass ⇒ idempotent), then emit the luma view.
+      get: (s: V, c: Tex) => {
+        Object.assign(c, chromaOf(s));
         const out = sf(s.w, s.h);
         pass(LUMA, out, x => x.tex("u_s", 0, s.tex));
         return stamp(out.tex, s.w, s.h);
       },
-      bwd: (target, s, c) => {
+      put: (target, s, c: Tex) => {
         const out = sb(s.w, s.h);
         pass(RECOLOR, out, x => {
           x.tex("u_t", 0, target.tex);
           x.tex("u_c", 1, c.tex);
         });
-        return { update: stamp(out.tex, s.w, s.h), complement: c };
+        return stamp(out.tex, s.w, s.h);
       },
     }) as Writable<Canvas>;
   }
@@ -281,19 +284,21 @@ export class Canvas extends Cell<V> {
     };
     const self: Canvas = this;
     return Canvas.lens(self, {
-      init: s => lumaOf(s),
-      fwd: s => {
+      complement: (s: V) => lumaOf(s),
+      // `get` is the sole refresh: re-run the luma pass into the complement tex.
+      get: (s: V, c: Tex) => {
+        Object.assign(c, lumaOf(s));
         const out = sf(s.w, s.h);
         pass(CHROMA_VIEW, out, x => x.tex("u_s", 0, s.tex));
         return stamp(out.tex, s.w, s.h);
       },
-      bwd: (target, s, c) => {
+      put: (target, s, c: Tex) => {
         const out = sb(s.w, s.h);
         pass(DELUMA, out, x => {
           x.tex("u_t", 0, target.tex);
           x.tex("u_c", 1, c.tex);
         });
-        return { update: stamp(out.tex, s.w, s.h), complement: c };
+        return stamp(out.tex, s.w, s.h);
       },
     }) as Writable<Canvas>;
   }
@@ -374,12 +379,15 @@ export class Canvas extends Cell<V> {
     };
     const self: Canvas = this;
     return Canvas.lens(self, {
-      init: s => residualOf(s),
-      fwd: s => {
+      complement: (s: V) => residualOf(s),
+      // `get` is the sole refresh: recompute the Laplacian residual (pure ⇒
+      // idempotent), then emit the box-downsampled thumbnail.
+      get: (s: V, c: Tex) => {
+        Object.assign(c, residualOf(s));
         const small = down(sdF, s.tex, s.w, s.h);
         return stamp(small.tex, small.w, small.h);
       },
-      bwd: (target, s, c) => {
+      put: (target, s, c: Tex) => {
         const up = suB(s.w, s.h);
         pass(UP, up, x => {
           x.tex("u_small", 0, target.tex);
@@ -391,7 +399,7 @@ export class Canvas extends Cell<V> {
           x.tex("u_a", 0, up.tex);
           x.tex("u_b", 1, c.tex);
         });
-        return { update: stamp(out.tex, s.w, s.h), complement: c };
+        return stamp(out.tex, s.w, s.h);
       },
     }) as Writable<Canvas>;
   }

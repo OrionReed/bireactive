@@ -205,11 +205,13 @@ function buildCaseComplement(s: V): CaseComplement {
 export function caseFold(parent: Cell<V>, to: "lower" | "upper" = "lower"): Writable<Str> {
   const fold = to === "upper" ? (s: V) => s.toUpperCase() : (s: V) => s.toLowerCase();
   return Str.lens(parent, {
-    init: (s: V) => buildCaseComplement(s),
-    fwd: (s: V) => fold(s),
-    bwd: (target: V, _s: V, c: CaseComplement) => ({
-      update: applyCaseComplement(target, c),
-      complement: c,
-    }),
+    complement: (s: V) => buildCaseComplement(s),
+    // `get` is the sole refresh: re-derive the case complement from the source
+    // (pure ⇒ idempotent), then fold.
+    get: (s: V, c: CaseComplement) => {
+      refreshCaseComplement(s, c);
+      return fold(s);
+    },
+    put: (target: V, _s: V, c: CaseComplement) => applyCaseComplement(target, c),
   }) as Writable<Str>;
 }

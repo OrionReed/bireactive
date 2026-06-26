@@ -1,10 +1,11 @@
 // cell.ts — symmetric bidirectional reactive engine.
 //
 // Forward propagation is alien-signals verbatim. Backward is the same lazy
-// push-pull run on the transpose of the lens graph, carried by one `LensLink`
-// structure (the backward dual of forward's `Link`): `parentEdges` down,
-// `childEdges` up, created eagerly at lens construction. One traversal each
-// direction:
+// push-pull on the transpose of the lens graph, carried by `LensLink` (the dual
+// of `Link`): `parentEdges` down, `childEdges` up. A view write marks the
+// back-path `BF.Pending` and wakes each source's cone; nothing runs until a read
+// pulls. Reads pull only at clean entry points (getter top, source
+// `_update`/`_writeSource`, effect `_run`), never mid-compute.
 //
 //   role            forward (source → view)      backward (view → source)
 //   down edge       subs (who reads me)          parentEdges (my parents)
@@ -15,16 +16,9 @@
 //   "dirty" flag    F.Dirty (source staged)      BF.Dirty (view holds target)
 //   "pending" flag  F.Pending (on the cone)      BF.Pending (on the back-path)
 //
-// Forward flags live on `flags`, backward on a separate `bflags` word, so the
-// two never share a bit. A view write marks the back-path `BF.Pending` and wakes
-// each source's forward cone; nothing runs until a read pulls (source-centric: a
-// source resolves ALL its writers together and commits once). Reads pull only at
-// clean entry points (getter top, source `_update`/`_writeSource`, effect
-// `_run`), never mid-compute. Fan-in is the one non-dual piece: a `merge`
-// accumulates N contributors and folds once, post-order, inside `resolveCone`.
-//
-// Mode table — `getter`/`_bwd` fix forward/writable; the backward shape is read off
-// `_bwd` field presence (`merge` / `stateful` / `parentEdges` / `scatter`):
+// Forward flags live on `flags`, backward on a separate `bflags` word. Fan-in is
+// the one non-dual piece: a `merge` folds N contributors once, post-order, in
+// `resolveCone`. A cell's mode is read off `getter`/`_bwd` field presence:
 //   source      getter undefined                       (truth in currentValue)
 //   derived    getter, no _bwd                         (read-only derived)
 //   lens 1→1    getter + _bwd{ put }                    (scalar put)
@@ -78,10 +72,6 @@ let backCycle = 0;
  *  `writeBack` — so one shared stack suffices (no per-call allocation). */
 const wbNode: Cell<unknown>[] = [];
 const wbTarget: unknown[] = [];
-/** Stateful lenses passed through in a `writeBack`, re-stamped post-order once
- *  their sources are written (versions bumped) so the next forward read sees an
- *  unchanged sum and skips `step` — own-write provenance. Pooled; non-reentrant. */
-const wbStateful: Cell<unknown>[] = [];
 /** `resolveCone`'s pooled post-order frame stack: the node and its next-child
  *  cursor. Non-reentrant (no nested `resolveCone`), so shared pools suffice. */
 const rcNode: Cell<unknown>[] = [];
@@ -158,25 +148,19 @@ interface Link {
   nextDep: Link | undefined;
 }
 
-// LensLink — the backward dual of `Link`, the one structure both backward
-// traversals use. A lens-edge connects a `child` (a writable view) to one
-// `parent` (a back-target) at tuple position `index`. It lives in two lists,
-// the backward mirror of forward's `deps`/`subs`:
+// LensLink — the backward dual of `Link`. A lens-edge connects a `child` (view)
+// to one `parent` (back-target) at tuple position `index`, in two lists:
 //   child.parentEdges  (down: my back-targets)      via nextParent
 //   parent.childEdges  (up:   my lens-children)      via prevChild/nextChild
-// The down-list is built eagerly at construction (the lens topology is static,
-// unlike dynamic forward deps), append-only, and never removed — it's intrinsic
-// to the view and dies with it (so it needs no back-pointer). The up-list is
-// spliced lazily on first back-mark (`linkChild`) and removed in O(1) when a view
-// is unwatched (`unlinkChild`), mirroring forward `unlink` — hence doubly-linked.
-// `markDown`/`backResolve` descend `parentEdges`; `resolveCone` ascends `childEdges`.
+// The down-list is eager at construction (lens topology is static), append-only,
+// and dies with the view. The up-list is spliced lazily on first back-mark
+// (`linkChild`) and removed O(1) on unwatch (`unlinkChild`) — hence doubly-linked.
 interface LensLink {
   index: number;
   parent: Cell<unknown>;
   child: Cell<unknown>;
-  /** Spliced into `parent.childEdges` yet? The down-list (`parentEdges`) is
-   *  eager at construction; the up-list is lazy on first back-mark so the
-   *  parent's child order is arm-order (co-writer resolution is last-write-wins). */
+  /** Spliced into `parent.childEdges` yet? The up-list is lazy on first back-mark,
+   *  so a parent's child order is arm-order (co-writer resolution is last-wins). */
   linked: boolean;
   nextParent: LensLink | undefined;
   prevChild: LensLink | undefined;
@@ -206,18 +190,15 @@ function isReadOnlyDerived(c: Cell<unknown>): boolean {
   return !isSource(c) && !isWritable(c);
 }
 
-/** Forward primal a source-reading `bwd` linearizes at, without a cascading
- *  recompute: live/last-settled value for a source or realized derived, else
- *  realize once via `.value` (PutGet holds for any source state). */
+/** Value a source-reading `put` linearizes at, with no cascading recompute:
+ *  the live/last-settled value, realizing once via `.value` if never computed. */
 function backPrimal(c: Cell<unknown>): unknown {
   if (c.getter === undefined || c.flags & F.Dirty) return c.value;
   return c.currentValue;
 }
 
-/** Create a lens-edge `child →[index] parent`, appending it to `child`'s
- *  `parentEdges` (down) eagerly at construction, in tuple order (so
- *  `parentEdges` is index-ordered). The up-list (`parent.childEdges`) is spliced
- *  lazily on first back-mark (`linkChild`), so child order is arm-order. */
+/** Create a lens-edge `child →[index] parent`, appended to `child.parentEdges`
+ *  in tuple order. */
 function linkLens(child: Cell<unknown>, parent: Cell<unknown>, index: number): void {
   const e: LensLink = {
     index,
@@ -233,9 +214,7 @@ function linkLens(child: Cell<unknown>, parent: Cell<unknown>, index: number): v
   child.parentEdgesTail = e;
 }
 
-/** Splice a lens-edge into its parent's `childEdges` (the up-traversal list),
- *  once, on first back-mark — so a parent's child order is arm-order and
- *  co-writer resolution is last-write-wins. Idempotent via `linked`. */
+/** Splice a lens-edge into its parent's `childEdges` up-list, once. Idempotent via `linked`. */
 function linkChild(e: LensLink): void {
   if (e.linked) return;
   if (COUNTS) counts.linkChild++;
@@ -247,11 +226,8 @@ function linkChild(e: LensLink): void {
   parent.childEdgesTail = e;
 }
 
-/** Remove a lens-edge from its parent's `childEdges` up-list in O(1), and mark it
- *  re-linkable — the backward dual of `unlink` dropping a subscriber from `subs`.
- *  Called when a view is unwatched, to release the parent→child retaining edge (a
- *  later arm re-`linkChild`s). The child's own down-list (`parentEdges`) stays:
- *  it's intrinsic to the view and dies with it. */
+/** Remove a lens-edge from its parent's `childEdges` up-list in O(1) and mark it
+ *  re-linkable. Called on unwatch to release the parent→child retaining edge. */
 function unlinkChild(e: LensLink): void {
   if (COUNTS) counts.unlinkChild++;
   const { parent, prevChild, nextChild } = e;
@@ -265,10 +241,9 @@ function unlinkChild(e: LensLink): void {
 }
 
 /** Precompute `BF.WriteBlocked` once, after a writable's `parentEdges` are linked.
- *  Mirrors `markDown`'s descent exactly: a sole read-only-derived parent dead-ends
- *  (block); a split routes around a read-only parent; otherwise the block is
- *  inherited from any non-read-only parent already flagged. Topology is immutable
- *  and parents are built first, so each node's bit is its parents' bits + one scan. */
+ *  Mirrors `markDown`'s descent: a sole read-only-derived parent dead-ends (block);
+ *  a split routes around a read-only parent; otherwise inherit the block from any
+ *  non-read-only parent already flagged. */
 function setWriteBlocked(cell: Cell<unknown>): void {
   const pe = cell.parentEdges;
   if (pe === undefined) return; // parentless sink (pin): absorbs, never dead-ends
@@ -512,12 +487,9 @@ function disposeAllDepsInReverse(sub: ReactiveNode): void {
 // Backward sidecar (internal) — the `_bwd` payload: merge / spec / complement.
 // ─────────────────────────────────────────────────────────────────────────
 
-// MergeNode — backward fan-in (N→1), the one non-dual ingredient: where forward
-// broadcasts one source to N subscribers, backward accumulates N contributors
-// into one value. Contributors resolve first (each cascades a `put` into
-// `contributions`), then the merge folds once on the post-order ascent in
-// `resolveCone` and writes to `parent`. `contributions` is the one merge-owned
-// buffer, reused in place (cleared on fold, and on entry to self-heal a throw).
+// MergeNode — backward fan-in (N→1): contributors resolve first (each cascades a
+// `put` into `contributions`), then the merge folds once on the post-order ascent
+// in `resolveCone`. `contributions` is reused in place (cleared on fold and entry).
 export type MergeFold<T> = (values: readonly T[]) => T;
 
 class MergeNode<T> {
@@ -530,52 +502,25 @@ class MergeNode<T> {
   }
 }
 
-// BwdSpec — the backward sidecar, off a single `_bwd` pointer so a source/computed
-// stays lean. Only a writable derived cell (lens / multi-out / merge / stateful /
-// pin) carries one; writable iff `_bwd !== undefined`. The backward shape is read
-// off field presence rather than a tag: `merge` set ⇒ fan-in fold; `stateful` set ⇒
-// complement-carrying; no `parentEdges` ⇒ pin sink; `scatter` ⇒ tuple `put`. The
-// one bit that isn't recoverable from topology is scalar-vs-tuple `put` (a 1-parent
-// split still takes a tuple), hence `scatter`.
+// BwdSpec — the backward sidecar, off a single `_bwd` pointer (writable iff
+// `_bwd !== undefined`). The backward shape is read off field presence, not a tag:
+// `merge` ⇒ fan-in fold; `stateful` ⇒ complement-carrying; no `parentEdges` ⇒ pin
+// sink; `scatter` ⇒ tuple `put` (the one bit not recoverable from topology, since a
+// 1-parent split still takes a tuple).
 class BwdSpec {
-  /** Lens `put` (dual of `getter`): `put(target)` for 1→1 / multi-out (a
-   *  source-reading lens reads its parents at walk time), `put(target, sources, c)`
-   *  for stateful. `undefined` for a merge (folds) or pin (absorbs). */
+  /** Lens `put` (dual of `getter`): `put(target)` for 1→1 / multi-out,
+   *  `put(target, sources, c)` for stateful. `undefined` for a merge or pin. */
   // biome-ignore lint/suspicious/noExplicitAny: put fn is opaque shape
   put: ((target: any, current?: any) => any) | undefined = undefined;
   /** Fold payload; present ⇒ a fan-in merge. */
   merge: MergeNode<unknown> | undefined = undefined;
-  /** Complement state; present ⇒ a complement-carrying (stateful) lens. */
-  stateful: StatefulCore | undefined = undefined;
+  /** The mutable complement object a stateful optic's `get`/`put` thread (and may
+   *  mutate in place); present ⇒ a complement-carrying (stateful) lens. Seeded once
+   *  per bind from `optic.complement`, never reassigned. */
+  stateful: object | undefined = undefined;
   /** `put` yields a per-parent tuple (split / stateful) vs a scalar (1→1). The
    *  only discriminant not derivable from topology (a 1-parent split is a tuple). */
   scatter = false;
-}
-
-/** Runtime state of a symmetric-lens complement, kept off `BwdSpec` so plain
- *  lenses don't carry its slots. See the stateful-lens header for the theory
- *  (symmetric/edit lenses) and the version-stamp provenance. */
-class StatefulCore {
-  /** Engine-owned memory the view discards. */
-  complement: unknown;
-  /** Advance the complement: `step(sources, complement)`. Run only when the
-   *  sources actually moved (the engine gates it; see the stateful header). */
-  // biome-ignore lint/suspicious/noExplicitAny: opaque step shape
-  step: (sources: any, complement: any) => any;
-  /** Sum of the parents' `version`s as of the last sync. Sources moved iff the
-   *  live sum differs — the lazy own-vs-external provenance that replaces a value
-   *  witness. A read syncs it after stepping; a back-write re-stamps it post-order
-   *  (own writes don't re-step, so `bwd` must leave the complement consistent).
-   *  Seeded to `-1` (sums are ≥ 0) so the first use always folds the sources in. */
-  stamp = -1;
-  constructor(
-    complement: unknown,
-    // biome-ignore lint/suspicious/noExplicitAny: opaque step shape
-    step: (sources: any, complement: any) => any,
-  ) {
-    this.complement = complement;
-    this.step = step;
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -678,17 +623,27 @@ export interface CellOptions<T = unknown> {
   name?: string;
 }
 
-/** A lens as a first-class value, unbound from any source: `get` projects A→B,
- *  `put` writes B back into an A. Apply with `cell.through(optic)`; build with
- *  `optic` / `iso` / `atKey` / `compose` (optic.ts). `readsSource` is `false`
- *  only for an `iso`, letting `through` bind a cheaper 1-arg backward. */
-export interface Optic<A, B> {
-  readonly get: (a: A) => B;
-  readonly put: (b: B, a: A) => A;
-  readonly readsSource: boolean;
-  /** Compose with a following optic (this first, then `next`). */
-  through<C>(next: Optic<B, C>): Optic<A, C>;
+/** Per-source back-write shape: a partial SKIP-able tuple for N parents (an
+ *  array source), the whole new source (or `SKIP`) for one. */
+export type Updates<S> = S extends readonly unknown[]
+  ? BackUpdates<{ [K in keyof S]: S[K] | Skip }>
+  : S | Skip;
+
+/** A lens as a first-class value, unbound from any source. `get` projects the
+ *  source(s) `S` to a view `V`; `put` writes the view back as per-source
+ *  `Updates<S>`. A 1-arg `put` is an `iso` and ignores the source. `complement`
+ *  present ⇒ stateful (see the stateful-optic header). Apply with `cell.lens` /
+ *  `lens`; build with `optic` / `iso` / `atKey`. */
+export interface Optic<S, V, C extends object = never> {
+  get(s: S, c: C): V;
+  put(target: V, s: S, c: C): Updates<S>;
+  /** Present ⇒ stateful; seeds the per-bind complement. */
+  complement?: (s: S) => C;
 }
+
+/** An optic bound to a source, with its complement type hidden. */
+// biome-ignore lint/suspicious/noExplicitAny: complement is existential
+export type AppliedOptic<S, V> = Optic<S, V, any>;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Public API — the Cell class (the one user-facing reactive primitive).
@@ -742,11 +697,6 @@ export class Cell<T = unknown> implements ReactiveNode {
    *  without a Set; compared against the global `backCycle`). */
   bEpoch: number;
 
-  /** @internal Monotone committed-change counter. A stateful lens sums its
-   *  parents' versions to detect "did my sources move since I last synced?" —
-   *  the lazy provenance that replaces a value witness (see the stateful header). */
-  version: number;
-
   /** Optional debug label (`cell(0, { name })`); used by errors and graph dumps. */
   name: string | undefined;
 
@@ -770,7 +720,6 @@ export class Cell<T = unknown> implements ReactiveNode {
     this.childEdgesTail = undefined;
     this.bflags = BF.None;
     this.bEpoch = 0;
-    this.version = 0;
     this.name = undefined;
     if (opts !== undefined) {
       if (opts.equals !== undefined) this._equals = opts.equals;
@@ -780,8 +729,7 @@ export class Cell<T = unknown> implements ReactiveNode {
     }
   }
 
-  // Installed on the prototype after the class body (V8 JITs a prototype accessor
-  // better). `readonly` so a bare cell is read-only at the type level; writability
+  // Prototype accessor (V8 JITs it better); `readonly` at the type level, writability
   // returns via `Writable<R>`. The runtime accessor is settable regardless.
   declare readonly value: T;
 
@@ -792,14 +740,12 @@ export class Cell<T = unknown> implements ReactiveNode {
     const prev = this.pendingValue;
     this.pendingValue = next;
     if (!this._equals(prev, next)) {
-      this.version++; // stamp the change for stateful-lens provenance (sum-of-versions)
       this.flags = F.Mutable | F.Dirty;
       if (writeHook !== undefined) writeHook(this as Cell<unknown>);
       const subs = this.subs;
       if (subs !== undefined) {
         // Convert the cone's arm-time `Pending` into `Dirty` so a second observer
-        // (not just the first reader) sees the change. If this lands mid-pull, the
-        // freshly-`Dirty` nodes are honored by `checkDirty`'s unwind.
+        // (not just the first reader) sees the change; honored mid-pull by `checkDirty`.
         propagate(subs, runDepth > 0, activeExcluded);
         autoFlush();
       }
@@ -820,9 +766,7 @@ export class Cell<T = unknown> implements ReactiveNode {
         const old = this.currentValue;
         const next = (this.currentValue = this.getter());
         threw = false;
-        const changed = !this._equals(old, next);
-        if (changed) this.version++; // derived commit: stamp for stateful provenance
-        return changed;
+        return !this._equals(old, next);
       } finally {
         activeSub = prev;
         this.flags = threw ? F.Mutable | F.Dirty : this.flags & ~F.RecursedCheck;
@@ -843,11 +787,9 @@ export class Cell<T = unknown> implements ReactiveNode {
 
   /** @internal */
   _unwatched(): void {
-    // Backward dual of `unlink` clearing us from each parent's `subs`: release
-    // the parent→child retaining edge (the `childEdges` up-list) so a disposed
-    // view stops being pinned by a long-lived source. Our own down-list
-    // (`parentEdges`) stays — a later arm re-links via `markDown`. Skip a still
-    // back-marked view (a pending write needs its edge); rare and bounded.
+    // Release each parent→child retaining edge (the `childEdges` up-list) so a
+    // disposed view isn't pinned by a long-lived source; a later arm re-links via
+    // `markDown`. Skip a still back-marked view — its pending write needs the edge.
     if (!(this.bflags & BACK_MARKED)) {
       for (let e = this.parentEdges; e !== undefined; e = e.nextParent) {
         if (e.linked) unlinkChild(e);
@@ -874,39 +816,34 @@ export class Cell<T = unknown> implements ReactiveNode {
   // Construction helpers build via `new this()` so a subclass static
   // (`Vec.lens(...)`) yields a `Vec` with its constructor-set equality.
 
-  /** Endomorphic lens. A 2-arg `bwd(view, current)` consults the current
-   *  source; a 1-arg `bwd(view)` reconstructs it from the view alone. */
-  lens(this: Cell<T>, fwd: (v: T) => T, bwd: (target: T, current: T) => T): this {
-    return buildLens(this.constructor as CellCtor<Cell<T>>, [this, fwd, bwd]) as this;
+  /** Endomorphic lens from a `fwd`/`bwd` pair (2-arg `bwd` reads the source, 1-arg
+   *  reconstructs it), or apply optic value(s), chaining left-to-right. The function
+   *  form is same-type (returns `this`); optics are cross-type. */
+  lens(this: Cell<T>, fwd: (v: T) => T, bwd: (target: T, current: T) => T): this;
+  lens<V1>(this: Cell<T>, o: AppliedOptic<T, V1>): Writable<Cell<V1>>;
+  lens<V1, V2>(
+    this: Cell<T>,
+    o1: AppliedOptic<T, V1>,
+    o2: AppliedOptic<V1, V2>,
+  ): Writable<Cell<V2>>;
+  lens<V1, V2, V3>(
+    this: Cell<T>,
+    o1: AppliedOptic<T, V1>,
+    o2: AppliedOptic<V1, V2>,
+    o3: AppliedOptic<V2, V3>,
+  ): Writable<Cell<V3>>;
+  // biome-ignore lint/suspicious/noExplicitAny: dispatch over fwd/bwd vs optic chain
+  lens(this: Cell<T>, ...args: any[]): any {
+    if (typeof args[0] === "function") {
+      return buildLens(this.constructor as CellCtor<Cell<T>>, [this, ...args]);
+    }
+    return buildLens(CELL_CTOR, [this, ...args]);
   }
 
   /** Read-only same-type view: the RO dual of the endo `.lens`. For a cross-type view use the typed static
    *  `Target.derive(src, fn)`. */
   derive(this: Cell<T>, fn: (v: T) => T): this {
     return buildDerived(this.constructor as CellCtor<Cell<T>>, () => fn(this.value)) as this;
-  }
-
-  /** Apply optic value(s) as a writable lens: `c.through(o)` ≡ `lens(c, o.get,
-   *  o.put)`; multiple optics compose left-to-right (`c.through(a, b)` = `a`
-   *  then `b`). Cross-type, unlike the endomorphic instance `.lens`. */
-  through<B>(this: Cell<T>, o: Optic<T, B>): Writable<Cell<B>>;
-  through<B, C>(this: Cell<T>, o1: Optic<T, B>, o2: Optic<B, C>): Writable<Cell<C>>;
-  through<B, C, D>(
-    this: Cell<T>,
-    o1: Optic<T, B>,
-    o2: Optic<B, C>,
-    o3: Optic<C, D>,
-  ): Writable<Cell<D>>;
-  // biome-ignore lint/suspicious/noExplicitAny: heterogeneous optic chain
-  through(this: Cell<T>, ...optics: Optic<any, any>[]): Writable<Cell<unknown>> {
-    // Fold via each optic's own `through` (no import of optic.ts → no cycle).
-    const o = optics.length === 1 ? optics[0]! : optics.reduce((a, b) => a.through(b));
-    // Preserve put arity: a source-reading optic binds 2-arg; an iso binds 1-arg
-    // (reconstruct, no source read), matching `lens`'s `bwd.length` dispatch.
-    const bwd = o.readsSource
-      ? (target: unknown, cur: unknown) => o.put(target, cur)
-      : (target: unknown) => o.put(target, undefined);
-    return lens(this as Read<unknown>, o.get, bwd) as Writable<Cell<unknown>>;
   }
 
   /** Backward fan-in: forwards its parent's value unchanged; on write, folds N
@@ -945,10 +882,10 @@ export class Cell<T = unknown> implements ReactiveNode {
     return buildDerive(this, args);
   }
 
-  /** Writable lens. `Cls.lens(parent, fwd, bwd)` for one input,
-   *  `Cls.lens(parents, fwd, bwd)` for N; a 2-arg `bwd` reads the source,
-   *  a 1-arg `bwd` reconstructs it. `Cls.lens(parent(s), spec)` builds a
-   *  complement-carrying lens from `{ init, step, fwd, bwd }`. */
+  /** Writable lens, typed to this class. `Cls.lens(parent, fwd, bwd)` for one
+   *  input, `Cls.lens(parents, fwd, bwd)` for N (a 2-arg `bwd` reads the source, a
+   *  1-arg `bwd` reconstructs it); `Cls.lens(parent(s), optic)` applies an optic
+   *  value (pure or complement-carrying), chaining if several are given. */
   static lens<C extends AnyCellCtor, P>(
     this: C,
     parent: Read<P>,
@@ -961,15 +898,15 @@ export class Cell<T = unknown> implements ReactiveNode {
     fwd: (vals: ReadValues<P>) => Inner<InstanceType<C>>,
     bwd: (target: Inner<InstanceType<C>>, vals: ReadValues<P>) => BackUpdates<ReadValuesOrSkip<P>>,
   ): Writable<InstanceType<C>>;
-  static lens<C extends AnyCellCtor, P, Cm>(
+  static lens<C extends AnyCellCtor, P>(
     this: C,
     parent: Read<P>,
-    spec: StatefulLensSpec1<P, Inner<InstanceType<C>>, Cm>,
+    optic: AppliedOptic<P, Inner<InstanceType<C>>>,
   ): Writable<InstanceType<C>>;
-  static lens<C extends AnyCellCtor, P extends readonly Read<unknown>[], Cm>(
+  static lens<C extends AnyCellCtor, P extends readonly Read<unknown>[]>(
     this: C,
     parents: P,
-    spec: StatefulLensSpec<ReadValues<P>, Inner<InstanceType<C>>, Cm>,
+    optic: AppliedOptic<ReadValues<P>, Inner<InstanceType<C>>>,
   ): Writable<InstanceType<C>>;
   // biome-ignore lint/suspicious/noExplicitAny: dispatch
   static lens(this: any, ...args: any[]): any {
@@ -1052,8 +989,7 @@ function buildDerived<C extends Cell<any>>(Cls: CellCtor<C>, getter: () => unkno
 }
 
 // Shared N-input read getter: refill a construction-owned buffer from the parents
-// each read (no per-read alloc), then apply `fwd`. Identical hot closure whether
-// the node is a read-only derive-N or a writable split lens.
+// each read (no per-read alloc), then apply `fwd`.
 function arrayGetter(
   parents: Cell<unknown>[],
   fwd: (vals: readonly unknown[]) => unknown,
@@ -1066,170 +1002,157 @@ function arrayGetter(
   };
 }
 
-// One writable-lens constructor for both shapes. The `Array.isArray` branch is paid
-// once at construction and installs the matching specialized hot closures — scalar
-// scalar `getter`/`put` for 1→1, the buffer-loop getter + tuple `put` (`scatter`)
-// for N→M — so neither hot path changes. A 2-arg call is the
-// complement-carrying form and routes to `buildStateful`. `bwd` is always present
-// (a read-only N view is a `derive`, built via `buildDerive`).
-// biome-ignore lint/suspicious/noExplicitAny: dispatch over the untyped call forms
-function buildLens<C extends Cell<any>>(Cls: CellCtor<C>, args: any[]): C {
-  const parent0 = args[0];
-  if (args.length === 2) {
-    return Array.isArray(parent0)
-      ? buildStateful(Cls, parent0 as Cell<unknown>[], args[1])
-      : buildStateful1(Cls, parent0 as Cell<unknown>, args[1]);
-  }
-  let parent = parent0;
-  let fwd = args[1];
-  let bwd = args[2] as (t: unknown, s?: unknown) => unknown;
-  // Object-keyed parents → rewrite to the positional array form (key order
-  // fixed once; omitted backward keys become SKIP). The tuple fast path below
-  // is untouched.
-  if (
-    parent0 !== null &&
-    typeof parent0 === "object" &&
-    !Array.isArray(parent0) &&
-    !(parent0 instanceof Cell)
-  ) {
-    const keys = Object.keys(parent0 as object);
-    const rec = parent0 as Record<string, Cell<unknown>>;
-    const fwdObj = fwd as (vals: Record<string, unknown>) => unknown;
-    const bwdObj = bwd as unknown as (
-      t: unknown,
-      vals: Record<string, unknown>,
-    ) => Record<string, unknown>;
-    const toObj = (vals: readonly unknown[]): Record<string, unknown> => {
-      const o: Record<string, unknown> = {};
-      for (let i = 0; i < keys.length; i++) o[keys[i] as string] = vals[i];
-      return o;
-    };
-    parent = keys.map(k => rec[k] as Cell<unknown>);
-    fwd = (vals: readonly unknown[]) => fwdObj(toObj(vals));
-    bwd = ((t: unknown, vals: readonly unknown[]) => {
-      const o = bwdObj(t, toObj(vals));
-      return keys.map(k => (k in o ? o[k] : SKIP));
-    }) as (t: unknown, s?: unknown) => unknown;
-  }
-  const readsSource = (bwd as (...xs: unknown[]) => unknown).length >= 2;
+// Bind a pure (complement-free) optic to one source. Source-reading vs iso is the
+// `put` arity. The 1→1 getter/put stays scalar.
+function bindPureScalar(
+  Cls: CellCtor<Cell<unknown>>,
+  p: Cell<unknown>,
+  optic: AnyOptic,
+): Cell<unknown> {
+  const get = optic.get as (v: unknown) => unknown;
+  const put = optic.put as (t: unknown, s?: unknown) => unknown;
+  const readsSource = (put as (...xs: unknown[]) => unknown).length >= 2;
   const cell = new Cls();
   cell.flags = F.Mutable | F.Dirty;
   const b = (cell._bwd = new BwdSpec());
-  if (Array.isArray(parent)) {
-    const parents = parent as Cell<unknown>[];
-    const n = parents.length;
-    cell.getter = arrayGetter(parents, fwd as (vals: readonly unknown[]) => unknown) as () => never;
-    b.scatter = true;
-    for (let i = 0; i < n; i++) linkLens(cell as Cell<unknown>, parents[i]!, i);
-    if (readsSource) {
-      // Own reused buffer (not the getter's) to avoid aliasing; `bwd` consumes it
-      // synchronously and must not retain it.
-      const argbuf = new Array<unknown>(n);
-      const bwdN = bwd as (target: unknown, vals: readonly unknown[]) => unknown;
-      b.put = (target: unknown): unknown => {
-        for (let i = 0; i < n; i++) argbuf[i] = backPrimal(parents[i]!);
-        return bwdN(target, argbuf);
-      };
-    } else {
-      const bwd0 = bwd as (target: unknown) => unknown;
-      b.put = (target: unknown): unknown => bwd0(target);
-    }
+  cell.getter = (() => get(p.value)) as () => never;
+  // Source-reading lenses linearize at the parent's primal (`backPrimal`), so the
+  // engine always calls the 1-arg form and never recomputes the parent's cone.
+  b.put = readsSource ? (t: unknown): unknown => put(t, backPrimal(p)) : put;
+  linkLens(cell as Cell<unknown>, p, 0);
+  setWriteBlocked(cell as Cell<unknown>);
+  return cell;
+}
+
+function bindPureTuple(
+  Cls: CellCtor<Cell<unknown>>,
+  parents: Cell<unknown>[],
+  optic: AnyOptic,
+): Cell<unknown> {
+  const get = optic.get as (vals: readonly unknown[]) => unknown;
+  const put = optic.put as (t: unknown, s?: unknown) => unknown;
+  const readsSource = (put as (...xs: unknown[]) => unknown).length >= 2;
+  const n = parents.length;
+  const cell = new Cls();
+  cell.flags = F.Mutable | F.Dirty;
+  const b = (cell._bwd = new BwdSpec());
+  cell.getter = arrayGetter(parents, get) as () => never;
+  b.scatter = true;
+  for (let i = 0; i < n; i++) linkLens(cell as Cell<unknown>, parents[i]!, i);
+  if (readsSource) {
+    // Own reused buffer (not the getter's) to avoid aliasing; `put` consumes it
+    // synchronously and must not retain it.
+    const argbuf = new Array<unknown>(n);
+    const putN = put as (target: unknown, vals: readonly unknown[]) => unknown;
+    b.put = (target: unknown): unknown => {
+      for (let i = 0; i < n; i++) argbuf[i] = backPrimal(parents[i]!);
+      return putN(target, argbuf);
+    };
   } else {
-    const p = parent as Cell<unknown>;
-    cell.getter = (() => (fwd as (v: unknown) => unknown)(p.value)) as () => never;
-    // Source-reading lenses linearize at the parent's primal (`backPrimal`), so the
-    // engine always calls the 1-arg form and never recomputes the parent's cone.
-    b.put = readsSource ? (t: unknown): unknown => bwd(t, backPrimal(p)) : bwd;
-    linkLens(cell as Cell<unknown>, p, 0);
+    const put0 = put as (target: unknown) => unknown;
+    b.put = (target: unknown): unknown => put0(target);
   }
   setWriteBlocked(cell as Cell<unknown>);
   return cell;
 }
 
-// Stateful lens (complement-carrying) — a lens that carries memory the source
-// can't hold (a `lowercase` view's casing, a principal-axis angle's winding):
-//   init(srcs)        → seed the complement
-//   fwd(srcs, c)      → the view
-//   step(srcs, c)     → advance the complement (optional; defaults to `init`)
-//   bwd(target, s, c) → { updates, complement } (per-parent + new complement)
-// All four are pure and read no cells; the engine owns `c`. A single-source lens
-// (`lens(parent, spec)`, one cell not an array) takes the scalar fast-path
-// (`StatefulLensSpec1`): `init`/`step`/`fwd`/`bwd` see the source value directly,
-// and `bwd` returns a scalar `{ update, complement }` — no tuple, no `vals` buffer.
-//
-// This is a SYMMETRIC LENS WITH COMPLEMENT in the literature (Hofmann, Pierce &
-// Wagner, "Symmetric Lenses", POPL 2011): `step`+`fwd` are the complement-carrying
-// `putr`, `bwd` is `putl`, `init` seeds the shared complement `C`. The complement
-// is path-dependent (winding, casing), so this is a genuine symmetric lens, not a
-// constant-complement ("very well-behaved") one where `S ≅ V × C`.
-//
-// PROVENANCE without a flag. `step` must run on an *outside* change and be skipped
-// on this lens's own back-write (else trim-style lenses re-derive from a degraded
-// source and lose the complement). The engine decides which by asking "did my
-// sources move since I last synced?": each cell carries a monotone `version`
-// (bumped on every committed change), and the lens remembers the SUM of its
-// parents' versions (`StatefulCore.stamp`). Live sum ≠ stamp ⇒ a source moved ⇒
-// step. This is the lazy, O(1)-per-lens replacement for a value witness: a
-// co-writer bumping a shared source during draining raises the sum (caught), and
-// an external write before the next read bumps it too (caught) — both because the
-// version lives on the source, not on a flag on the lens. A single bit cannot do
-// this (it can't survive an external write landing between back-write and read).
-//
-// An own back-write moves its sources too, so `writeBack` re-stamps the lens
-// post-order (after the sources are written): the sum is back in sync, so the next
-// read skips `step` and trusts `bwd`'s complement. The contract this buys: `bwd`
-// must return a complement CONSISTENT with its `updates` — it can't stash a stale
-// value and lean on a later `step` to repair it (there won't be one). The stamp is
-// seeded to `-1` so the very first use always folds the sources into the seed.
-//
-// This is the degenerate EDIT LENS (Hofmann–Pierce–Wagner edit lenses; Diskin,
-// Xiong & Czarnecki delta lenses) with the trivial alphabet `{ Replace(v) }`; when
-// the alphabet grows, `step`/`bwd` take the edit and the version-stamp generalizes
-// to the edit's provenance, received directly rather than reconstructed.
-//
-// Law `step` must satisfy: re-running it on an unchanged source is a fixpoint —
-//   step(s, step(s, c)) === step(s, c).
-// This is what lets the engine SKIP `step` on an own back-write (the complement
-// from `bwd` is already settled): the `init` default returns a pure function of
-// `s`; an accumulating `step` is a no-op once the source stops moving.
-
-export interface StatefulBwd<S extends readonly unknown[], C> {
-  /** Per-parent updates: a value (written verbatim, `undefined` included) or
-   *  `SKIP` to leave that parent. A short array skips the trailing parents. */
-  updates: BackUpdates<{ [K in keyof S]: S[K] | Skip }>;
-  complement: C;
+// Bind one optic to a source (cell or array). The four shapes (scalar/tuple ×
+// pure/stateful) fall out of `Array.isArray(parent)` and the `complement` discriminant.
+function bindOne(Cls: CellCtor<Cell<unknown>>, parent: unknown, optic: AnyOptic): Cell<unknown> {
+  if (Array.isArray(parent)) {
+    const parents = parent as Cell<unknown>[];
+    return optic.complement !== undefined
+      ? (buildStateful(Cls, parents, optic) as Cell<unknown>)
+      : bindPureTuple(Cls, parents, optic);
+  }
+  const p = parent as Cell<unknown>;
+  return optic.complement !== undefined
+    ? (buildStateful1(Cls, p, optic) as Cell<unknown>)
+    : bindPureScalar(Cls, p, optic);
 }
 
-export interface StatefulLensSpec<S extends readonly unknown[], V, C> {
-  init: (sources: S) => C;
-  /** Advance the complement on an outside change. Optional — defaults to `init`
-   *  (the memoryless refresh); the engine runs it only when sources actually move. */
-  step?: (sources: S, complement: C) => C;
-  fwd: (sources: S, complement: C) => V;
-  bwd: (target: V, sources: S, complement: C) => StatefulBwd<S, C>;
+// One writable-lens constructor over all call forms. `(parent, fwd, bwd)` is sugar
+// for an inline pure optic; `(parent, ...optics)` folds an optic chain by repeated
+// binding (each optic bound to the prior result; only the last stage takes `Cls`).
+// Composition is just re-binding, so `cell.ts` needs no optic.ts import.
+// biome-ignore lint/suspicious/noExplicitAny: dispatch over the untyped call forms
+function buildLens<C extends Cell<any>>(Cls: CellCtor<C>, args: any[]): C {
+  const parent0 = args[0];
+  const cls = Cls as unknown as CellCtor<Cell<unknown>>;
+  if (typeof args[1] === "function") {
+    // `(parent, fwd, bwd)` → an inline pure optic, then bind.
+    let parent = parent0;
+    let get = args[1] as (s: unknown) => unknown;
+    let put = args[2] as (t: unknown, s?: unknown) => unknown;
+    // Object-keyed parents → rewrite to the positional array form (key order fixed
+    // once; omitted backward keys become SKIP).
+    if (
+      parent0 !== null &&
+      typeof parent0 === "object" &&
+      !Array.isArray(parent0) &&
+      !(parent0 instanceof Cell)
+    ) {
+      const keys = Object.keys(parent0 as object);
+      const rec = parent0 as Record<string, Cell<unknown>>;
+      const getObj = get as unknown as (vals: Record<string, unknown>) => unknown;
+      const putObj = put as unknown as (
+        t: unknown,
+        vals: Record<string, unknown>,
+      ) => Record<string, unknown>;
+      const toObj = (vals: readonly unknown[]): Record<string, unknown> => {
+        const o: Record<string, unknown> = {};
+        for (let i = 0; i < keys.length; i++) o[keys[i] as string] = vals[i];
+        return o;
+      };
+      parent = keys.map(k => rec[k] as Cell<unknown>);
+      get = ((vals: readonly unknown[]) => getObj(toObj(vals))) as (s: unknown) => unknown;
+      put = ((t: unknown, vals: readonly unknown[]) => {
+        const o = putObj(t, toObj(vals));
+        return keys.map(k => (k in o ? o[k] : SKIP));
+      }) as (t: unknown, s?: unknown) => unknown;
+    }
+    return bindOne(cls, parent, { get, put } as AnyOptic) as C;
+  }
+  // Optic value(s): fold the chain by repeated binding.
+  let acc: unknown = parent0;
+  const last = args.length - 1;
+  for (let i = 1; i <= last; i++) {
+    acc = bindOne(i === last ? cls : CELL_CTOR, acc, args[i] as AnyOptic);
+  }
+  return acc as C;
 }
 
-/** Single-source `bwd` result: a scalar `update` (or `SKIP`) plus the complement. */
-export interface StatefulBwd1<S, C> {
-  update: S | Skip;
-  complement: C;
-}
+// Stateful optic (complement-carrying) — a lens that carries memory the source
+// can't hold (a `lowercase` view's casing, an angle's winding):
+//   complement(srcs)  → seed the complement object `c` (fresh per bind)
+//   get(srcs, c)      → the view; the ONLY refresh — may mutate `c`, and MUST be
+//                       idempotent on a settled source
+//   put(target, s, c) → per-source `Updates`; sees the last-read `c` (+ current
+//                       source `s`) and may mutate it
+// Refresh is forward-only: `get` is the sole writer of `c`, run once per
+// source-version change by the cache (no version stamp). So `put` sees `c` as of
+// the last read plus a fresh source `s`, and must reconstruct any current-source
+// facts from `s` rather than assume `c` was refreshed at write time. A single-source
+// optic takes the scalar fast-path: `put` returns a scalar `S | SKIP`, no tuple.
+//
+// Refs: symmetric lens with complement (Hofmann, Pierce & Wagner, "Symmetric
+// Lenses", POPL 2011) — `get`/`put` are `putr`/`putl`, idempotent `get` is the
+// steady-state law. Degenerate edit/delta lens (Diskin, Xiong & Czarnecki) with
+// the trivial `{ Replace(v) }` alphabet.
 
-/** Single-source stateful spec — the scalar fast-path of `StatefulLensSpec`: one
- *  parent, so `init`/`step`/`fwd`/`bwd` take the source value directly, not a tuple. */
-export interface StatefulLensSpec1<S, V, C> {
-  init: (source: S) => C;
-  step?: (source: S, complement: C) => C;
-  fwd: (source: S, complement: C) => V;
-  bwd: (target: V, source: S, complement: C) => StatefulBwd1<S, C>;
+// biome-ignore lint/suspicious/noExplicitAny: opaque optic shape
+type AnyOptic = Optic<any, any, any>;
+
+// Seed the complement object from the current sources (fresh per bind).
+function seedComplement(optic: AnyOptic, seed: unknown): object {
+  return (optic.complement as (s: unknown) => object)(seed);
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: variance escape
 function buildStateful<C extends Cell<any>>(
   Cls: CellCtor<C>,
   parents: Cell<unknown>[],
-  // biome-ignore lint/suspicious/noExplicitAny: opaque spec
-  spec: StatefulLensSpec<any, any, any>,
+  optic: AnyOptic,
 ): C {
   const n = parents.length;
   const vals = new Array<unknown>(n);
@@ -1238,76 +1161,44 @@ function buildStateful<C extends Cell<any>>(
   const b = (cell._bwd = new BwdSpec());
   const seed = new Array<unknown>(n);
   for (let i = 0; i < n; i++) seed[i] = parents[i]!.peek();
-  // Default `step` is the memoryless refresh (`init`); the engine runs it only on
-  // an outside change, so the `external ? init(s) : c` idiom needs no user `step`.
-  const init = spec.init as (s: unknown) => unknown;
-  const step = (spec.step ?? init) as (s: unknown, c: unknown) => unknown;
-  const sc = (b.stateful = new StatefulCore(spec.init(seed), step));
-  // Sentinel: version sums are ≥ 0, so the first read (or back-write) always
-  // steps once, folding the initial sources into the seed complement. The
-  // `init`/`step` split is seed-then-fold: `init` need not see the sources.
-  sc.stamp = -1;
-  const fwd = spec.fwd as (s: unknown, c: unknown) => unknown;
-  b.put = spec.bwd as (t: unknown, c?: unknown) => unknown;
+  const c = (b.stateful = seedComplement(optic, seed));
+  const get = optic.get as (s: unknown, c: unknown) => unknown;
+  b.put = optic.put as (t: unknown, c?: unknown) => unknown;
   b.scatter = true;
   for (let i = 0; i < n; i++) linkLens(cell as Cell<unknown>, parents[i]!, i);
+  // Forward-only refresh: `get` reads the sources and (idempotently) updates the
+  // complement; the cache runs it once per source-version change.
   cell.getter = (() => {
-    let ver = 0;
-    for (let i = 0; i < n; i++) {
-      vals[i] = parents[i]!.value;
-      ver += parents[i]!.version;
-    }
-    // Step only when sources moved since the last sync (lazy own-vs-external).
-    if (ver !== sc.stamp) {
-      if (COUNTS) counts.step++;
-      sc.complement = sc.step(vals, sc.complement);
-      sc.stamp = ver;
-    }
-    return fwd(vals, sc.complement);
+    for (let i = 0; i < n; i++) vals[i] = parents[i]!.value;
+    return get(vals, c);
   }) as () => never;
   setWriteBlocked(cell as Cell<unknown>);
   return cell;
 }
 
 // Single-source stateful fast-path: one parent, so no `vals` buffer and a scalar
-// `step`/`fwd`/`bwd` — the version stamp is just the parent's `version`. Same
-// provenance and laziness as the N-source `buildStateful`, minus the array work.
+// `get`/`put` — minus the array work of the N-source `buildStateful`.
 // biome-ignore lint/suspicious/noExplicitAny: variance escape
 function buildStateful1<C extends Cell<any>>(
   Cls: CellCtor<C>,
   parent: Cell<unknown>,
-  // biome-ignore lint/suspicious/noExplicitAny: opaque spec
-  spec: StatefulLensSpec1<any, any, any>,
+  optic: AnyOptic,
 ): C {
   const cell = new Cls();
   cell.flags = F.Mutable | F.Dirty;
   const b = (cell._bwd = new BwdSpec());
-  const init = spec.init as (s: unknown) => unknown;
-  const step = (spec.step ?? init) as (s: unknown, c: unknown) => unknown;
-  const sc = (b.stateful = new StatefulCore(init(parent.peek()), step));
-  sc.stamp = -1; // sentinel: first use folds the source in (see `buildStateful`)
-  const fwd = spec.fwd as (s: unknown, c: unknown) => unknown;
-  b.put = spec.bwd as (t: unknown, c?: unknown) => unknown;
+  const c = (b.stateful = seedComplement(optic, parent.peek()));
+  const get = optic.get as (s: unknown, c: unknown) => unknown;
+  b.put = optic.put as (t: unknown, c?: unknown) => unknown;
   // `scatter` stays false: writeBack routes this through the scalar stateful branch.
   linkLens(cell as Cell<unknown>, parent, 0);
-  cell.getter = (() => {
-    const x = parent.value;
-    const ver = parent.version;
-    if (ver !== sc.stamp) {
-      if (COUNTS) counts.step++;
-      sc.complement = sc.step(x, sc.complement);
-      sc.stamp = ver;
-    }
-    return fwd(x, sc.complement);
-  }) as () => never;
+  cell.getter = (() => get(parent.value, c)) as () => never;
   setWriteBlocked(cell as Cell<unknown>);
   return cell;
 }
 
 // One read-only-derive constructor: a bare closure (`derive(fn)`), a single tracked
-// read (`derive(p, fn)`), or an N-parent read (`derive(ps, fn)`) — each lands in
-// `buildDerived` with the matching getter. (Writable `lens(...)` is `buildLens`;
-// statics pass the typed subclass, free functions plain `Cell`, so neither drifts.)
+// read (`derive(p, fn)`), or an N-parent read (`derive(ps, fn)`).
 // biome-ignore lint/suspicious/noExplicitAny: dispatch over the untyped call forms
 function buildDerive<C extends Cell<any>>(Cls: CellCtor<C>, args: any[]): C {
   if (args.length === 1) return buildDerived(Cls, args[0]);
@@ -1317,8 +1208,7 @@ function buildDerive<C extends Cell<any>>(Cls: CellCtor<C>, args: any[]): C {
   return buildDerived(Cls, () => fn((parent as Cell<unknown>).value));
 }
 
-// Installed on the prototype (not a class accessor): V8 JITs it better and keeps
-// the field-only class shape for a stable hidden class.
+// Prototype accessor (not a class accessor): V8 JITs it better, keeps a stable hidden class.
 Object.defineProperty(Cell.prototype, "value", {
   get(this: Cell<unknown>): unknown {
     // Reading is the PULL: a back-marked cell resolves here, before its own
@@ -1367,8 +1257,8 @@ Object.defineProperty(Cell.prototype, "value", {
       throw new TypeError("Cannot write to a computed");
     }
     // GetPut for a multi-parent split: absorb a write equal to the current view
-    // (its `put` could redistribute sources past per-source equality). Stateful
-    // excluded (`scatter` but `stateful` set) — peeking would step its complement.
+    // (its `put` could redistribute sources). Stateful excluded — peeking would run
+    // `get` and mutate its complement.
     if (b.scatter && b.stateful === undefined && this._equals(next, this.peek())) {
       return;
     }
@@ -1447,19 +1337,15 @@ function markDown(start: Cell<unknown>): void {
   }
 }
 
-/** RESOLVE (pull), dual of `checkDirty`: resolve one node's whole back-cone.
- *  Ascend `childEdges` (only `BACK_MARKED` children) to the armed views,
- *  `writeBack`ing each. Source-centric — a source reflects all its writers, so a
- *  call on it resolves every co-writer together and commits once.
+/** RESOLVE (pull), dual of `checkDirty`: resolve one node's whole back-cone by
+ *  ascending `childEdges` to the armed views and `writeBack`ing each. Source-centric
+ *  — a call on a source resolves every co-writer together and commits once.
  *
- *  Iterative post-order over the back-cone, via an explicit frame stack of
- *  {node, next-child cursor}. On entering a
- *  node (pre): clear a merge's contributions, then `writeBack` if it holds an armed
- *  target. After its children drain (post): clear `BF.Pending`, then fold a merge.
- *  Children are walked in forward `childEdges` order (so a co-writer's last write
- *  wins) and a per-call `bEpoch` dedups diamonds — the merge fold lands at its true
- *  post-order position, interleaved with sibling writes, not deferred.
- *  Idempotent, so phase-2 of `backResolve` can call it unconditionally. */
+ *  Iterative post-order via an explicit {node, next-child cursor} frame stack:
+ *  pre-order clears a merge's buffer and drives an armed target (`enterCone`);
+ *  post-order clears `BF.Pending` and folds a merge at its true position. Children
+ *  walk in `childEdges` order (co-writer last-write-wins); `bEpoch` dedups diamonds.
+ *  Idempotent, so `backResolve`'s phase 2 can call it unconditionally. */
 function resolveCone(root: Cell<unknown>): void {
   const epoch = ++backCycle;
   root.bEpoch = epoch;
@@ -1583,20 +1469,16 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
   wbNode[0] = node;
   wbTarget[0] = target;
   let top = 1;
-  let sTop = 0;
   while (top > 0) {
     if (COUNTS) counts.writeBackVisit++;
     const cur = wbNode[--top]!;
     const tgt = wbTarget[top];
     if (isSource(cur)) {
       cur._writeSource(tgt); // staged now, visible to later siblings
-      // Clear this source's `BF.Pending`, then re-assert iff a lens-child is STILL
-      // armed (an overlapping co-writer) — else that write is lost, and leaving it
-      // set unconditionally would strand `BF.Pending` on every fan-in source.
-      // Scan from the TAIL: `resolveCone` drives children head→tail, so the last
-      // still-armed co-writer sits near the tail — found in O(1) until the final
-      // one, turning a fan-in's re-assert from O(N²) into O(N). (Order is
-      // irrelevant; this is a find-any.)
+      // Clear `BF.Pending`, then re-assert iff a lens-child is still armed (an
+      // overlapping co-writer); else leaving it set would strand `BF.Pending` on
+      // every fan-in source. Scan from the tail (where `resolveCone` leaves the last
+      // still-armed co-writer), turning a fan-in re-assert from O(N²) into O(N).
       cur.bflags &= ~BF.Pending;
       for (let e = cur.childEdgesTail; e !== undefined; e = e.prevChild) {
         if (COUNTS) counts.reassertScan++;
@@ -1622,20 +1504,10 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
       // Single-source stateful fast-path (scalar `bwd`); one index-0 parent edge.
       const p = pe.parent;
       const x = p.value;
-      const ver = p.version;
-      if (ver !== sc.stamp) {
-        if (COUNTS) counts.step++;
-        sc.complement = sc.step(x, sc.complement);
-      }
       if (COUNTS) counts.put++;
-      const res = (b.put as (t: unknown, s: unknown, c: unknown) => StatefulBwd1<unknown, unknown>)(
-        tgt,
-        x,
-        sc.complement,
-      );
-      sc.complement = res.complement;
-      wbStateful[sTop++] = cur;
-      const u = res.update;
+      // `put` sees the last-read complement (+ fresh source) and may mutate it;
+      // it returns just the scalar update (or SKIP).
+      const u = (b.put as (t: unknown, s: unknown, c: unknown) => unknown)(tgt, x, sc);
       if (u !== SKIP) {
         wbNode[top] = p;
         wbTarget[top] = u;
@@ -1658,30 +1530,15 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
       let out: ReadonlyArray<unknown>;
       if (sc !== undefined) {
         const vals = new Array<unknown>(n);
-        let ver = 0;
-        for (let i = 0; i < n; i++) {
-          vals[i] = parents[i]!.value;
-          ver += parents[i]!.version;
-        }
-        // Refresh the complement only if a source moved since the last sync — e.g.
-        // a prior sibling co-writer bumped a shared source. A pure own re-write
-        // (sum unchanged) skips it: `bwd` already gets the settled complement.
-        if (ver !== sc.stamp) {
-          if (COUNTS) counts.step++;
-          sc.complement = sc.step(vals, sc.complement);
-        }
+        for (let i = 0; i < n; i++) vals[i] = parents[i]!.value;
         if (COUNTS) counts.put++;
-        const res = (
-          b.put as (t: unknown, s: unknown, c: unknown) => StatefulBwd<unknown[], unknown>
-        )(tgt, vals, sc.complement);
-        const upd = res.updates as ReadonlyArray<unknown>;
-        // Commit `bwd`'s complement directly; it must be consistent with `updates`
-        // (no reliance on a post-write `step`). The stamp is re-set post-order (after
-        // the sources are written and their versions bumped) so the next forward read
-        // sees an unchanged sum and skips `step` — own-write provenance.
-        sc.complement = res.complement;
-        wbStateful[sTop++] = cur;
-        out = upd;
+        // `put` sees the last-read complement (+ fresh sources) and may mutate it;
+        // it reconstructs any current-source facts it needs from `vals`.
+        out = (b.put as (t: unknown, s: unknown, c: unknown) => ReadonlyArray<unknown>)(
+          tgt,
+          vals,
+          sc,
+        );
       } else {
         if (COUNTS) counts.put++;
         out = (b.put as (t: unknown) => ReadonlyArray<unknown>)(tgt);
@@ -1709,23 +1566,21 @@ function writeBack(node: Cell<unknown>, target: unknown): void {
       }
       continue;
     }
-    // 1→1 lens (single index-0 parent-edge).
+    // 1→1 lens (single index-0 parent-edge). A `SKIP` rejects the write: the
+    // source is left, so invalidate this view and propagate (it recomputes to old).
     if (COUNTS) counts.put++;
-    wbNode[top] = pe.parent;
-    wbTarget[top] = (b.put as (t: unknown) => unknown)(tgt);
-    top++;
-  }
-  // Post-order re-stamp: now the sources are written (versions bumped), record
-  // each on-path stateful lens's parent-version sum, so its next forward read
-  // sees an unchanged sum and skips `step`. Integers only — no `fwd`, no commit.
-  for (let i = 0; i < sTop; i++) {
-    const sc = wbStateful[i]!._bwd!.stateful!;
-    let ver = 0;
-    for (let e = wbStateful[i]!.parentEdges; e !== undefined; e = e.nextParent) {
-      ver += e.parent.version;
+    {
+      const u = (b.put as (t: unknown) => unknown)(tgt);
+      if (u !== SKIP) {
+        wbNode[top] = pe.parent;
+        wbTarget[top] = u;
+        top++;
+      } else {
+        cur.flags |= F.Dirty;
+        const subs = cur.subs;
+        if (subs !== undefined) propagate(subs, runDepth > 0, activeExcluded);
+      }
     }
-    sc.stamp = ver;
-    wbStateful[i] = undefined as unknown as Cell<unknown>;
   }
 }
 
@@ -1769,9 +1624,9 @@ export function derive(...args: any[]): any {
   return buildDerive(CELL_CTOR, args);
 }
 
-/** Untyped lens, inferring `R` from the closures. A 2-arg `bwd` reads the
- *  source, a 1-arg `bwd` reconstructs it; `lens(parent(s), spec)` builds a
- *  complement-carrying lens. */
+/** Untyped lens, inferring `R` from the closures or optic. A 2-arg `bwd` reads
+ *  the source, a 1-arg `bwd` reconstructs it; `lens(parent(s), optic)` applies an
+ *  optic value (pure or complement-carrying), chaining if several are given. */
 export function lens<P, R>(
   parent: Read<P>,
   fwd: (v: P) => R,
@@ -1790,10 +1645,21 @@ export function lens<S extends Record<string, Read<unknown>>, R>(
     vals: { [K in keyof S]: Inner<S[K]> },
   ) => Partial<{ [K in keyof S]: Inner<S[K]> | Skip }>,
 ): Writable<Cell<R>>;
-export function lens<P, R, C>(parent: Read<P>, spec: StatefulLensSpec1<P, R, C>): Writable<Cell<R>>;
-export function lens<P extends readonly Read<unknown>[], R, C>(
+export function lens<P, R>(parent: Read<P>, optic: AppliedOptic<P, R>): Writable<Cell<R>>;
+export function lens<P, V1, R>(
+  parent: Read<P>,
+  o1: AppliedOptic<P, V1>,
+  o2: AppliedOptic<V1, R>,
+): Writable<Cell<R>>;
+export function lens<P, V1, V2, R>(
+  parent: Read<P>,
+  o1: AppliedOptic<P, V1>,
+  o2: AppliedOptic<V1, V2>,
+  o3: AppliedOptic<V2, R>,
+): Writable<Cell<R>>;
+export function lens<P extends readonly Read<unknown>[], R>(
   parents: P,
-  spec: StatefulLensSpec<ReadValues<P>, R, C>,
+  optic: AppliedOptic<ReadValues<P>, R>,
 ): Writable<Cell<R>>;
 // biome-ignore lint/suspicious/noExplicitAny: dispatch
 export function lens(...args: any[]): any {
@@ -1936,10 +1802,8 @@ function flush(): void {
   if (flushing) return;
   flushing = true;
   // Error locality: one effect throwing must not strand its siblings. Drain the
-  // whole queue, catching each body; surface the first error after the queue is
-  // empty (later errors are dropped — the engine stays consistent, the user still
-  // sees a failure). A throwing body isn't re-queued (its `F.Watching` is already
-  // cleared); it re-arms on the next wake.
+  // whole queue, catching each body, and surface the first error after it empties
+  // (later errors dropped). A throwing body isn't re-queued; it re-arms on next wake.
   let err: unknown;
   let threw = false;
   try {
@@ -2013,9 +1877,7 @@ export function untracked<R>(fn: () => R): R {
 }
 
 // network() — reactive sub-DAG with explicit topology and self-excluded writes
-// (an `Effect` in `NoTrack | Exclude` mode), used to build constraint networks.
-// Its body fires when any subscribed dep changes; its own writes self-exclude so
-// it doesn't re-trigger itself.
+// (an `Effect` in `NoTrack | Exclude` mode), for constraint networks.
 
 /** Handle to a `network` invocation. */
 export interface Network {

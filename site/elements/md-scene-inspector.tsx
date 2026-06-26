@@ -1,7 +1,7 @@
 /** @jsxImportSource @bireactive */
 // The form view: one inspector card per shape. Each card binds `shapeLens(doc,
 // id)` — layer B, a writable focus on that shape — and its controls compose one
-// more optic on top: `s.through(toField("hue"))`, `s.through(hexOptic)`. That is
+// more optic on top: `s.lens(toField("hue"))`, `s.lens(hexOptic)`. That is
 // exactly the lens the spreadsheet reuses (it is a view of these cards). Edits
 // flow C ▸ B ▸ A into the CRDT and back out to the canvas, spreadsheet, and other
 // tabs. `each` keeps the card list in sync with the array by id.
@@ -177,7 +177,7 @@ function card(doc: Writable<Cell<Scene>>, shape: Shape): Node {
     >
       <div class="top">
         <div class="swatch" style={() => `background:${cssColor(s.value)}`} />
-        <input type="text" lens={s.through(toField("label"))} />
+        <input type="text" lens={s.lens(toField("label"))} />
         <button
           type="button"
           class="del"
@@ -190,14 +190,14 @@ function card(doc: Writable<Cell<Scene>>, shape: Shape): Node {
         </button>
       </div>
       <div class="controls">
-        <Range label="Hue" min={0} max={360} unit="°" lens={s.through(toField("hue"))} />
-        <Range label="Sat" min={0} max={100} unit="%" lens={s.through(toField("sat"))} />
-        <Range label="Light" min={0} max={100} unit="%" lens={s.through(toField("lum"))} />
-        <Range label="X" min={0} max={320} lens={s.through(toField("x"))} />
-        <Range label="Y" min={0} max={240} lens={s.through(toField("y"))} />
-        <Range label="W" min={10} max={320} lens={s.through(toField("w"))} />
-        <Range label="H" min={10} max={240} lens={s.through(toField("h"))} />
-        <input class="hex" type="text" lens={s.through(hexOptic)} />
+        <Range label="Hue" min={0} max={360} unit="°" lens={s.lens(toField("hue"))} />
+        <Range label="Sat" min={0} max={100} unit="%" lens={s.lens(toField("sat"))} />
+        <Range label="Light" min={0} max={100} unit="%" lens={s.lens(toField("lum"))} />
+        <Range label="X" min={0} max={320} lens={s.lens(toField("x"))} />
+        <Range label="Y" min={0} max={240} lens={s.lens(toField("y"))} />
+        <Range label="W" min={10} max={320} lens={s.lens(toField("w"))} />
+        <Range label="H" min={10} max={240} lens={s.lens(toField("h"))} />
+        <input class="hex" type="text" lens={s.lens(hexOptic)} />
       </div>
     </div>
   );

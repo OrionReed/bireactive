@@ -193,7 +193,11 @@ export class MdAllen extends Diagram {
         rect(0, 0, CW - 8, CH, {
           corner: 7,
           fill: derive(() => (active.value ? "#2f6df0" : "rgba(150,150,150,0.12)")),
-          stroke: derive(() => (active.value ? "#2f6df0" : "color-mix(in srgb, var(--text-color, #000) 30%, transparent)")),
+          stroke: derive(() =>
+            active.value
+              ? "#2f6df0"
+              : "color-mix(in srgb, var(--text-color, #000) 30%, transparent)",
+          ),
           thin: true,
         }),
         label(vec((CW - 8) / 2, CH / 2), r, {

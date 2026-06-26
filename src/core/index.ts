@@ -24,10 +24,6 @@ export {
   readNow,
   SKIP,
   type Skip,
-  type StatefulBwd,
-  type StatefulBwd1,
-  type StatefulLensSpec,
-  type StatefulLensSpec1,
   setCellWriteHook,
   settle,
   transitiveDeps,
@@ -48,7 +44,7 @@ export {
 export { bezier2, bezier3 } from "./derived-geometry";
 export * from "./lenses";
 export { each, type Lifecycle } from "./lifecycle";
-export { atKey, compose, iso, optic } from "./optic";
+export { atKey, iso, optic } from "./optic";
 export { at, fields } from "./optics";
 export { type Store, store } from "./store";
 export {
