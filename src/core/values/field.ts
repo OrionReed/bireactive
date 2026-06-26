@@ -70,6 +70,16 @@ void main() {
   o = vec4(mix(s.rgb, u_v, f), s.a);
 }`;
 
+const FILL_RECT = `${HEAD}
+uniform sampler2D u_src; uniform vec2 u_res; uniform vec2 u_o; uniform vec2 u_wh;
+uniform vec3 u_v; uniform float u_mix;
+void main() {
+  vec2 px = v_uv * u_res;
+  bool inside = px.x >= u_o.x && px.y >= u_o.y && px.x < u_o.x + u_wh.x && px.y < u_o.y + u_wh.y;
+  vec4 s = texture(u_src, v_uv);
+  o = inside ? vec4(mix(s.rgb, u_v, u_mix), s.a) : s;
+}`;
+
 /** GLSL float literal (always carries a decimal point). */
 const glf = (n: number): string => (Number.isInteger(n) ? `${n}.0` : String(n));
 const glv3 = (c: readonly [number, number, number]): string =>
@@ -177,6 +187,23 @@ export class Field<T> extends Cell<FieldVal> {
       s.v2("u_res", v.w, v.h);
       s.v2("u_c", x, y);
       s.f("u_r", r);
+      s.v3("u_v", TMP[0]!, TMP[1]!, TMP[2]!);
+      s.f("u_mix", strength);
+    });
+    (this as { value: FieldVal }).value = stamp(dst.tex, v.w, v.h);
+  }
+
+  /** Fill a hard-edged rectangle `(x, y, w, h)` in data pixels with `value`. */
+  fillRect(x: number, y: number, w: number, h: number, value: T, strength = 1): void {
+    const ping = this.pingTex();
+    const v = this.peek();
+    this.kind.pack.read(value, TMP, 0);
+    const dst = ping(v.w, v.h, v.tex);
+    pass(FILL_RECT, dst, s => {
+      s.tex("u_src", 0, v.tex);
+      s.v2("u_res", v.w, v.h);
+      s.v2("u_o", x, y);
+      s.v2("u_wh", w, h);
       s.v3("u_v", TMP[0]!, TMP[1]!, TMP[2]!);
       s.f("u_mix", strength);
     });

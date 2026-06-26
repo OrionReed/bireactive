@@ -1,9 +1,9 @@
 // Reaction–diffusion on a `Field<Vec>`: a continuously-running GPU simulation
 // observed through reactive reductions. The Gray–Scott PDE steps the field on
 // its own raf clock (`field.evolve`); a probe rectangle's mean V is an ordinary
-// derived cell (`field.regionMean`), so `density ≥ threshold` is a plain `Bool`
-// the rest of the UI reacts to. The reactive logic never mentions a frame — it
-// is loosely coupled to the sim's time, observing a GPU texture as it evolves.
+// derived cell (`field.regionMean`). The fill slider is a lens: its thumb
+// reflects the live probe density; dragging it splatters the probe region to
+// the chosen concentration, writing directly back into the field.
 
 import {
   type ColorStop,
@@ -103,14 +103,11 @@ export class MdReactionDiffusion extends HTMLElement {
       .toolbar input[type=range] { width: 90px; accent-color: var(--text-color); }
       .frame { position: relative; width: 100%; max-width: 440px; margin: 0 auto; aspect-ratio: 1; }
       canvas { width: 100%; height: 100%; display: block; border-radius: 8px; background: #07080f; cursor: crosshair; touch-action: none; box-shadow: 0 0 0 1px #fff2; }
-      .probe { position: absolute; box-sizing: border-box; border: 1.5px solid #ffffffcc; box-shadow: 0 0 0 1px #0008; border-radius: 3px; cursor: move; transition: border-color 0.12s, box-shadow 0.12s; }
-      .probe.hot { border-color: #ff5b6e; box-shadow: 0 0 10px #ff5b6e, 0 0 0 1px #0008; }
+      .probe { position: absolute; box-sizing: border-box; border: 1.5px solid #ffffffcc; box-shadow: 0 0 0 1px #0008; border-radius: 3px; cursor: move; }
       .probe .handle { position: absolute; right: -5px; bottom: -5px; width: 10px; height: 10px; background: #fff; border-radius: 50%; cursor: nwse-resize; box-shadow: 0 0 0 1px #0008; }
-      .probe .tag { position: absolute; left: 0; top: -18px; font: 10px var(--font, system-ui); color: var(--text-color); white-space: nowrap; }
-      .readout { display: flex; gap: 14px; align-items: center; justify-content: center; margin-top: 8px; font: 11px var(--font, system-ui); color: var(--text-color); }
-      .readout .led { width: 10px; height: 10px; border-radius: 50%; background: #3a4256; box-shadow: inset 0 0 0 1px #fff3; }
-      .readout .led.on { background: #ff5b6e; box-shadow: 0 0 8px #ff5b6e; }
-      .readout b { font-variant-numeric: tabular-nums; }
+      .fill-row { display: flex; gap: 10px; align-items: center; justify-content: center; margin-top: 10px; font: 11px var(--font, system-ui); color: var(--text-color); }
+      .fill-row input[type=range] { width: 220px; accent-color: var(--text-color); }
+      .fill-row .pct { font-variant-numeric: tabular-nums; min-width: 3.5ch; }
       .hint { text-align: center; margin: 8px auto 0; max-width: 94%; font: 10px/1.5 var(--font, system-ui); color: var(--text-color); opacity: 0.5; }
     `);
     this.shadow.adoptedStyleSheets = [sheet];
@@ -135,8 +132,6 @@ export class MdReactionDiffusion extends HTMLElement {
     });
     const density = f.regionMean(dataBox) as Read<{ x: number; y: number }>;
     const densityV = derive(() => density.value.y);
-    const threshold = cell(0.12);
-    const hot = derive(() => densityV.value >= threshold.value);
 
     // ── DOM ────────────────────────────────────────────────────────────
     const toolbar = document.createElement("div");
@@ -158,7 +153,6 @@ export class MdReactionDiffusion extends HTMLElement {
     const reset = document.createElement("button");
     reset.textContent = "reset";
     reset.addEventListener("click", () => {
-      // Wipe U back to 1 / V to 0 (a saturating full-field splat), then re-kick.
       f.splat(W / 2, H / 2, W * 2, { x: 1, y: 0 }, 4);
       for (let i = 0; i < 14; i++) {
         const a = (i * 2654435761) % 1000;
@@ -166,21 +160,7 @@ export class MdReactionDiffusion extends HTMLElement {
         f.splat((a / 1000) * W, (b / 1000) * H, 6, { x: 0.5, y: 0.5 }, 1);
       }
     });
-    const tGrp = document.createElement("div");
-    tGrp.className = "grp";
-    const tLabel = document.createElement("span");
-    tLabel.textContent = "threshold";
-    const tInput = document.createElement("input");
-    tInput.type = "range";
-    tInput.min = "0";
-    tInput.max = "0.4";
-    tInput.step = "0.005";
-    tInput.value = String(threshold.peek());
-    tInput.addEventListener("input", () => {
-      threshold.value = Number(tInput.value);
-    });
-    tGrp.append(tLabel, tInput);
-    toolbar.append(pGrp, reset, tGrp);
+    toolbar.append(pGrp, reset);
 
     const frame = document.createElement("div");
     frame.className = "frame";
@@ -190,48 +170,56 @@ export class MdReactionDiffusion extends HTMLElement {
     probeEl.className = "probe";
     const handle = document.createElement("div");
     handle.className = "handle";
-    const tag = document.createElement("div");
-    tag.className = "tag";
-    probeEl.append(handle, tag);
+    probeEl.append(handle);
     frame.append(cv, probeEl);
 
-    const readout = document.createElement("div");
-    readout.className = "readout";
-    const led = document.createElement("div");
-    led.className = "led";
-    const dText = document.createElement("span");
-    const cText = document.createElement("span");
-    readout.append(led, dText, cText);
+    const fillRow = document.createElement("div");
+    fillRow.className = "fill-row";
+    const fillLabel = document.createElement("span");
+    fillLabel.textContent = "fill";
+    const fillSlider = document.createElement("input");
+    fillSlider.type = "range";
+    fillSlider.min = "0";
+    fillSlider.max = "100";
+    fillSlider.step = "1";
+    fillSlider.value = "0";
+    const fillPct = document.createElement("span");
+    fillPct.className = "pct";
+    fillPct.textContent = "0%";
+    fillRow.append(fillLabel, fillSlider, fillPct);
 
     const hint = document.createElement("div");
     hint.className = "hint";
     hint.textContent =
-      "Gray–Scott reaction–diffusion stepping on the GPU each frame. Drag/resize the probe; its mean concentration is a reactive cell, so the alarm, count, and readout react to a continuously-running simulation without any of them knowing a frame exists. Paint to inject.";
+      "Gray–Scott reaction–diffusion stepping on the GPU each frame. Drag/resize the probe; the fill slider is a lens — its thumb tracks live region density, and dragging it injects or removes V directly. Paint to seed.";
 
-    this.shadow.append(toolbar, frame, readout, hint);
+    this.shadow.append(toolbar, frame, fillRow, hint);
 
     // ── reactive edges (the bridge) ────────────────────────────────────
     const cmap = f.colormap(1, STOPS);
     d.push(effect(() => blit(cmap.value, ctx)));
+
+    // Slider thumb tracks live density (read side of the lens).
+    let userDragging = false;
     d.push(
       effect(() => {
         const v = densityV.value;
-        dText.innerHTML = `region density <b>${(v * 100).toFixed(1)}%</b>`;
+        fillPct.textContent = `${(v * 100).toFixed(0)}%`;
+        if (!userDragging) fillSlider.value = String(Math.round(v * 100));
       }),
     );
-    let crossings = 0;
-    let was = false;
-    d.push(
-      effect(() => {
-        const h = hot.value;
-        led.classList.toggle("on", h);
-        probeEl.classList.toggle("hot", h);
-        tag.textContent = h ? "● above threshold" : "";
-        if (h && !was) crossings++;
-        was = h;
-        cText.innerHTML = `crossings <b>${crossings}</b>`;
-      }),
-    );
+
+    // Write side: fill the probe rectangle to the chosen concentration.
+    const splatProbe = (v: number): void => {
+      const p = probe.peek();
+      f.fillRect(p.x * W, p.y * H, p.w * W, p.h * H, { x: 1 - v, y: v }, 1);
+    };
+    fillSlider.addEventListener("pointerdown", () => { userDragging = true; });
+    fillSlider.addEventListener("pointerup", () => { userDragging = false; });
+    fillSlider.addEventListener("input", () => {
+      splatProbe(Number(fillSlider.value) / 100);
+    });
+
     d.push(
       effect(() => {
         const p = probe.value;
