@@ -179,13 +179,5 @@ export class MdPulley extends Diagram {
     weight(bPos, "#e2a33c", "B");
     weight(cPos, "#e25c5c", "C");
 
-    s(
-      label(view.top.down(20), "drag a weight — or slide a pulley along the girder"),
-      label(
-        view.bottom.up(16),
-        "ROPE = aDrop + √(h² + bDrop² − R²)  ·  cDrop = aDrop  ·  slide pulleys to see B respond",
-        { size: 10 },
-      ),
-    );
   }
 }

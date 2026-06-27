@@ -8,7 +8,6 @@ import {
   Diagram,
   ellipse,
   handle,
-  label,
   line,
   type Mount,
   SKIP,
@@ -74,15 +73,6 @@ export class MdBestFit extends Diagram {
       handle(point, { fill: "#f5a623", r: 9 }),
       handle(rotHandle, { fill: "#7ed321", r: 8 }),
       handle(radiusHandle, { fill: "#e25c5c", r: 8 }),
-      label(
-        view.top.down(20),
-        "drag any point • orange centroid • green direction (rotation) • red radius (scale)",
-      ),
-      label(
-        view.bottom.up(16),
-        "bestFitLine + bestFitCircle · two decompositions, same centroid, exact",
-        { size: 10 },
-      ),
     );
   }
 }

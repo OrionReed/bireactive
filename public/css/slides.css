@@ -72,7 +72,15 @@ body {
   width: min(88vw, 96ch);
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 1.5rem;
+  text-align: center;
+}
+
+/* Code blocks and tables read better left-aligned even on centered slides. */
+.slide-body md-syntax,
+.slide-body table {
+  text-align: left;
 }
 
 /* ── Typography ── */
@@ -185,7 +193,9 @@ body {
   border-collapse: collapse;
   text-align: left;
   font-size: clamp(0.95rem, 1.7vw, 1.2rem);
-  font-variation-settings: "MONO" 1, "wght" 350;
+  font-variation-settings:
+    "MONO" 1,
+    "wght" 350;
 }
 
 .slide-body th,
@@ -197,7 +207,10 @@ body {
 
 .slide-body th {
   background-color: var(--table-header-bg);
-  font-variation-settings: "MONO" 0, "wght" 600, "CASL" 0.8;
+  font-variation-settings:
+    "MONO" 0,
+    "wght" 600,
+    "CASL" 0.8;
 }
 
 .slide-body tr:nth-child(even) td {
@@ -277,4 +290,9 @@ body {
 
 .slide-body > * {
   max-width: 100%;
+}
+
+/* Presentation: hide each diagram's "source" disclosure panel. */
+.slide-body details.diagram-source {
+  opacity: 0;
 }

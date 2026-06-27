@@ -2,7 +2,7 @@
 // is a `derive` over the one before it. Dragging the source reflows the whole
 // chain, but the derived dots can't be grabbed — they have no backward edge.
 
-import { circle, Diagram, handle, label, line, type Mount, Vec, vec, type Writable } from "@bireactive";
+import { circle, Diagram, handle, line, type Mount, Vec, vec, type Writable } from "@bireactive";
 
 const BLUE = { r: 91, g: 141, b: 239 };
 const RED = { r: 226, g: 92, b: 92 };
@@ -52,12 +52,5 @@ export class MdForwardReactive extends Diagram {
       if (i === 0) s(handle(a, { fill }));
       else s(circle(d, 6, { fill, opacity: 0.85 }));
     });
-
-    s(
-      label(view.top.down(20), "only the source is draggable — every other dot is derived"),
-      label(view.bottom.up(16), "next = derive(() => rotate+scale(prev)) · forward only", {
-        size: 10,
-      }),
-    );
   }
 }

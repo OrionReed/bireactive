@@ -1,6 +1,6 @@
 // Rigid-body playground: a pyramid stack, an IK arm, and a wrecking ball share one World.
 
-import { Diagram, label, type Mount, rect } from "@bireactive";
+import { Diagram, type Mount, rect } from "@bireactive";
 import { animate, type Body, body, dragBodyAnchored, joint, world } from "@bireactive/constraints";
 
 const PALETTE = ["#5b8def", "#e25c5c", "#f5a623", "#7ed321", "#9b59b6", "#1abc9c"];
@@ -168,17 +168,5 @@ export class MdRigidStack extends Diagram {
     renderBody(ball, "#3a3a3a");
 
     this.anim.start(animate(w));
-
-    s(
-      label(
-        view.top.down(14),
-        "drag any body — pyramid stacks, IK arm articulates, wrecking ball swings",
-      ),
-      label(
-        view.bottom.up(16),
-        `${dynamicBoxes.length} stack · ${arm.length}-bar IK arm · ${chain.length}-link chain + ball · diag(m, m, I) cells · SAT + Coulomb`,
-        { size: 10 },
-      ),
-    );
   }
 }

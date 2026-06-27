@@ -126,14 +126,6 @@ export class MdMorph extends Diagram {
     const cx = W / 2;
     const cy = H / 2 + 8;
 
-    s(
-      label(view.top.down(22), "Polygon — an array-of-Vec value type"),
-      label(
-        view.bottom.up(20),
-        "polygon.to(targetShape, dur) — same one-call tween as Vec / Box / Color, on a value type that's an array of points.",
-        { size: 10 },
-      ),
-    );
 
     const poly = new Polygon({ vertices: KEYFRAMES[0].verts });
 

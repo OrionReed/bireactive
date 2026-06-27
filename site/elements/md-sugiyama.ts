@@ -233,13 +233,6 @@ export class MdSugiyama extends Diagram {
     this.#rebuild(TOPOS[0]!);
     this.#applyLayout(LAYOUTS[0]!);
 
-    s(
-      label(
-        view.bottom.up(16),
-        "longest-path rank via order() atoms · violet = strongly-connected components · Recurrent draws each cycle as a ring · drag a node",
-        { size: 10, fill: MUTED },
-      ),
-    );
   }
 
   #rebuild(topo: Topo): void {

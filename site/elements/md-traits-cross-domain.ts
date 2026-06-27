@@ -133,8 +133,8 @@ export class MdTraitsCrossDomain extends Diagram {
       // The picker IS the mean swatch — filled with the live mean
       // colour. Drag the dot inside to translate the palette in RGB.
       rect(vec(PICK_CX, PICK_CY), PICK_SIZE, PICK_SIZE, { fill: colorMean.css }),
-      rect(vec(PICK_CX, PICK_CY), PICK_SIZE, PICK_SIZE, { thin: true, stroke: "#222" }),
-      handle(colorMeanHandle, { fill: "#222", r: 5 }),
+      rect(vec(PICK_CX, PICK_CY), PICK_SIZE, PICK_SIZE, { thin: true, stroke: "var(--text-color)" }),
+      handle(colorMeanHandle, { fill: "var(--text-color)", r: 5 }),
 
       // Row 3: Poses
       ...poses.flatMap(p => {
@@ -157,9 +157,9 @@ export class MdTraitsCrossDomain extends Diagram {
       line(vec(SX, 450), vec(SX + SW, 450), { thin: true, opacity: 0.7 }),
 
       // Slider handles
-      handle(vecSliderH, { fill: "#222", r: 7 }),
-      handle(colorSliderH, { fill: "#222", r: 7 }),
-      handle(poseSliderH, { fill: "#222", r: 7 }),
+      handle(vecSliderH, { fill: "var(--text-color)", r: 7 }),
+      handle(colorSliderH, { fill: "var(--text-color)", r: 7 }),
+      handle(poseSliderH, { fill: "var(--text-color)", r: 7 }),
       handle(masterSliderH, { fill: "#e25c5c", r: 11 }),
 
       // Labels
@@ -167,15 +167,6 @@ export class MdTraitsCrossDomain extends Diagram {
       label(vec(SX, 192), "color spread", { size: 11, opacity: 0.7 }),
       label(vec(SX, 342), "pose spread", { size: 11, opacity: 0.7 }),
       label(vec(SX, 432), "MASTER = mean(spreads)", { size: 11, opacity: 0.9 }),
-      label(
-        view.top.down(18),
-        "drag any spread slider — the master tracks the mean; drag master, all three follow",
-      ),
-      label(
-        view.bottom.up(14),
-        "meanSpread · trait-dispatched Linear + Metric · works the same on Vec, Color, Pose",
-        { size: 10 },
-      ),
     );
   }
 }

@@ -2,7 +2,7 @@
 // only it; the connecting lines still re-render because they read the two
 // endpoint cells, but nothing propagates from one dot to another.
 
-import { Diagram, handle, label, line, type Mount, type Vec, vec, type Writable } from "@bireactive";
+import { Diagram, handle, line, type Mount, type Vec, vec, type Writable } from "@bireactive";
 
 const BLUE = { r: 91, g: 141, b: 239 };
 const RED = { r: 226, g: 92, b: 92 };
@@ -45,12 +45,5 @@ export class MdIndependentCells extends Diagram {
       const b = Math.round(BLUE.b + t * (RED.b - BLUE.b));
       s(handle(d, { fill: `rgb(${r}, ${g}, ${b})` }));
     });
-
-    s(
-      label(view.top.down(20), "every dot is its own cell — drag one, only it moves"),
-      label(view.bottom.up(16), "no derivation between dots · the lines just read both ends", {
-        size: 10,
-      }),
-    );
   }
 }

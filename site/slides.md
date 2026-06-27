@@ -11,8 +11,6 @@ Orion Reed
 
 ---
 
-## Animation
-
 <md-centering></md-centering>
 
 ---
@@ -29,13 +27,9 @@ Orion Reed
 
 ---
 
-## Anchors
-
 <md-anchors></md-anchors>
 
 ---
-
-## Interpolation
 
 <md-lerps></md-lerps>
 
@@ -43,7 +37,6 @@ Orion Reed
 
 ---
 
-## Reactive TeX
 
 <md-tex-demo></md-tex-demo>
 
@@ -65,7 +58,8 @@ for (let i = 0; i < n; i++)
 
 ---
 
-## Independent cells
+## Reactivity
+
 
 ```ts
 const dots = [vec(0, 0)];
@@ -77,7 +71,7 @@ for (let i = 0; i < n; i++)
 
 ---
 
-## Bidirectionality
+## Reactivity
 
 ```ts
 const dots = [vec(0, 0)];
@@ -89,31 +83,24 @@ for (let i = 0; i < n; i++)
 
 ---
 
-## One scalar, every body
-
 <md-solar-system></md-solar-system>
 
 ---
 
-## Colour
 
 <md-color-hsv></md-color-hsv>
 
 ---
 
-## Units
 
 <md-units></md-units>
 
 ---
 
-## Coordinate spaces
 
 <md-coordinate-spaces></md-coordinate-spaces>
 
 ---
-
-## Gears & pulleys
 
 <md-gears></md-gears>
 
@@ -127,55 +114,45 @@ for (let i = 0; i < n; i++)
 
 ---
 
-## N parents
+## Many parents
 
 <md-best-fit></md-best-fit>
 
 ---
 
-## Cross-domain traits
-
 <md-traits-cross-domain></md-traits-cross-domain>
 
 ---
-
-## Blending
 
 <md-twisted></md-twisted>
 
 ---
 
-## Across types
+## Lenses across types
 
 <md-bool-bridges></md-bool-bridges>
 
 ---
 
-## Allen relations
-
 <md-allen></md-allen>
 
 ---
 
-## Text
+## String lenses
 
 <md-madlibs></md-madlibs>
 
 ---
 
-## One source, many formats
-
 <md-syntax-lens></md-syntax-lens>
 
 ---
 
-## Schema evolution
+## Schema lenses
 
 <md-schema-evolution></md-schema-evolution>
 
 ---
-
-## Collaboration
 
 <md-scene-canvas></md-scene-canvas>
 
@@ -185,67 +162,57 @@ for (let i = 0; i < n; i++)
 
 ---
 
-## Large & costly data
+## Lenses (on the GPU)
 
 <md-canvas-graph></md-canvas-graph>
 
 ---
 
-## Reaction–diffusion
-
 <md-reaction-diffusion></md-reaction-diffusion>
 
 ---
 
-## Learning
+## Machine learning
 
 <md-classify-points></md-classify-points>
 
 ---
 
-## …on raw pixels
-
 <md-classify-pixels></md-classify-pixels>
 
 ---
 
-## Cycles & constraints
+## Cycles (propagator networks)
 
 <md-flex></md-flex>
 
 ---
 
-## Sudoku
 
 <md-prop-sudoku></md-prop-sudoku>
 
 ---
 
-## Graph layout
 
 <md-sugiyama></md-sugiyama>
 
 ---
 
-## Physics
+## Physics (numerical constraints)
 
 <md-figure8></md-figure8>
 
 ---
 
-## Cloth
-
 <md-cloth></md-cloth>
 
 ---
-
-## Stacking
 
 <md-rigid-stack></md-rigid-stack>
 
 ---
 
-# Thank you
+# Thank you :)
 
 [github.com/OrionReed/bireactive](https://github.com/OrionReed/bireactive)
 

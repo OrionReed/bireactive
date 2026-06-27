@@ -213,16 +213,5 @@ export class MdAllen extends Diagram {
       s(g);
     });
 
-    s(
-      label(
-        view.top.down(18),
-        "(Range, Range) → AllenRelation — a large domain projected onto 13 labels",
-      ),
-      label(
-        view.bottom.up(12),
-        "read = classify the two intervals · write a chip = reshape B into that relation (B's width kept where free)",
-        { size: 10 },
-      ),
-    );
   }
 }

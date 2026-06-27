@@ -1,14 +1,4 @@
-import {
-  circle,
-  Diagram,
-  easeInOut,
-  label,
-  line,
-  loop,
-  type Mount,
-  rect,
-  snapshot,
-} from "@bireactive";
+import { circle, Diagram, easeInOut, line, loop, type Mount, rect, snapshot } from "@bireactive";
 
 export class MdAnchors extends Diagram {
   protected scene(s: Mount): void {
@@ -62,12 +52,5 @@ export class MdAnchors extends Diagram {
 
     const sat = s(circle(view.right.left(48), 7, { fill: true, opacity: 0.6 }));
     s(line(sat.center, r.right, { thin: true, opacity: 0.4 }));
-
-    s(
-      label(view.top.down(20), "writable anchors — bind tracks rotate × scale"),
-      label(view.bottom.up(16), "dot.center.bind(r.at(u, v))  ·  line(sat.center, r.right)", {
-        size: 10,
-      }),
-    );
   }
 }

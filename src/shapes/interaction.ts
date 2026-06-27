@@ -80,6 +80,7 @@ export function draggable(
   let pointerId = -1;
   let unblock: (() => void) | null = null;
   ownTouchGesture(handle);
+  if (!handle.el.style.cursor) handle.el.style.cursor = "grab";
   const onMove = (e: PointerEvent) => {
     if (pointerId === -1 || e.pointerId !== pointerId) return;
     onDrag(handle.toLocal(e));
@@ -92,6 +93,7 @@ export function draggable(
       /* ok */
     }
     pointerId = -1;
+    if (handle.el.style.cursor === "grabbing") handle.el.style.cursor = "grab";
     window.removeEventListener("pointermove", onMove);
     window.removeEventListener("pointerup", stop);
     window.removeEventListener("pointercancel", stop);
@@ -107,6 +109,7 @@ export function draggable(
     } catch {
       /* ok */
     }
+    if (handle.el.style.cursor === "grab") handle.el.style.cursor = "grabbing";
     unblock = blockPageScroll();
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", stop);
@@ -153,6 +156,7 @@ export function drag(
       /* ok */
     }
     pointerId = -1;
+    if (shape.el.style.cursor === "grabbing") shape.el.style.cursor = "grab";
     window.removeEventListener("pointermove", onMove);
     window.removeEventListener("pointerup", stop);
     window.removeEventListener("pointercancel", stop);
@@ -168,6 +172,7 @@ export function drag(
     } catch {
       /* ok */
     }
+    if (shape.el.style.cursor === "grab") shape.el.style.cursor = "grabbing";
     unblock = blockPageScroll();
     const world = shape.toWorld(pe);
     const v = target.value;

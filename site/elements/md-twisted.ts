@@ -204,16 +204,5 @@ export class MdTwisted extends Diagram {
       () => raise(ctrl),
     );
 
-    s(
-      label(view.top.down(22), "drag the point — or any node — to morph between three layouts", {
-        size: 14,
-        bold: true,
-      }),
-      label(
-        view.bottom.up(16),
-        "d.between(pointer, corners, mix) → weights · every node is the weighted blend · clamped to the hull",
-        { size: 10 },
-      ),
-    );
   }
 }

@@ -98,19 +98,6 @@ export class MdBoolBridges extends Diagram {
     const IND_Y = 175;
     const LABEL_Y = 205;
 
-    s(
-      label(
-        view.top.down(18),
-        "Bool bridges: a continuous source projected through a boolean predicate",
-      ),
-      label(
-        view.bottom.up(12),
-        "click any indicator — the lens's bwd flips the source into the requested state",
-        {
-          size: 10,
-        },
-      ),
-    );
 
     {
       const cx = cellCx(0);

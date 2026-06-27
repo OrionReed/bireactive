@@ -4,7 +4,6 @@ import {
   Diagram,
   drag,
   drive,
-  label,
   type Mount,
   num,
   polar,
@@ -61,15 +60,6 @@ export class MdSolarSystem extends Diagram {
         if (dragging.value) return;
         time.value = time.peek() + tick.dt;
       }),
-    );
-
-    s(
-      label(view.top.down(20), "drag any planet or moon — the whole system winds/unwinds in time"),
-      label(
-        view.bottom.up(16),
-        "one `time: Num` · every body angle = time.affine(τ/period, phase) · circular polar",
-        { size: 10 },
-      ),
     );
   }
 }

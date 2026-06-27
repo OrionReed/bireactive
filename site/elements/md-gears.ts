@@ -7,7 +7,6 @@ import {
   Diagram,
   dragRotate,
   drive,
-  label,
   type Mount,
   type Num,
   num,
@@ -183,18 +182,6 @@ export class MdGears extends Diagram {
         if (dragging.value) return;
         drive0.value = drive0.peek() + omega * tick.dt;
       }),
-    );
-
-    s(
-      label(
-        view.top.down(20),
-        "drag any gear — the meshed tree rotates; writes scrub back through the drive",
-      ),
-      label(
-        view.bottom.up(16),
-        "child = parent.scale(−tₚ/t_c) · the compound wheel beneath multiplies the ratio (a real product, no telescoping)",
-        { size: 10 },
-      ),
     );
   }
 }

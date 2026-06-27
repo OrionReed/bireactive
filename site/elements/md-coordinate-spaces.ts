@@ -210,12 +210,6 @@ export class MdCoordinateSpaces extends Diagram {
       );
     });
 
-    s(
-      label(
-        vec(view.center.value.x, 16),
-        "one point, five charts of the plane — drag it in any panel",
-      ),
-    );
   }
 
   #phase = 0;

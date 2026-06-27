@@ -5,7 +5,7 @@
 // is just lines between the derived midpoints, so the whole figure stays
 // consistent from whichever handle you grab.
 
-import { Diagram, handle, label, line, type Mount, mean, vec } from "@bireactive";
+import { Diagram, handle, line, type Mount, mean, vec } from "@bireactive";
 
 const VERT = "#5b8def";
 const MID = "#f5a623";
@@ -45,13 +45,5 @@ export class MdTriangle extends Diagram {
       handle(mCA, { fill: MID, r: 5 }),
     );
     s(handle(g, { fill: CENTROID, r: 8 }));
-
-    s(
-      label(
-        view.top.down(20),
-        "drag a vertex, an edge-midpoint (moves its two ends), or the centroid (moves all three)",
-      ),
-      label(view.bottom.up(16), "every point but the three vertices is a mean-lens", { size: 10 }),
-    );
   }
 }

@@ -2,7 +2,6 @@
 // equations in two unknown angles, solved each frame seeded from the last.
 
 import {
-  Anchor,
   argminVec,
   type CurveSegment,
   circle,
@@ -12,7 +11,6 @@ import {
   drive,
   handle,
   type Inner,
-  label,
   line,
   type Mount,
   type Num,
@@ -186,30 +184,6 @@ export class MdLoop extends Diagram {
         if (aH.dragging.value || mH.dragging.value) return;
         thetaOA.value = thetaOA.peek() + omega * tick.dt;
       }),
-    );
-
-    // Wrap to (-π, π] for legibility.
-    const wrap = (x: number) => x - TAU * Math.round(x / TAU);
-    const fmt = (sig: { value: number }) => `${((wrap(sig.value) * 180) / Math.PI).toFixed(0)}°`;
-    const corner = view.at(0, 1).right(18);
-    const labelAt = (yOffset: number, text: () => string) =>
-      label(corner.up(yOffset), derive(text), { align: Anchor.Left });
-    s(
-      labelAt(64, () => `θ_OA (input)   = ${fmt(thetaOA)}`),
-      labelAt(46, () => `θ_AB (coupler) = ${fmt(thetaAB)}`),
-      labelAt(28, () => `θ_BP (rocker)  = ${fmt(thetaBP)}`),
-    );
-
-    s(
-      label(
-        view.top.down(20),
-        "drag the blue crank or the red tracer — angles propagate via Newton-Raphson on loop closure",
-      ),
-      label(
-        view.bottom.up(10),
-        "4-bar · 1 loop · 2 unknown angles solved each frame · seed = last frame's solution",
-        { size: 10 },
-      ),
     );
   }
 }

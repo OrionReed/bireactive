@@ -108,21 +108,6 @@ export class MdPropSudoku extends Diagram {
     const stepCount = cell(0);
     const solved = cell(false);
 
-    s(
-      label(
-        view.top.down(20),
-        derive(() =>
-          solved.value
-            ? "solved · ✓ all cells singletons"
-            : `narrowing · wave ${stepCount.value} · candidates shrinking via allDifferent`,
-        ),
-      ),
-      label(
-        view.bottom.up(14),
-        "27 allDifferent propagators · 9 rows + 9 cols + 9 boxes · one fixpoint wave / 0.35s",
-        { size: 10 },
-      ),
-    );
 
     // Animation: reset → step until stable → hold → repeat
     const totalCands = (): number => cells.flat().reduce((acc, c) => acc + c.value.size, 0);

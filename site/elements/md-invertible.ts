@@ -2,7 +2,6 @@ import {
   circle,
   Diagram,
   handle,
-  label,
   line,
   type Mount,
   type Vec,
@@ -48,14 +47,5 @@ export class MdInvertible extends Diagram {
       const b = Math.round(BLUE.b + t * (RED.b - BLUE.b));
       s(handle(d, { fill: `rgb(${r}, ${g}, ${b})` }));
     });
-
-    s(
-      label(view.top.down(20), "drag any dot — one rotate+scale edge composed down the chain"),
-      label(
-        view.bottom.up(16),
-        "next = p.rotate(θ, pivot).scale(k, pivot) · same similarity, every direction",
-        { size: 10 },
-      ),
-    );
   }
 }

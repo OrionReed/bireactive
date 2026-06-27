@@ -71,14 +71,6 @@ export class MdLerps extends Diagram {
   protected scene(s: Mount): void {
     const view = this.view(W, H);
 
-    s(
-      label(view.top.down(22), "one .to(), every value type"),
-      label(
-        view.bottom.up(20),
-        'value classes register `lerp` in their `static traits` dict; `.to(target, dur)` finds it via `Traits<T, "lerp">`. Same call for Num, Vec, Box, Color, Transform, and arbitrary user types.',
-        { size: 10 },
-      ),
-    );
 
     const baseY = (i: number) => rowY(i) + 9;
     const n = num(0.15);

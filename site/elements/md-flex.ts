@@ -83,21 +83,5 @@ export class MdFlex extends Diagram {
 
     s(handle(rightEdge, { r: 7, fill: "var(--text-color, #444)", cursor: "ew-resize" }));
 
-    s(
-      label(
-        view.top.down(20),
-        derive(() =>
-          infeasible.value
-            ? "infeasible · content can't fit — Σ min exceeds the container"
-            : "drag the right edge · panes narrow within their [min, max] bands",
-        ),
-        { size: 13, bold: true, fill: derive(() => (infeasible.value ? BAD : OK)) },
-      ),
-      label(
-        view.bottom.up(16),
-        "col(container,[toolbar,body]) · row(body, panes) — one interval solve, two phases: narrow then distribute",
-        { size: 10 },
-      ),
-    );
   }
 }

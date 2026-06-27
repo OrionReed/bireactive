@@ -2,16 +2,7 @@
 // and 3-point bends (fold). `postStabilize` runs drift-tolerant iters then a
 // final α=0 iter to zero the frame-end residual.
 
-import {
-  Diagram,
-  handle,
-  label,
-  line,
-  type Mount,
-  type Vec,
-  vec,
-  type Writable,
-} from "@bireactive";
+import { Diagram, handle, line, type Mount, type Vec, vec, type Writable } from "@bireactive";
 import { animate, bend, physics, pin, Strength, spring } from "@bireactive/constraints";
 
 type WVec = Writable<Vec>;
@@ -82,13 +73,5 @@ export class MdCloth extends Diagram {
     }
 
     this.anim.start(animate(cluster));
-
-    s(
-      label(
-        view.bottom.up(16),
-        `${W}×${H} grid · ${(W - 1) * H + W * (H - 1)} stiff springs · 60 fps`,
-        { size: 10 },
-      ),
-    );
   }
 }

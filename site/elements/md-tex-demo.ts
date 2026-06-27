@@ -1,15 +1,6 @@
 // `tex` reads strings.raw, so use single backslashes (`\frac`, `\dot`, `\cdot`).
 
-import {
-  type Content,
-  cell,
-  Diagram,
-  label,
-  loop,
-  type Mount,
-  snapshot,
-  stagger,
-} from "@bireactive";
+import { type Content, cell, Diagram, loop, type Mount, snapshot, stagger } from "@bireactive";
 import {
   brace,
   frame,
@@ -40,11 +31,6 @@ export class MdTexDemo extends Diagram {
     const view = this.view(640, 280);
 
     const status = cell<Content>("");
-
-    s(
-      label(view.top.down(22), "tex — derivations, representations, identity"),
-      label(view.bottom.up(22), status),
-    );
 
     const { a, b, c, cross } = parts("a", "b", "c", { cross: "2ab" });
     const { f, x } = parts("f", "x");

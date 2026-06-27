@@ -1,17 +1,7 @@
 // Circles slide along a figure-8: a `generic` constraint couples each
 // circle's (t, P) via the Lissajous map, with pairwise `gap` to avoid overlap.
 
-import {
-  Diagram,
-  handle,
-  label,
-  type Mount,
-  num,
-  Path,
-  type Vec,
-  vec,
-  type Writable,
-} from "@bireactive";
+import { Diagram, handle, type Mount, num, Path, type Vec, vec, type Writable } from "@bireactive";
 import { constraints, gap, generic } from "@bireactive/constraints";
 
 type WVec = Writable<Vec>;
@@ -68,17 +58,5 @@ export class MdFigure8 extends Diagram {
     for (let i = 0; i < N; i++) {
       s(handle(positions[i]!, { r: R, fill: COLORS[i % COLORS.length]! }));
     }
-
-    s(
-      label(
-        view.top.down(20),
-        "drag any circle — it slides along the figure-8, others scoot aside",
-      ),
-      label(
-        view.bottom.up(16),
-        `${N} circles · per-shape (t, P) coupled via generic · pairwise gap`,
-        { size: 10 },
-      ),
-    );
   }
 }
