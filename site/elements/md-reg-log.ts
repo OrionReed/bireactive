@@ -11,7 +11,7 @@
 // lens simply stops writing, exactly like the error-tolerant panes elsewhere.
 
 import { effect, Reg, str } from "@bireactive";
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 type Span = readonly [start: number, end: number];
 
@@ -159,11 +159,14 @@ export class MdRegLog extends BaseElement {
   #toks = new Map<string, HTMLSpanElement>();
 
   disconnectedCallback(): void {
+    super.disconnectedCallback();
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
   }
 
-  protected render(): void {
+  connectedCallback(): void {
+    super.connectedCallback();
+
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
     this.shadow.replaceChildren();

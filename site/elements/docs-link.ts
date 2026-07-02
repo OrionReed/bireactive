@@ -1,4 +1,4 @@
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 const DOCS_URL = "https://orionreed.github.io/bireactive/api/";
 
@@ -47,7 +47,8 @@ export class DocsLink extends BaseElement {
     }
   `;
 
-  protected render(): void {
+  connectedCallback(): void {
+    super.connectedCallback();
     this.shadow.innerHTML = `
       <a class="link" href="${DOCS_URL}" target="_blank" rel="noopener noreferrer" aria-label="API documentation">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

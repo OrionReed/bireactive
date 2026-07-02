@@ -1,7 +1,7 @@
 // A URL ⇄ typed params, with an editable pattern.
 
 import { effect, type Num, num, type Str, slot, str, template, type Writable } from "@bireactive";
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 type Kind = "str" | "int";
 interface Def {
@@ -115,6 +115,8 @@ export class MdRouteParams extends BaseElement {
   #controls!: HTMLDivElement;
 
   disconnectedCallback(): void {
+    super.disconnectedCallback();
+    
     for (const d of this.#dyn) d();
     this.#dyn.length = 0;
   }
@@ -129,7 +131,9 @@ export class MdRouteParams extends BaseElement {
     return e;
   }
 
-  protected render(): void {
+  connectedCallback(): void {
+    super.connectedCallback();
+
     for (const d of this.#dyn) d();
     this.#dyn.length = 0;
     this.shadow.replaceChildren();

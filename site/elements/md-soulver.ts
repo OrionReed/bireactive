@@ -12,7 +12,7 @@
 // and propagates `km · ($/L)` etc., so a back-solve can never invent nonsense.
 
 import { derive, effect, type Num, num, type Writable } from "@bireactive";
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 import {
   acre,
   byte,
@@ -740,11 +740,15 @@ export class MdSoulver extends BaseElement {
   #sheet!: HTMLElement;
 
   disconnectedCallback(): void {
+    super.disconnectedCallback();
+    
     this.#built?.dispose();
     this.#built = null;
   }
 
-  protected render(): void {
+  connectedCallback(): void {
+    super.connectedCallback();
+    
     this.#built?.dispose();
     this.#built = null;
     this.#rows = [];

@@ -25,7 +25,7 @@ import {
   str,
   type Writable,
 } from "@bireactive";
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 type Status = "todo" | "doing" | "done";
 type Axis = "status" | "assignee" | "priority";
@@ -665,6 +665,7 @@ export class MdKanban extends BaseElement {
   }
 
   disconnectedCallback(): void {
+    super.disconnectedCallback();
     for (const d of this.#viewDisposers) d();
     for (const d of this.#disposers) d();
     for (const b of this.#cardDisposers.values()) for (const d of b) d();
@@ -673,8 +674,9 @@ export class MdKanban extends BaseElement {
     this.#cardDisposers.clear();
   }
 
-  protected render(): void {
-    this.disconnectedCallback();
+  connectedCallback(): void {
+    super.connectedCallback();
+    
     this.shadow.replaceChildren();
 
     uidN = 0;

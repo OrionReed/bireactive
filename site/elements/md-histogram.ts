@@ -18,6 +18,7 @@ import {
   Vec,
   vec,
   type Writable,
+  css,
 } from "@bireactive";
 
 const W = 720;
@@ -79,7 +80,7 @@ function transport(vals: readonly number[], i: number, target: number): (number 
 }
 
 export class MdHistogram extends Diagram {
-  static styles = `text { pointer-events: none; }`;
+  static styles = [...Diagram.styles, css`text { pointer-events: none; }`];
   protected scene(s: Mount): void {
     const view = this.view(W, H);
     const samples: Writable<Num>[] = INIT.map(v => num(v));

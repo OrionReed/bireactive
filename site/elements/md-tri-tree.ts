@@ -6,7 +6,7 @@
 // recursion with no separate aggregate pass and no leaf-flattening.
 
 import { effect, Num, Tri, tri, type Writable } from "@bireactive";
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 interface Node {
   label: string;
@@ -125,13 +125,14 @@ export class MdTriTree extends BaseElement {
   }
 
   disconnectedCallback(): void {
+    super.disconnectedCallback();
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
   }
 
-  protected render(): void {
-    this.disconnectedCallback();
-    this.shadow.replaceChildren();
+ connectedCallback(): void {
+    super.connectedCallback();
+    
 
     const tree = node("Tasks", [
       node("Work", [

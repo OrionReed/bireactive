@@ -20,7 +20,7 @@ import {
   shapeLens,
   WIDTH,
 } from "./_scene";
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 export class MdSceneCanvas extends BaseElement {
   #dispose?: () => void;

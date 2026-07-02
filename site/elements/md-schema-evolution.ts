@@ -25,7 +25,7 @@ import {
   splitField,
   wrapField,
 } from "@bireactive/schema";
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 type State = "todo" | "doing" | "done";
 const STATES: readonly State[] = ["todo", "doing", "done"];
@@ -475,7 +475,13 @@ export class MdSchemaEvolution extends BaseElement {
 
   #disposers: Array<() => void> = [];
 
+  connectedCallback(): void {
+    super.connectedCallback();
+    this.render();
+  }
+
   disconnectedCallback(): void {
+    super.disconnectedCallback();
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
   }

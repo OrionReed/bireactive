@@ -26,7 +26,7 @@ import {
   shapeLens,
   toField,
 } from "./_scene";
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 export class MdSceneTable extends BaseElement {
   #dispose?: () => void;

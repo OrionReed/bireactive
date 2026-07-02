@@ -12,7 +12,7 @@
 // there, so they survive a round-trip through grey/black.
 
 import { type Cell, cell, fields, lens, optic, type Writable } from "@bireactive";
-import { css } from "./base-element";
+import { css } from "@bireactive/web";
 
 /** RGB (each [0, 255]) → HSV (h ∈ [0, 360], s, v ∈ [0, 100]). */
 function rgbToHsv(r: number, g: number, b: number) {

@@ -1,7 +1,7 @@
 // N-way live unit converter built on the `Unit` algebra.
 
 import { effect, type Num, num, type Writable } from "@bireactive";
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 import { CATEGORIES } from "./units";
 
 function fmt(x: number): string {
@@ -104,11 +104,14 @@ export class MdUnits extends BaseElement {
   #tabs: HTMLButtonElement[] = [];
 
   disconnectedCallback(): void {
+    super.disconnectedCallback();
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
   }
 
-  protected render(): void {
+  connectedCallback(): void {
+    super.connectedCallback();
+
     this.shadow.replaceChildren();
     this.#tabs = [];
 
