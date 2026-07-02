@@ -58,14 +58,13 @@ export function remember<T, S extends Cell<T> & Traits<T, "linear">>(
   };
 
   type C = { shape: T[] };
-  // biome-ignore lint/suspicious/noExplicitAny: spec is checked structurally
-  return (Num as any).lens(sources as unknown as readonly Writable<Cell<T>>[], {
+  return Num.lens(sources, {
     complement: (vals: readonly T[]): C => {
       const a = anchor(vals);
       return { shape: shapeOf(vals, a, feature(vals, a), null) };
     },
     // `get` is the sole refresh: recompute the view and (idempotently) the shape.
-    get: (vals: readonly T[], c: C): number => {
+    get: (vals: readonly T[], c: C) => {
       const a = anchor(vals);
       const f = feature(vals, a);
       c.shape = shapeOf(vals, a, f, c.shape);
@@ -83,7 +82,7 @@ export function remember<T, S extends Cell<T> & Traits<T, "linear">>(
       }
       return c.shape.map(s => lin.add(a, lin.scale(s, target)));
     },
-  }) as Writable<Num>;
+  });
 }
 
 /** Options for {@link continuous}. `raw` reads the cyclic value (mod
