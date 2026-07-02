@@ -11,7 +11,7 @@
 
 import { mount } from "@bireactive/jsx-runtime";
 import { MdMarker, MdTex } from "@bireactive/web";
-import { BaseElement } from "./base-element";
+import { BaseElement } from "@bireactive/web";
 import { DarkModeToggle } from "./dark-mode-toggle";
 import { DocsLink } from "./docs-link";
 import { GithubLink } from "./github-link";
@@ -34,14 +34,10 @@ function isDefinable(value: unknown): value is Definable {
   );
 }
 
-// Per-tag stylesheet cache for wrapped `.tsx` demos (the generated elements all
-// share a class name, so we key by tag instead of leaning on BaseElement's
-// name-keyed cache).
-const tsxSheets = new Map<string, CSSStyleSheet>();
 
 /** Wrap a bireactive component (`.tsx` default export) in a custom element so
  *  it embeds in markdown exactly like the class-based `.ts` demos. */
-function defineTsx(tag: string, component: () => Node, styles?: string): void {
+function defineTsx(tag: string, component: () => Node, styles?: CSSStyleSheet): void {
   if (customElements.get(tag)) return;
   class TsxElement extends BaseElement {
     #dispose?: () => void;
@@ -49,13 +45,7 @@ function defineTsx(tag: string, component: () => Node, styles?: string): void {
       this.#dispose?.();
       this.shadow.replaceChildren();
       if (styles) {
-        let sheet = tsxSheets.get(tag);
-        if (!sheet) {
-          sheet = new CSSStyleSheet();
-          sheet.replaceSync(styles);
-          tsxSheets.set(tag, sheet);
-        }
-        this.shadow.adoptedStyleSheets = [sheet];
+        this.shadow.adoptedStyleSheets = [styles];
       }
       this.#dispose = mount(component, this.shadow);
     }
@@ -81,6 +71,6 @@ for (const [path, mod] of Object.entries(demos)) {
   }
   if (!defined && typeof mod.default === "function") {
     const tag = path.replace(/^.*\/(md-[^/]+)\.tsx?$/, "$1");
-    defineTsx(tag, mod.default as () => Node, mod.styles as string | undefined);
+    defineTsx(tag, mod.default as () => Node, mod.styles as CSSStyleSheet | undefined);
   }
 }

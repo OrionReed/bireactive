@@ -1,4 +1,4 @@
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 const REPO_URL = "https://github.com/OrionReed/bireactive";
 
@@ -46,7 +46,8 @@ export class GithubLink extends BaseElement {
     }
   `;
 
-  protected render(): void {
+  connectedCallback(): void {
+    super.connectedCallback();
     this.shadow.innerHTML = `
       <a class="link" href="${REPO_URL}" target="_blank" rel="noopener noreferrer" aria-label="View source on GitHub">
         <svg class="icon" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">

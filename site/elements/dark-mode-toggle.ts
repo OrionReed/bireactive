@@ -1,4 +1,4 @@
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 export class DarkModeToggle extends BaseElement {
   static styles = css`
@@ -64,9 +64,7 @@ export class DarkModeToggle extends BaseElement {
     super.connectedCallback();
     this.setupEventListeners();
     this.loadTheme();
-  }
 
-  protected render(): void {
     this.shadow.innerHTML = `
       <button class="toggle-button" aria-label="Toggle dark mode">
         <!-- Moon icon from Feather Icons CDN -->

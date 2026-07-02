@@ -21,6 +21,7 @@ import {
   Vec,
   vec,
   type Writable,
+  css
 } from "@bireactive";
 
 const W = 720;
@@ -129,7 +130,7 @@ function layoutForest(parents: readonly number[]): Layout {
 }
 
 export class MdContainmentForest extends Diagram {
-  static styles = `text { pointer-events: none; }`;
+  static styles = [...Diagram.styles, css`text { pointer-events: none; }`];
   protected scene(s: Mount): void {
     const view = this.view(W, H);
 

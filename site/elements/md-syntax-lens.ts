@@ -16,7 +16,7 @@ import {
   valueHub,
   yamlFormat,
 } from "@bireactive/formats";
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 const INITIAL: JsonValue = {
   name: "starship",
@@ -162,7 +162,13 @@ export class MdSyntaxLens extends BaseElement {
 
   #disposers: Array<() => void> = [];
 
+  connectedCallback(): void {
+    super.connectedCallback();
+    this.render()
+  }
+
   disconnectedCallback(): void {
+    super.disconnectedCallback();
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
   }

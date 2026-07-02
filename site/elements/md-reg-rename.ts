@@ -11,7 +11,7 @@
 // tokens; `caseFold` carries the case; neither knows about the other.
 
 import { type Arr, type Cell, caseFold, effect, Reg, str } from "@bireactive";
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 const INITIAL = "Color, COLOR, color, Magenta, MAGENTA, Crimson";
 

@@ -13,7 +13,7 @@
 // straight into `cell.lens(...)` alongside `iso` / `atKey`.
 
 import { effect, type Optic, optic, Reg, str } from "@bireactive";
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 type Pairs = unknown;
 // A value-erased grammar type: all three encodings share one `[k, v]`-item
@@ -118,11 +118,14 @@ export class MdRegFormats extends BaseElement {
   #disposers: Array<() => void> = [];
 
   disconnectedCallback(): void {
+    super.disconnectedCallback();
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
   }
 
-  protected render(): void {
+  connectedCallback(): void {
+    super.connectedCallback();
+
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
     this.shadow.replaceChildren();

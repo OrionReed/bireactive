@@ -7,7 +7,7 @@
 // (add / remove), every change flowing back through to the source.
 
 import { type Arr, caseFold, effect, type Str, str, type Writable } from "@bireactive";
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 const INITIAL = "  The Quick Brown Fox Jumps over the lazy dog.  ";
 
@@ -162,11 +162,15 @@ export class MdStringPipeline extends BaseElement {
   #disposers: Array<() => void> = [];
 
   disconnectedCallback(): void {
+    super.disconnectedCallback();
+    
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
   }
 
-  protected render(): void {
+  connectedCallback(): void {
+    super.connectedCallback();
+
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
     this.shadow.replaceChildren();

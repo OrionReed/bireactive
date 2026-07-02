@@ -2,7 +2,7 @@
 // surfaces (checkbox grid, per-row Tri toggles, octal/symbolic/binary fields).
 
 import { type Bool, effect, flags, Tri, type Writable } from "@bireactive";
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 // Bit layout (high → low): ur uw ux | gr gw gx | or ow ox.
 // Listed low → high so bit i = 2^i and the packed int equals the octal mask.
@@ -136,11 +136,14 @@ export class MdFlags extends BaseElement {
   #disposers: Array<() => void> = [];
 
   disconnectedCallback(): void {
+    super.disconnectedCallback();
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
   }
 
-  protected render(): void {
+  connectedCallback(): void {
+    super.connectedCallback();
+    
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
     this.shadow.replaceChildren();

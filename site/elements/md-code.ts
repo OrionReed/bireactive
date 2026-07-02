@@ -2,7 +2,7 @@
 // positioned spans animated with `.to(...)`; cut/uncut carve and merge
 // regions; highlights ride CSS Custom Highlights so repaints don't drop them.
 
-import { type Content, cell, css, Diagram, label, loop, type Mount } from "@bireactive";
+import { type Content, cell, css, Diagram, label, loop, type Mount, Styles } from "@bireactive";
 import { type CodeShape, code, codeStyles, type Part } from "@bireactive/code";
 
 const STATES = [
@@ -77,7 +77,7 @@ function highlightRange(part: Part, start: number, end: number, name: string): (
 }
 
 export class MdCode extends Diagram {
-  static styles = css`
+  static styles = [...Diagram.styles, css`
     ${codeStyles}
 
     ::highlight(${PULSE}) {
@@ -88,7 +88,7 @@ export class MdCode extends Diagram {
       text-decoration: underline wavy var(--prettylights-keyword, #cf222e);
       text-decoration-thickness: 1.5px;
     }
-  `;
+  `];
 
   protected scene(s: Mount): void {
     const view = this.view(680, 400);

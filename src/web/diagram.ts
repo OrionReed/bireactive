@@ -12,10 +12,8 @@ import { Anim } from "@bireactive/animation";
 import { Box, effect, Num, type Val } from "@bireactive/core";
 import { ensureArrowMarker, type Mount, mount, Shape, SVG_NS } from "@bireactive/shapes";
 import type { Marker } from "@bireactive/tex";
-import { observedAttributesOf, syncAttrSignal } from "./attr";
 import { attachRaf } from "./raf";
-
-export const css = String.raw;
+import { BaseElement, css } from "./base-element";
 
 export type Padding = number | { top?: number; right?: number; bottom?: number; left?: number };
 
@@ -30,17 +28,7 @@ function resolvePadding(p?: Padding) {
   };
 }
 
-export class Diagram extends HTMLElement {
-  static get observedAttributes(): string[] {
-    return observedAttributesOf(this);
-  }
-
-  attributeChangedCallback(name: string, oldVal: string | null, newVal: string | null): void {
-    if (oldVal === newVal) return;
-    syncAttrSignal(this, name, newVal);
-  }
-
-  protected shadow: ShadowRoot;
+export class Diagram extends BaseElement {
   protected anim = new Anim();
   #detachRaf: (() => void) | null = null;
   #io: IntersectionObserver | null = null;
@@ -71,8 +59,7 @@ export class Diagram extends HTMLElement {
   #viewSig = signal0Box();
   #viewBox = Box.derive(() => this.#viewSig.value);
 
-  private static styleSheets = new Map<string, CSSStyleSheet>();
-  static styles = css`
+  static styles = [css`
     :host {
       display: block;
       margin: 1rem auto;
@@ -97,13 +84,7 @@ export class Diagram extends HTMLElement {
       margin: 0 auto;
       color: var(--text-secondary, #888);
     }
-  `;
-
-  constructor() {
-    super();
-    this.shadow = this.attachShadow({ mode: "open" });
-    this.initializeStyles();
-  }
+  `];
 
   /** Build the scene graph. Runs once per connect; override in subclasses. */
   protected scene(_s: Mount): void {}
@@ -179,17 +160,6 @@ export class Diagram extends HTMLElement {
     return this.#viewBox;
   }
 
-  static get tagName(): string {
-    return this.name
-      .replace(/([A-Z])/g, "-$1")
-      .toLowerCase()
-      .slice(1);
-  }
-
-  static define(): void {
-    customElements.define(this.tagName, this);
-  }
-
   private setViewBox(x: number, y: number, w: number, h: number): void {
     this.#viewSig.value = { x, y, w, h };
     this.svg.setAttribute("viewBox", `${x} ${y} ${w} ${h}`);
@@ -246,20 +216,6 @@ export class Diagram extends HTMLElement {
     });
 
     this.appendChild(details);
-  }
-
-  /** Combine base + subclass styles. Cached per subclass. */
-  private initializeStyles(): void {
-    const ctor = this.constructor as typeof Diagram;
-    const cacheKey = ctor.name;
-    if (!Diagram.styleSheets.has(cacheKey)) {
-      const baseStyles = Diagram.styles ?? "";
-      const ownStyles = ctor === Diagram ? "" : (ctor.styles ?? "");
-      const sheet = new CSSStyleSheet();
-      sheet.replaceSync(`${baseStyles}\n${ownStyles}`);
-      Diagram.styleSheets.set(cacheKey, sheet);
-    }
-    this.shadow.adoptedStyleSheets = [Diagram.styleSheets.get(cacheKey)!];
   }
 }
 

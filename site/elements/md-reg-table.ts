@@ -10,7 +10,7 @@
 // parse/serialize round-trip we maintain by hand: the string *is* the model.
 
 import { type Arr, type Cell, effect, Reg, str } from "@bireactive";
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 const INITIAL = [
   "name,role,city",
@@ -162,11 +162,14 @@ export class MdRegTable extends BaseElement {
   #disposers: Array<() => void> = [];
 
   disconnectedCallback(): void {
+    super.disconnectedCallback();
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
   }
 
-  protected render(): void {
+  connectedCallback(): void {
+    super.connectedCallback();
+
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
     this.shadow.replaceChildren();

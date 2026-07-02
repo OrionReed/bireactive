@@ -16,7 +16,7 @@
 //     grammars and shows the exact input each one chokes on.
 
 import { effect, Reg, str } from "@bireactive";
-import { BaseElement, css } from "./base-element";
+import { BaseElement, css } from "@bireactive/web";
 
 type Span = readonly [start: number, end: number];
 
@@ -268,11 +268,14 @@ export class MdRegPlayground extends BaseElement {
   #disposers: Array<() => void> = [];
 
   disconnectedCallback(): void {
+    super.disconnectedCallback();
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
   }
 
-  protected render(): void {
+  connectedCallback(): void {
+    super.connectedCallback();
+
     for (const d of this.#disposers) d();
     this.#disposers.length = 0;
     this.shadow.replaceChildren();
