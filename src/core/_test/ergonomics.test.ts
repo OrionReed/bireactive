@@ -4,11 +4,13 @@
 // user-visible contracts (round-trips, spread-replace, identity).
 
 import { describe, expect, it } from "vitest";
-import { cell, lens } from "../cell";
+import { Cell, cell, lens, type Writable } from "../cell";
 import { dumpGraph, explain, label, traceWrites } from "../debug";
 import { atKey, iso, optic } from "../optic";
 import { at } from "../optics";
 import { store } from "../store";
+import { Num, num } from "../values/num";
+import { type Vec, vec } from "../values/vec";
 
 type Rgb = { r: number; g: number; b: number };
 
@@ -61,6 +63,56 @@ describe("optics as values", () => {
         x => x,
       ).put.length,
     ).toBe(1);
+  });
+});
+
+describe("optic lens preserves the subclass on endomorphic chains", () => {
+  const double = iso(
+    (x: number) => x * 2,
+    x => x / 2,
+  );
+  const bump = iso(
+    (x: number) => x + 1,
+    x => x - 1,
+  );
+  const swap = iso(
+    (v: { x: number; y: number }) => ({ x: v.y, y: v.x }),
+    v => ({ x: v.y, y: v.x }),
+  );
+
+  it("single endo optic on a typed cell returns the same subclass, writable", () => {
+    const n = num(5);
+    const view = n.lens(double);
+    // Type-level: `view` is `this` (Writable<Num>); runtime must agree.
+    expect(view).toBeInstanceOf(Num);
+    expect(view.value).toBe(10);
+    view.value = 20;
+    expect(n.value).toBe(10);
+  });
+
+  it("endo optic chain on a typed cell stays the same subclass", () => {
+    const n = num(3);
+    const view = n.lens(bump, double); // (3+1)*2
+    expect(view).toBeInstanceOf(Num);
+    expect(view.value).toBe(8);
+    view.value = 10; // (10/2)-1
+    expect(n.value).toBe(4);
+  });
+
+  it("carries a structural-equality subclass through an endo optic", () => {
+    const v = vec(1, 2);
+    const flipped: Writable<Vec> = v.lens(swap);
+    expect(flipped.value).toEqual({ x: 2, y: 1 });
+    flipped.value = { x: 9, y: 8 };
+    expect(v.value).toEqual({ x: 8, y: 9 });
+  });
+
+  it("cross-type optic on a plain cell yields a plain Cell", () => {
+    const o = cell<Rgb>({ r: 1, g: 2, b: 3 });
+    const r = o.lens(atKey("r"));
+    expect(r).toBeInstanceOf(Cell);
+    expect(r).not.toBeInstanceOf(Num);
+    expect(r.value).toBe(1);
   });
 });
 

@@ -645,6 +645,22 @@ export interface Optic<S, V, C extends object = never> {
 // biome-ignore lint/suspicious/noExplicitAny: complement is existential
 export type AppliedOptic<S, V> = Optic<S, V, any>;
 
+// biome-ignore lint/suspicious/noExplicitAny: variance escape over an opaque optic tuple
+type AnyOptics = readonly AppliedOptic<any, any>[];
+
+/** Final view type of an optic chain applied to source `S`; `never` if a link's
+ *  input doesn't accept the prior output. */
+type ChainResult<S, Os extends readonly unknown[]> = Os extends readonly [
+  AppliedOptic<infer A, infer B>,
+  ...infer Rest,
+]
+  ? [S] extends [A]
+    ? Rest extends readonly []
+      ? B
+      : ChainResult<B, Rest>
+    : never
+  : S;
+
 // ─────────────────────────────────────────────────────────────────────────
 // Public API — the Cell class (the one user-facing reactive primitive).
 // ─────────────────────────────────────────────────────────────────────────
@@ -817,27 +833,20 @@ export class Cell<T = unknown> implements ReactiveNode {
   // (`Vec.lens(...)`) yields a `Vec` with its constructor-set equality.
 
   /** Endomorphic lens from a `fwd`/`bwd` pair (2-arg `bwd` reads the source, 1-arg
-   *  reconstructs it), or apply optic value(s), chaining left-to-right. The function
-   *  form is same-type (returns `this`); optics are cross-type. */
+   *  reconstructs it), or apply optic value(s), chaining left-to-right. A chain
+   *  whose every hop is `T → T` stays same-type (returns `this`); a chain that
+   *  changes the value type yields a plain `Cell` of the final view. */
   lens(this: Cell<T>, fwd: (v: T) => T, bwd: (target: T, current: T) => T): this;
-  lens<V1>(this: Cell<T>, o: AppliedOptic<T, V1>): Writable<Cell<V1>>;
-  lens<V1, V2>(
-    this: Cell<T>,
-    o1: AppliedOptic<T, V1>,
-    o2: AppliedOptic<V1, V2>,
-  ): Writable<Cell<V2>>;
-  lens<V1, V2, V3>(
-    this: Cell<T>,
-    o1: AppliedOptic<T, V1>,
-    o2: AppliedOptic<V1, V2>,
-    o3: AppliedOptic<V2, V3>,
-  ): Writable<Cell<V3>>;
+  lens(this: Cell<T>, ...optics: readonly AppliedOptic<T, T>[]): this;
+  lens<V1>(this: Cell<T>, optic: AppliedOptic<T, V1>): Writable<Cell<V1>>;
+  lens<Os extends AnyOptics>(this: Cell<T>, ...optics: Os): Writable<Cell<ChainResult<T, Os>>>;
   // biome-ignore lint/suspicious/noExplicitAny: dispatch over fwd/bwd vs optic chain
   lens(this: Cell<T>, ...args: any[]): any {
-    if (typeof args[0] === "function") {
-      return buildLens(this.constructor as CellCtor<Cell<T>>, [this, ...args]);
-    }
-    return buildLens(CELL_CTOR, [this, ...args]);
+    // Both forms build via `this.constructor`: the fwd/bwd form is endomorphic, and
+    // the type gate guarantees a trait subclass only reaches the optic path with an
+    // all-endo chain — so the subclass always wraps a compatible inner. A plain
+    // `Cell` accepts any inner, so cross-type optic chains stay correct there too.
+    return buildLens(this.constructor as CellCtor<Cell<T>>, [this, ...args]);
   }
 
   /** Read-only same-type view: the RO dual of the endo `.lens`. For a cross-type view use the typed static
@@ -884,8 +893,8 @@ export class Cell<T = unknown> implements ReactiveNode {
 
   /** Writable lens, typed to this class. `Cls.lens(parent, fwd, bwd)` for one
    *  input, `Cls.lens(parents, fwd, bwd)` for N (a 2-arg `bwd` reads the source, a
-   *  1-arg `bwd` reconstructs it); `Cls.lens(parent(s), optic)` applies an optic
-   *  value (pure or complement-carrying), chaining if several are given. */
+   *  1-arg `bwd` reconstructs it); `Cls.lens(parent(s), optic, …)` applies an optic
+   *  value (pure or complement-carrying), chaining left-to-right onto this class. */
   static lens<C extends AnyCellCtor, P>(
     this: C,
     parent: Read<P>,
@@ -908,6 +917,18 @@ export class Cell<T = unknown> implements ReactiveNode {
     parents: P,
     optic: AppliedOptic<ReadValues<P>, Inner<InstanceType<C>>>,
   ): Writable<InstanceType<C>>;
+  static lens<C extends AnyCellCtor, P, Os extends AnyOptics>(
+    this: C,
+    parent: Read<P>,
+    ...optics: Os
+  ): ChainResult<P, Os> extends Inner<InstanceType<C>> ? Writable<InstanceType<C>> : never;
+  static lens<C extends AnyCellCtor, P extends readonly Read<unknown>[], Os extends AnyOptics>(
+    this: C,
+    parents: P,
+    ...optics: Os
+  ): ChainResult<ReadValues<P>, Os> extends Inner<InstanceType<C>>
+    ? Writable<InstanceType<C>>
+    : never;
   // biome-ignore lint/suspicious/noExplicitAny: dispatch
   static lens(this: any, ...args: any[]): any {
     return buildLens(this, args);
@@ -1645,22 +1666,19 @@ export function lens<S extends Record<string, Read<unknown>>, R>(
     vals: { [K in keyof S]: Inner<S[K]> },
   ) => Partial<{ [K in keyof S]: Inner<S[K]> | Skip }>,
 ): Writable<Cell<R>>;
-export function lens<P, R>(parent: Read<P>, optic: AppliedOptic<P, R>): Writable<Cell<R>>;
-export function lens<P, V1, R>(
+export function lens<P, V1>(parent: Read<P>, optic: AppliedOptic<P, V1>): Writable<Cell<V1>>;
+export function lens<P, Os extends AnyOptics>(
   parent: Read<P>,
-  o1: AppliedOptic<P, V1>,
-  o2: AppliedOptic<V1, R>,
-): Writable<Cell<R>>;
-export function lens<P, V1, V2, R>(
-  parent: Read<P>,
-  o1: AppliedOptic<P, V1>,
-  o2: AppliedOptic<V1, V2>,
-  o3: AppliedOptic<V2, R>,
-): Writable<Cell<R>>;
-export function lens<P extends readonly Read<unknown>[], R>(
+  ...optics: Os
+): Writable<Cell<ChainResult<P, Os>>>;
+export function lens<P extends readonly Read<unknown>[], V1>(
   parents: P,
-  optic: AppliedOptic<ReadValues<P>, R>,
-): Writable<Cell<R>>;
+  optic: AppliedOptic<ReadValues<P>, V1>,
+): Writable<Cell<V1>>;
+export function lens<P extends readonly Read<unknown>[], Os extends AnyOptics>(
+  parents: P,
+  ...optics: Os
+): Writable<Cell<ChainResult<ReadValues<P>, Os>>>;
 // biome-ignore lint/suspicious/noExplicitAny: dispatch
 export function lens(...args: any[]): any {
   return buildLens(CELL_CTOR, args);
