@@ -109,19 +109,18 @@ export function continuous<T>(
   opts: ContinuousOpts<T>,
 ): Writable<Num> {
   const { period, raw, apply } = opts;
-  const wrap = (x: number): number => x - period * Math.round(x / period);
-  const unwrap = (rawv: number, prev: number): number => prev + wrap(rawv - prev);
+  const wrap = (x: number) => x - period * Math.round(x / period);
+  const unwrap = (rawv: number, prev: number) => prev + wrap(rawv - prev);
 
   type C = { prev: number };
-  // biome-ignore lint/suspicious/noExplicitAny: spec is checked structurally
-  return (Num as any).lens(sources as never, {
+  return Num.lens(sources, {
     complement: (vals: readonly T[]): C => {
       const r = raw(vals);
       return { prev: r.defined ? r.value : 0 };
     },
     // `get` is the sole refresh: unwrap relative to `prev` and accumulate the
     // winding. Idempotent — once the source settles, `unwrap` is a fixpoint.
-    get: (vals: readonly T[], c: C): number => {
+    get: (vals: readonly T[], c: C) => {
       const r = raw(vals);
       if (r.defined) c.prev = unwrap(r.value, c.prev);
       return c.prev;
