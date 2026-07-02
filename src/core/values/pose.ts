@@ -2,7 +2,7 @@ import { Cell, fieldLens, type Init, type Writable } from "../cell";
 import type { Linear, Pack, Pivotal, TraitDict } from "../traits";
 import { Num } from "./num";
 
-type V = { x: number; y: number; theta: number };
+type V = Readonly<{ x: number; y: number; theta: number }>;
 
 export const add = (a: V, b: V): V => ({
   x: a.x + b.x,

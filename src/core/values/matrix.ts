@@ -12,8 +12,8 @@ import type { TraitDict } from "../traits";
 import { Num, num } from "./num";
 import type { Vec } from "./vec";
 
-type V = { a: number; b: number; c: number; d: number; e: number; f: number };
-type BoxV = { x: number; y: number; w: number; h: number };
+type V = Readonly<{ a: number; b: number; c: number; d: number; e: number; f: number }>;
+type BoxV = Readonly<{ x: number; y: number; w: number; h: number }>;
 
 export const identity = (): V => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
 export const fromTranslate = (x: number, y: number): V => ({ a: 1, b: 0, c: 0, d: 1, e: x, f: y });

@@ -16,7 +16,7 @@ import type { Linear, Pack, TraitDict } from "../traits";
 import { Bool } from "./bool";
 import { Num, num } from "./num";
 
-type V = { lo: number; hi: number };
+type V = Readonly<{ lo: number; hi: number }>;
 
 export const add = (a: V, b: V): V => ({ lo: a.lo + b.lo, hi: a.hi + b.hi });
 export const sub = (a: V, b: V): V => ({ lo: a.lo - b.lo, hi: a.hi - b.hi });

@@ -21,7 +21,7 @@ import { Bool } from "./bool";
 import { Num, num } from "./num";
 import { Vec } from "./vec";
 
-type V = { x: number; y: number; w: number; h: number };
+type V = Readonly<{ x: number; y: number; w: number; h: number }>;
 
 export const add = (a: V, b: V): V => ({ x: a.x + b.x, y: a.y + b.y, w: a.w + b.w, h: a.h + b.h });
 export const sub = (a: V, b: V): V => ({ x: a.x - b.x, y: a.y - b.y, w: a.w - b.w, h: a.h - b.h });

@@ -30,6 +30,13 @@ function _probes(): void {
   const chain = v.add({ x: 1, y: 0 }).scale(2);
   chain.value = { x: 0, y: 0 };
 
+  // Value types are readonly: whole-value replacement is the write path, but
+  // in-place field mutation (a silent no-op at runtime) is a type error.
+  // @ts-expect-error — RO field on a Writable<Vec>'s value snapshot
+  v.value.x = 1;
+  // @ts-expect-error — compound assignment likewise
+  chain.value.y += 1;
+
   // Buggy fn — declaring a Vec parameter implies "RO surface."
   function _buggy(p: Vec) {
     // @ts-expect-error — RO .value

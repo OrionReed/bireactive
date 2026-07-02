@@ -12,13 +12,13 @@ import {
   sub as vSub,
 } from "./vec";
 
-type V = {
+type V = Readonly<{
   translate: Inner<Vec>;
   scale: Inner<Vec>;
   origin: Inner<Vec>;
   rotate: number;
   opacity: number;
-};
+}>;
 
 export const DEFAULT: V = {
   translate: { x: 0, y: 0 },

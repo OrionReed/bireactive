@@ -14,7 +14,7 @@ import {
 import type { Linear, Pack, TraitDict } from "../traits";
 import { Num, num } from "./num";
 
-type V = { r: number; g: number; b: number; a: number };
+type V = Readonly<{ r: number; g: number; b: number; a: number }>;
 
 export const add = (a: V, b: V): V => ({ r: a.r + b.r, g: a.g + b.g, b: a.b + b.b, a: a.a + b.a });
 export const sub = (a: V, b: V): V => ({ r: a.r - b.r, g: a.g - b.g, b: a.b - b.b, a: a.a - b.a });

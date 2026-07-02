@@ -12,7 +12,7 @@ import {
 import type { Linear, Pack, Pivotal, TraitDict } from "../traits";
 import { Num, num } from "./num";
 
-type V = { x: number; y: number };
+type V = Readonly<{ x: number; y: number }>;
 
 export const add = (a: V, b: V): V => ({ x: a.x + b.x, y: a.y + b.y });
 export const sub = (a: V, b: V): V => ({ x: a.x - b.x, y: a.y - b.y });
